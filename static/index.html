@@ -339,6 +339,207 @@
     .marker, .final, .empty, .stage-head { padding-inline: 1rem; }
     .final { grid-template-columns: 3.4rem minmax(0, 1fr); }
   }
+
+  /* ---- tabs & modal ---- */
+  .tabs {
+    display: flex;
+    gap: 0.35rem;
+    background: var(--panel-deep);
+    padding: 3px;
+    border-radius: 4px;
+    border: 1px solid var(--rule);
+  }
+  .tab-btn {
+    background: transparent;
+    border: none;
+    color: var(--dim);
+    font-family: var(--label);
+    font-weight: 600;
+    font-size: 0.76rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.35rem 0.75rem;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: all 0.15s ease;
+  }
+  .tab-btn:hover { color: var(--bone); }
+  .tab-btn.active {
+    background: var(--panel-raised);
+    color: var(--tungsten);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 14, 18, 0.75);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+  }
+  .modal-box {
+    background: var(--panel-raised);
+    border: 1px solid var(--rule);
+    width: 90%;
+    max-width: 480px;
+    padding: 1.5rem;
+    box-shadow: 0 16px 36px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+  }
+  .modal-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 0.75rem;
+  }
+  .modal-head h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .modal-close {
+    background: transparent;
+    border: none;
+    color: var(--dim);
+    font-size: 1.4rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 0.25rem;
+  }
+  .modal-close:hover { color: var(--bone); }
+
+  .rec-timer {
+    font-family: var(--mono);
+    font-size: 2.2rem;
+    font-weight: 600;
+    text-align: center;
+    letter-spacing: 0.05em;
+    color: var(--bone);
+  }
+  .rec-timer.recording { color: var(--rec); animation: breathe 1s infinite; }
+  .vu-meter {
+    width: 100%;
+    height: 8px;
+    background: var(--panel-deep);
+    border: 1px solid var(--rule);
+    overflow: hidden;
+    position: relative;
+  }
+  .vu-bar {
+    height: 100%;
+    width: 0%;
+    background: var(--tungsten);
+    transition: width 0.08s ease;
+  }
+
+  /* Benchmark result styles */
+  .bench-winner {
+    background: rgba(242, 166, 59, 0.1);
+    border: 1px solid var(--tungsten);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.25rem;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  .bench-winner-icon { font-size: 2.2rem; line-height: 1; }
+  .bench-winner-title { font-weight: 600; font-size: 1.05rem; color: var(--tungsten); margin-bottom: 0.2rem; }
+  .bench-winner-desc { font-size: 0.85rem; color: var(--bone); line-height: 1.4; }
+
+  .bench-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin-top: 1rem;
+    font-family: var(--thai);
+  }
+  .bench-table th {
+    text-align: left;
+    padding: 0.6rem 0.8rem;
+    background: var(--panel-deep);
+    font-family: var(--label);
+    letter-spacing: 0.1em;
+    font-size: 0.7rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--rule);
+  }
+  .bench-table td {
+    padding: 0.75rem 0.8rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: middle;
+  }
+  .bench-table .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .badge-yes {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    background: rgba(70, 167, 88, 0.2);
+    color: #46a758;
+    border: 1px solid #46a758;
+    font-size: 0.7rem;
+    font-family: var(--label);
+    font-weight: 600;
+    text-transform: uppercase;
+    border-radius: 3px;
+  }
+  .badge-no {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    background: rgba(229, 72, 77, 0.2);
+    color: var(--rec);
+    border: 1px solid var(--rec);
+    font-size: 0.7rem;
+    font-family: var(--label);
+    font-weight: 600;
+    text-transform: uppercase;
+    border-radius: 3px;
+  }
+  .bar-container {
+    width: 100%;
+    max-width: 160px;
+    height: 12px;
+    background: var(--panel-deep);
+    border: 1px solid var(--rule);
+    position: relative;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--tungsten);
+  }
+  .bar-fill.fast { background: #46a758; }
+  .bar-fill.slow { background: var(--rec); }
+  .bar-threshold {
+    position: absolute;
+    left: 50%;
+    top: -2px;
+    bottom: -2px;
+    width: 2px;
+    background: var(--rec);
+    z-index: 2;
+  }
+  .check-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.88rem;
+    cursor: pointer;
+  }
+  .check-item input[type="checkbox"] {
+    accent-color: var(--tungsten);
+  }
+  .check-item.disabled {
+    color: var(--dim);
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
 </style>
 </head>
 <body>
@@ -346,6 +547,10 @@
   <header class="rail">
     <div class="lamp" id="lamp" data-state="idle"><span class="bulb"></span><span id="lampText">Ready</span></div>
     <div class="wordmark">Typhoon Whisper</div>
+    <nav class="tabs">
+      <button class="tab-btn active" id="tabLiveBtn" type="button" onclick="switchTab('live')">● Live Session</button>
+      <button class="tab-btn" id="tabBenchBtn" type="button" onclick="switchTab('bench')">⚡ Benchmark</button>
+    </nav>
     <a class="railref" href="/help">What do these mean?</a>
 
     <div class="gauges">
@@ -363,7 +568,7 @@
     </div>
   </header>
 
-  <div class="split">
+  <div class="split" id="liveView">
     <aside class="config">
       <h2>Setup</h2>
 
@@ -407,9 +612,12 @@
       <div class="field" id="fileField" hidden>
         <div class="field-head">
           <label for="audioFile">Clip</label>
-          <button class="linkbtn" id="uploadBtn" onclick="document.getElementById('uploadInput').click()">Upload</button>
+          <div style="display:flex; gap:0.5rem">
+            <button class="linkbtn" type="button" onclick="openRecordModal()">Record</button>
+            <button class="linkbtn" id="uploadBtn" type="button" onclick="document.getElementById('uploadInput').click()">Upload</button>
+          </div>
         </div>
-        <input id="uploadInput" type="file" accept=".wav,audio/wav" hidden onchange="uploadAudio(this)">
+        <input id="uploadInput" type="file" accept=".wav,audio/wav,audio/*" hidden onchange="uploadAudio(this)">
         <select id="audioFile"></select>
         <span class="hint" id="fileHint">Replays a clip through the same pipeline — no microphone needed, and repeatable.</span>
       </div>
@@ -447,6 +655,120 @@
         </div>
       </div>
     </main>
+  </div>
+
+  <div class="split" id="benchView" hidden>
+    <aside class="config">
+      <h2>Benchmark Studio</h2>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="benchAudioFile">Clip to replay</label>
+          <div style="display:flex; gap:0.5rem">
+            <button class="linkbtn" type="button" onclick="openRecordModal()">Record</button>
+            <button class="linkbtn" type="button" onclick="document.getElementById('benchUploadInput').click()">Upload</button>
+          </div>
+        </div>
+        <input id="benchUploadInput" type="file" accept=".wav,audio/wav,audio/*" hidden onchange="uploadAudio(this)">
+        <select id="benchAudioFile"></select>
+        <span class="hint" id="benchFileHint">Select a recorded or uploaded clip to benchmark.</span>
+      </div>
+
+      <div class="field">
+        <label for="benchModel">Model</label>
+        <select id="benchModel" onchange="loadBenchRuntimes()">
+          <option value="turbo">turbo</option>
+          <option value="large-v3">large-v3</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Runtimes to compare</label>
+        <div id="benchRuntimesList" style="display:flex; flex-direction:column; gap:0.45rem; margin-top:0.4rem">
+          <!-- Checkboxes populated dynamically -->
+        </div>
+        <span class="hint">Compare execution engines on identical audio chunks.</span>
+      </div>
+
+      <div class="field">
+        <label for="benchSilence">Silence threshold</label>
+        <input id="benchSilence" type="number" step="0.001" value="0.0">
+        <span class="hint">0 = transcribe every chunk for accurate latency comparison.</span>
+      </div>
+
+      <div class="transport">
+        <button class="btn btn-start" id="benchRunBtn" onclick="runBenchmark()"><span class="dot"></span>Run Benchmark</button>
+      </div>
+
+      <div class="note" id="benchNote">Ready to benchmark.</div>
+    </aside>
+
+    <main class="stage" id="benchStage">
+      <div class="stage-head">
+        <h2>Benchmark Results</h2>
+        <span class="link-state" id="benchState">idle</span>
+        <button class="linkbtn" onclick="clearBenchmarkResults()">Clear</button>
+      </div>
+      <div id="benchContent" style="padding: 1.25rem; overflow-y: auto; height: calc(100% - 45px);">
+        <div class="empty" id="benchEmpty">
+          <strong>Compare execution engines with a fixed clip.</strong>
+          Choose a clip and select the runtimes to test. Each runtime processes the audio through the exact same 5s/1s-overlap chunking pipeline. The fastest backend and real-time capability (RTF &lt; 1.0) will be revealed.
+        </div>
+        <div id="benchRunningProgress" hidden style="margin-bottom: 1.5rem;">
+          <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem">
+            <span id="benchActiveRuntimeText" style="font-weight:600; color:var(--tungsten)">Testing...</span>
+            <span id="benchActiveChunkText" class="stat" style="font-family:var(--mono); color:var(--dim)">Chunk 0/0</span>
+          </div>
+          <div class="meter" style="width:100%; height:8px"><div class="fill" id="benchProgressFill" style="background:var(--tungsten); width:0%"></div></div>
+          <div id="benchLiveChunkLog" style="margin-top:0.75rem; font-family:var(--mono); font-size:0.8rem; color:var(--dim)"></div>
+        </div>
+        <div id="benchResultsContainer" hidden></div>
+      </div>
+    </main>
+  </div>
+
+  <div id="recordModal" class="modal-overlay" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>Record Audio Clip</h3>
+        <button class="modal-close" onclick="closeRecordModal()">&times;</button>
+      </div>
+
+      <div class="field">
+        <label for="recFilename">File name</label>
+        <input id="recFilename" type="text" placeholder="benchmark_clip.wav">
+      </div>
+
+      <div class="field">
+        <label>Microphone location</label>
+        <div style="display:flex; gap:1.2rem; margin-top:0.35rem">
+          <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer">
+            <input type="radio" name="recSource" value="browser" checked onchange="toggleRecSource()">
+            Browser Mic (this device)
+          </label>
+          <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer">
+            <input type="radio" name="recSource" value="server" onchange="toggleRecSource()">
+            Server Mic (hardware)
+          </label>
+        </div>
+      </div>
+
+      <div class="field" id="modalServerMicField" hidden>
+        <label for="modalServerMicDevice">Server device</label>
+        <select id="modalServerMicDevice"></select>
+      </div>
+
+      <div style="display:flex; flex-direction:column; align-items:center; gap:0.75rem; padding:0.8rem 0">
+        <div class="rec-timer" id="modalRecTimer">00:00</div>
+        <div class="vu-meter" id="modalVuMeter"><div class="vu-bar" id="modalVuBar"></div></div>
+        <span class="hint" id="modalRecHint" style="text-align:center">Press Start to begin recording a 16kHz WAV clip.</span>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:0.75rem">
+        <button class="btn" type="button" style="background:var(--panel-deep); color:var(--dim)" onclick="closeRecordModal()">Cancel</button>
+        <button class="btn btn-start" type="button" id="modalRecBtn" onclick="toggleModalRecording()"><span class="dot"></span>Start Recording</button>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -703,10 +1025,10 @@
     }
   }
 
-  async function uploadAudio(input) {
+  async function uploadAudio(input, isBench = false) {
     const file = input.files[0];
     if (!file) return;
-    const hint = document.getElementById('fileHint');
+    const hint = isBench ? document.getElementById('benchFileHint') : document.getElementById('fileHint');
     hint.textContent = `Uploading ${file.name}…`;
 
     const body = new FormData();
@@ -720,12 +1042,459 @@
       }
       const { name } = await res.json();
       await loadAudioFiles();
+      await loadBenchAudioFiles();
       document.getElementById('audioFile').value = name;
+      const bSel = document.getElementById('benchAudioFile');
+      if (bSel) bSel.value = name;
+      hint.textContent = `Uploaded ${name}`;
     } catch (err) {
       showError(`Upload failed — ${err}`);
     } finally {
       input.value = '';  // let the same file be picked again
     }
+  }
+
+  // ---- tabs switcher ----
+  let currentTab = 'live';
+  function switchTab(tab) {
+    currentTab = tab;
+    document.getElementById('tabLiveBtn').classList.toggle('active', tab === 'live');
+    document.getElementById('tabBenchBtn').classList.toggle('active', tab === 'bench');
+    document.getElementById('liveView').hidden = tab !== 'live';
+    document.getElementById('benchView').hidden = tab !== 'bench';
+
+    if (tab === 'bench') {
+      loadBenchAudioFiles();
+      loadBenchRuntimes();
+    }
+  }
+
+  async function loadBenchAudioFiles() {
+    const select = document.getElementById('benchAudioFile');
+    const hint = document.getElementById('benchFileHint');
+    const previous = select.value;
+    try {
+      const data = await (await fetch('/audio-files')).json();
+      select.innerHTML = '';
+      if (!data.files.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No clips yet';
+        select.appendChild(option);
+        hint.textContent = 'Record a clip or upload a .wav to benchmark.';
+        return;
+      }
+      for (const file of data.files) {
+        const option = document.createElement('option');
+        option.value = file.name;
+        option.textContent = `${file.name}  (${file.seconds}s)`;
+        select.appendChild(option);
+      }
+      if ([...select.options].some(o => o.value === previous)) select.value = previous;
+      hint.textContent = `${data.files.length} clip${data.files.length === 1 ? '' : 's'} available for benchmark.`;
+    } catch (err) {
+      hint.textContent = 'Could not list clips.';
+    }
+  }
+
+  async function loadBenchRuntimes() {
+    const container = document.getElementById('benchRuntimesList');
+    const model = document.getElementById('benchModel').value;
+    try {
+      const res = await fetch(`/runtimes?model=${encodeURIComponent(model)}`);
+      if (!res.ok) return;
+      const { runtimes } = await res.json();
+
+      container.innerHTML = '';
+      for (const r of runtimes) {
+        const label = document.createElement('label');
+        label.className = `check-item ${r.available ? '' : 'disabled'}`;
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.name = 'benchRuntime';
+        cb.value = r.name;
+        cb.checked = r.available;
+        cb.disabled = !r.available;
+
+        const text = document.createElement('span');
+        text.textContent = r.label + (r.available ? '' : ` (${r.reason})`);
+
+        label.appendChild(cb);
+        label.appendChild(text);
+        container.appendChild(label);
+      }
+    } catch (err) {
+      container.innerHTML = '<span class="hint">Could not check runtimes.</span>';
+    }
+  }
+
+  // ---- record audio modal ----
+  let recMediaRecorder = null;
+  let recAudioStream = null;
+  let recTimerId = null;
+  let recStartTime = 0;
+  let recAudioCtx = null;
+  let recAnalyser = null;
+  let recAnimId = null;
+  let isModalRecording = false;
+
+  function openRecordModal() {
+    document.getElementById('recordModal').hidden = false;
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    document.getElementById('recFilename').value = `clip_${ts}.wav`;
+    document.getElementById('modalRecTimer').textContent = '00:00';
+    document.getElementById('modalVuBar').style.width = '0%';
+    document.getElementById('modalRecHint').textContent = 'Press Start to begin recording audio clip.';
+    document.getElementById('modalRecBtn').innerHTML = '<span class="dot"></span>Start Recording';
+    document.getElementById('modalRecBtn').className = 'btn btn-start';
+    isModalRecording = false;
+
+    // copy device list
+    const devSelect = document.getElementById('modalServerMicDevice');
+    devSelect.innerHTML = document.getElementById('micDevice').innerHTML;
+    devSelect.value = document.getElementById('micDevice').value;
+  }
+
+  function closeRecordModal() {
+    if (isModalRecording) {
+      stopModalRecording(false);
+    }
+    document.getElementById('recordModal').hidden = true;
+  }
+
+  function toggleRecSource() {
+    const isServer = document.querySelector('input[name="recSource"]:checked').value === 'server';
+    document.getElementById('modalServerMicField').hidden = !isServer;
+  }
+
+  async function toggleModalRecording() {
+    if (!isModalRecording) {
+      startModalRecording();
+    } else {
+      stopModalRecording(true);
+    }
+  }
+
+  async function startModalRecording() {
+    const isServer = document.querySelector('input[name="recSource"]:checked').value === 'server';
+    const filename = document.getElementById('recFilename').value.trim() || `clip_${Date.now()}.wav`;
+
+    if (isServer) {
+      const micDevice = document.getElementById('modalServerMicDevice').value || null;
+      try {
+        const res = await fetch('/record-server/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename, mic_device: micDevice })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          alert('Server record failed: ' + (err.detail || 'unknown error'));
+          return;
+        }
+      } catch (err) {
+        alert('Server record error: ' + err);
+        return;
+      }
+    } else {
+      try {
+        recAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        recAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = recAudioCtx.createMediaStreamSource(recAudioStream);
+        recAnalyser = recAudioCtx.createAnalyser();
+        recAnalyser.fftSize = 256;
+        source.connect(recAnalyser);
+
+        const dataArray = new Uint8Array(recAnalyser.frequencyBinCount);
+        function updateVu() {
+          if (!isModalRecording) return;
+          recAnalyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+          const avg = sum / dataArray.length;
+          const pct = Math.min(100, Math.round((avg / 128) * 100));
+          document.getElementById('modalVuBar').style.width = pct + '%';
+          recAnimId = requestAnimationFrame(updateVu);
+        }
+        updateVu();
+
+        const chunks = [];
+        recMediaRecorder = new MediaRecorder(recAudioStream);
+        recMediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        recMediaRecorder.onstop = async () => {
+          if (!chunks.length) return;
+          const blob = new Blob(chunks, { type: recMediaRecorder.mimeType || 'audio/webm' });
+          const formData = new FormData();
+          formData.append('file', blob, filename);
+          document.getElementById('modalRecHint').textContent = 'Uploading and converting to 16kHz mono WAV…';
+          try {
+            const res = await fetch('/audio-files', { method: 'POST', body: formData });
+            if (!res.ok) {
+              alert('Save failed: ' + (await res.json()).detail);
+              return;
+            }
+            const data = await res.json();
+            await loadAudioFiles();
+            await loadBenchAudioFiles();
+            document.getElementById('audioFile').value = data.name;
+            const bSel = document.getElementById('benchAudioFile');
+            if (bSel) bSel.value = data.name;
+            closeRecordModal();
+          } catch (err) {
+            alert('Upload error: ' + err);
+          }
+        };
+        recMediaRecorder.start();
+      } catch (err) {
+        alert('Could not access microphone: ' + err);
+        return;
+      }
+    }
+
+    isModalRecording = true;
+    recStartTime = Date.now();
+    document.getElementById('modalRecTimer').className = 'rec-timer recording';
+    recTimerId = setInterval(() => {
+      const sec = Math.floor((Date.now() - recStartTime) / 1000);
+      const m = Math.floor(sec / 60), s = sec % 60;
+      document.getElementById('modalRecTimer').textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }, 250);
+
+    document.getElementById('modalRecBtn').innerHTML = '<span class="sq"></span>Stop & Save';
+    document.getElementById('modalRecBtn').className = 'btn btn-stop';
+    document.getElementById('modalRecHint').textContent = 'Recording in progress... speak into your microphone.';
+  }
+
+  async function stopModalRecording(save) {
+    clearInterval(recTimerId);
+    if (recAnimId) cancelAnimationFrame(recAnimId);
+    document.getElementById('modalRecTimer').className = 'rec-timer';
+
+    const isServer = document.querySelector('input[name="recSource"]:checked').value === 'server';
+
+    if (isServer) {
+      if (save) {
+        document.getElementById('modalRecHint').textContent = 'Saving audio on server…';
+        try {
+          const res = await fetch('/record-server/stop', { method: 'POST' });
+          if (!res.ok) {
+            alert('Stop failed: ' + (await res.json()).detail);
+            return;
+          }
+          const data = await res.json();
+          await loadAudioFiles();
+          await loadBenchAudioFiles();
+          document.getElementById('audioFile').value = data.name;
+          const bSel = document.getElementById('benchAudioFile');
+          if (bSel) bSel.value = data.name;
+          closeRecordModal();
+        } catch (err) {
+          alert('Server stop error: ' + err);
+        }
+      }
+    } else {
+      if (recMediaRecorder && recMediaRecorder.state === 'recording') {
+        recMediaRecorder.stop();
+      }
+      if (recAudioStream) {
+        recAudioStream.getTracks().forEach(t => t.stop());
+        recAudioStream = null;
+      }
+      if (recAudioCtx) {
+        recAudioCtx.close();
+        recAudioCtx = null;
+      }
+    }
+    isModalRecording = false;
+  }
+
+  // ---- benchmark runner & presentation ----
+  function clearBenchmarkResults() {
+    document.getElementById('benchEmpty').hidden = false;
+    document.getElementById('benchRunningProgress').hidden = true;
+    document.getElementById('benchResultsContainer').hidden = true;
+    document.getElementById('benchResultsContainer').innerHTML = '';
+    document.getElementById('benchState').textContent = 'idle';
+    document.getElementById('benchState').className = 'link-state';
+  }
+
+  async function runBenchmark() {
+    const file = document.getElementById('benchAudioFile').value;
+    if (!file) {
+      alert('Please select an audio clip to benchmark.');
+      return;
+    }
+    const model = document.getElementById('benchModel').value;
+    const checkedRuntimes = Array.from(document.querySelectorAll('input[name="benchRuntime"]:checked')).map(c => c.value);
+    if (!checkedRuntimes.length) {
+      alert('Please select at least one runtime.');
+      return;
+    }
+    const silence = parseFloat(document.getElementById('benchSilence').value) || 0.0;
+
+    const runBtn = document.getElementById('benchRunBtn');
+    runBtn.disabled = true;
+    document.getElementById('benchEmpty').hidden = true;
+    document.getElementById('benchRunningProgress').hidden = false;
+    document.getElementById('benchResultsContainer').hidden = true;
+    document.getElementById('benchState').textContent = 'running';
+    document.getElementById('benchState').className = 'link-state live';
+    document.getElementById('benchProgressFill').style.width = '5%';
+    document.getElementById('benchActiveRuntimeText').textContent = 'Initializing benchmark…';
+    document.getElementById('benchActiveChunkText').textContent = '';
+    document.getElementById('benchLiveChunkLog').textContent = '';
+
+    const benchResults = [];
+
+    try {
+      const res = await fetch('/benchmark', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file, model, runtimes: checkedRuntimes, silence_threshold: silence }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        alert(`Benchmark failed: ${err.detail || 'server error'}`);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.trim() || !line.startsWith('data: ')) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            if (ev.type === 'init') {
+              document.getElementById('benchActiveRuntimeText').textContent = `Replaying ${ev.file} (${ev.duration}s)...`;
+            } else if (ev.type === 'runtime_start') {
+              document.getElementById('benchActiveRuntimeText').textContent = `Testing ${ev.label}…`;
+              document.getElementById('benchProgressFill').style.width = '15%';
+            } else if (ev.type === 'chunk') {
+              document.getElementById('benchActiveChunkText').textContent = `Chunk ${ev.chunk}/${ev.total}`;
+              document.getElementById('benchProgressFill').style.width = `${Math.min(100, Math.round((ev.chunk / ev.total) * 100))}%`;
+              const statusText = ev.silent
+                ? `[${ev.offset}s] silence (skipped)`
+                : `[${ev.offset}s] lat: ${ev.latency}s · RTF: ${ev.rtf} · "${escapeHtml(ev.text.slice(0, 50))}"`;
+              document.getElementById('benchLiveChunkLog').textContent = `${ev.runtime} — ${statusText}`;
+            } else if (ev.type === 'runtime_done') {
+              if (ev.stats) benchResults.push(ev.stats);
+            } else if (ev.type === 'complete') {
+              renderBenchmarkSummary(ev.results, ev.winner);
+            }
+          } catch (e) { /* ignore parse error on partial SSE frame */ }
+        }
+      }
+    } catch (err) {
+      alert(`Benchmark error: ${err}`);
+    } finally {
+      runBtn.disabled = false;
+      document.getElementById('benchRunningProgress').hidden = true;
+      document.getElementById('benchState').textContent = 'complete';
+      document.getElementById('benchState').className = 'link-state';
+    }
+  }
+
+  function renderBenchmarkSummary(results, winner) {
+    const container = document.getElementById('benchResultsContainer');
+    container.hidden = false;
+    container.innerHTML = '';
+
+    if (!results || !results.length) {
+      container.innerHTML = '<div class="note error">No benchmark results were collected.</div>';
+      return;
+    }
+
+    // Sort results by RTF ascending (fastest first)
+    const sorted = [...results].sort((a, b) => (a.mean_rtf || 999) - (b.mean_rtf || 999));
+    const fastest = sorted[0];
+
+    // Winner Banner
+    if (fastest) {
+      const banner = document.createElement('div');
+      banner.className = 'bench-winner';
+      const baseline = sorted.find(r => r.runtime === 'pytorch');
+      let speedupText = '';
+      if (baseline && baseline !== fastest && fastest.mean_rtf > 0) {
+        const factor = (baseline.mean_latency / fastest.mean_latency).toFixed(1);
+        speedupText = ` (${factor}× faster than PyTorch)`;
+      }
+      banner.innerHTML = `
+        <div class="bench-winner-icon">🏆</div>
+        <div>
+          <div class="bench-winner-title">Fastest Runtime: ${escapeHtml(fastest.label)}</div>
+          <div class="bench-winner-desc">
+            Mean latency <strong>${fastest.mean_latency}s</strong> per 5s chunk (RTF <strong>${fastest.mean_rtf}</strong>)${speedupText}.
+            ${fastest.keeps_up ? '✅ Fast enough to keep up with live real-time speech!' : '⚠️ Slower than real-time on this machine.'}
+          </div>
+        </div>
+      `;
+      container.appendChild(banner);
+    }
+
+    // Comparative Table
+    const tableWrap = document.createElement('div');
+    tableWrap.style.overflowX = 'auto';
+
+    let rowsHtml = '';
+    for (const r of sorted) {
+      const rtfPct = Math.min(100, Math.round((r.mean_rtf / 2.0) * 100));
+      const barClass = r.mean_rtf < 0.8 ? 'fast' : (r.mean_rtf < 1.0 ? '' : 'slow');
+      const badge = r.keeps_up
+        ? '<span class="badge-yes">Yes (Realtime)</span>'
+        : '<span class="badge-no">No (Lagging)</span>';
+
+      rowsHtml += `
+        <tr>
+          <td><strong>${escapeHtml(r.label)}</strong><br><span class="stat">${r.runtime}</span></td>
+          <td class="mono">${r.mean_latency}s</td>
+          <td class="mono">
+            <div style="display:flex; align-items:center; gap:0.6rem">
+              <strong>${r.mean_rtf}</strong>
+              <div class="bar-container" title="RTF ${r.mean_rtf} (Red line = 1.0 threshold)">
+                <div class="bar-fill ${barClass}" style="width:${rtfPct}%"></div>
+                <div class="bar-threshold"></div>
+              </div>
+            </div>
+          </td>
+          <td class="mono">${r.worst_rtf}</td>
+          <td>${badge}</td>
+          <td style="color:var(--dim); font-size:0.8rem; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.sample_text)}">
+            ${escapeHtml(r.sample_text || '—')}
+          </td>
+        </tr>
+      `;
+    }
+
+    tableWrap.innerHTML = `
+      <table class="bench-table">
+        <thead>
+          <tr>
+            <th>Runtime</th>
+            <th>Mean Latency</th>
+            <th>Mean RTF</th>
+            <th>Worst RTF</th>
+            <th>Keeps Up?</th>
+            <th>Sample Transcript</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    `;
+    container.appendChild(tableWrap);
   }
 
   // ---- input devices ----
@@ -868,6 +1637,8 @@
   loadRuntimes();
   loadDevices(false);
   applySource();
+  loadBenchAudioFiles();
+  loadBenchRuntimes();
   refreshStatus();
   setInterval(refreshStatus, 3000);
 </script>

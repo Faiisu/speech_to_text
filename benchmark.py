@@ -32,6 +32,63 @@ from transcribe import (
 )
 
 
+from pathlib import Path
+
+AUDIO_DIR = Path(__file__).parent / "audio"
+
+
+def record_audio_clip(
+    output_path: Path | str,
+    duration: float | None = None,
+    device: int | str | None = None,
+) -> Path:
+    """Record 16kHz mono audio from a microphone and save to WAV."""
+    import sounddevice as sd
+    import soundfile as sf
+
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    frames: list[np.ndarray] = []
+
+    def callback(indata, frame_count, time_info, status):
+        frames.append(indata.copy())
+
+    dev_index = None
+    if device is not None:
+        try:
+            dev_index = int(device)
+        except ValueError:
+            for idx, d in enumerate(sd.query_devices()):
+                if d["max_input_channels"] > 0 and str(device).lower() in d["name"].lower():
+                    dev_index = idx
+                    break
+
+    stream = sd.InputStream(
+        samplerate=SAMPLE_RATE,
+        channels=1,
+        dtype="float32",
+        device=dev_index,
+        callback=callback,
+    )
+
+    with stream:
+        if duration is not None and duration > 0:
+            print(f"Recording to {target.name} for {duration:.1f}s (speak now)...")
+            time.sleep(duration)
+        else:
+            print(f"Recording to {target.name} (speak now). Press Enter to stop...")
+            input()
+
+    if not frames:
+        raise RuntimeError("No audio captured.")
+
+    audio = np.concatenate(frames, axis=0).flatten()
+    sf.write(str(target), audio, SAMPLE_RATE)
+    print(f"Saved {target} ({len(audio) / SAMPLE_RATE:.1f}s, 16kHz mono)")
+    return target
+
+
 def chunk_offsets(total_samples: int) -> list[int]:
     chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
     step_samples = chunk_samples - OVERLAP_SECONDS * SAMPLE_RATE
@@ -43,30 +100,43 @@ def chunk_offsets(total_samples: int) -> list[int]:
     return offsets
 
 
-def run_pass(runtime, audio: np.ndarray, silence_threshold: float, verbose: bool) -> dict:
+def run_pass(
+    runtime,
+    audio: np.ndarray,
+    silence_threshold: float,
+    verbose: bool = False,
+    on_chunk: callable = None,
+) -> dict:
     offsets = chunk_offsets(audio.size)
     chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
 
     latencies: list[float] = []
+    texts: list[str] = []
     skipped = 0
 
-    for offset in offsets:
+    for i, offset in enumerate(offsets):
         chunk = audio[offset : offset + chunk_samples]
         if is_silent(chunk, silence_threshold):
             skipped += 1
             if verbose:
                 print(f"  [{offset / SAMPLE_RATE:6.1f}s] (silence, skipped)")
+            if on_chunk:
+                on_chunk(i + 1, len(offsets), offset / SAMPLE_RATE, 0.0, 0.0, "(silence, skipped)", True)
             continue
 
         started = time.perf_counter()
         text = runtime.transcribe(chunk)
         latency = time.perf_counter() - started
         latencies.append(latency)
+        texts.append(text)
+        rtf = latency / CHUNK_SECONDS
         if verbose:
-            print(f"  [{offset / SAMPLE_RATE:6.1f}s] {latency:5.2f}s  RTF {latency / CHUNK_SECONDS:4.2f}  {text[:60]}")
+            print(f"  [{offset / SAMPLE_RATE:6.1f}s] {latency:5.2f}s  RTF {rtf:4.2f}  {text[:60]}")
+        if on_chunk:
+            on_chunk(i + 1, len(offsets), offset / SAMPLE_RATE, latency, rtf, text, False)
 
     if not latencies:
-        return {"chunks": 0, "skipped": skipped}
+        return {"chunks": 0, "skipped": skipped, "sample_text": ""}
 
     rtfs = [latency / CHUNK_SECONDS for latency in latencies]
     return {
@@ -77,13 +147,22 @@ def run_pass(runtime, audio: np.ndarray, silence_threshold: float, verbose: bool
         "worst_rtf": max(rtfs),
         "mean_latency": statistics.mean(latencies),
         "total": sum(latencies),
+        "sample_text": " ".join(t for t in texts if t).strip(),
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=MODEL_REPOS.keys(), required=True)
-    parser.add_argument("--file", required=True, help="16kHz mono WAV to replay")
+    parser.add_argument("--file", help="16kHz mono WAV to replay (or provide --record)")
+    parser.add_argument(
+        "--record",
+        nargs="?",
+        const="benchmark_clip.wav",
+        help="Record a new benchmark clip from microphone before running (default: benchmark_clip.wav)",
+    )
+    parser.add_argument("--duration", type=float, default=None, help="Recording duration in seconds (stops on Enter if omitted)")
+    parser.add_argument("--device", help="Microphone device index or name")
     parser.add_argument(
         "--threads",
         help="Comma-separated torch thread counts to compare, e.g. 4,8,14. "
@@ -100,6 +179,16 @@ def main() -> None:
     )
     parser.add_argument("--verbose", action="store_true", help="Print every chunk")
     args = parser.parse_args()
+
+    if args.record:
+        filename = args.record if args.record.endswith(".wav") else f"{args.record}.wav"
+        target_path = AUDIO_DIR / filename
+        record_audio_clip(target_path, duration=args.duration, device=args.device)
+        if not args.file:
+            args.file = str(target_path)
+
+    if not args.file:
+        parser.error("Either --file or --record must be specified.")
 
     audio = load_audio(args.file)
     duration = audio.size / SAMPLE_RATE

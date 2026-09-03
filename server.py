@@ -15,6 +15,10 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
+import numpy as np
+import statistics
+
+from benchmark import chunk_offsets
 from runtimes import load_runtime, probe
 from transcribe import (
     DEFAULT_BACKEND_URL,
@@ -171,24 +175,282 @@ def audio_files() -> dict:
 
 @app.post("/audio-files")
 async def upload_audio(file: UploadFile) -> dict:
-    if not file.filename or not file.filename.lower().endswith(".wav"):
-        raise HTTPException(status_code=422, detail="Only .wav files are accepted")
+    if not file.filename:
+        raise HTTPException(status_code=422, detail="No file provided")
 
     AUDIO_DIR.mkdir(exist_ok=True)
-    target = (AUDIO_DIR / Path(file.filename).name).resolve()
+    # preserve wav extension or force it if converting from other audio format
+    raw_name = Path(file.filename).name
+    stem = Path(raw_name).stem
+    safe_name = f"{stem}.wav" if not raw_name.lower().endswith(".wav") else raw_name
+    target = (AUDIO_DIR / safe_name).resolve()
     if not target.is_relative_to(AUDIO_DIR.resolve()):
         raise HTTPException(status_code=400, detail="Invalid file name")
 
-    with target.open("wb") as out:
+    # Save temporary upload
+    temp_target = target.with_suffix(".upload.tmp")
+    with temp_target.open("wb") as out:
         shutil.copyfileobj(file.file, out)
 
     try:
-        _to_16k_mono(target)
-    except HTTPException:
-        target.unlink(missing_ok=True)
-        raise
+        # Convert any uploaded format (wav, webm, ogg, mp3, m4a) to 16kHz mono WAV
+        if shutil.which("ffmpeg") is not None:
+            res = subprocess.run(
+                ["ffmpeg", "-y", "-i", str(temp_target), "-ar", str(SAMPLE_RATE), "-ac", "1", str(target)],
+                capture_output=True,
+            )
+            temp_target.unlink(missing_ok=True)
+            if res.returncode != 0:
+                raise HTTPException(status_code=422, detail="Failed to convert audio with ffmpeg")
+        else:
+            temp_target.replace(target)
+            _to_16k_mono(target)
+    except Exception as e:
+        temp_target.unlink(missing_ok=True)
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(status_code=422, detail=f"Audio processing failed: {e}")
 
-    return {"name": target.name}
+    import soundfile as sf
+    duration = 0.0
+    try:
+        duration = round(sf.info(str(target)).duration, 1)
+    except Exception:
+        pass
+
+    return {"name": target.name, "seconds": duration}
+
+
+@app.delete("/audio-files/{name}")
+def delete_audio(name: str) -> dict:
+    path = _resolve_audio(name)
+    path.unlink(missing_ok=True)
+    return {"deleted": name}
+
+
+_rec_lock = threading.Lock()
+_recorder: dict = {
+    "active": False,
+    "filename": None,
+    "frames": [],
+    "stream": None,
+    "start_time": 0.0,
+}
+
+
+class ServerRecordRequest(BaseModel):
+    filename: str | None = None
+    mic_device: str | None = None
+
+
+@app.post("/record-server/start")
+def record_server_start(req: ServerRecordRequest) -> dict:
+    with _lock:
+        if _state["status"] in ("loading", "recording"):
+            raise HTTPException(status_code=409, detail="A live session is currently active")
+
+    with _rec_lock:
+        if _recorder["active"]:
+            raise HTTPException(status_code=409, detail="Server recording already in progress")
+
+        dev_index = None
+        if req.mic_device is not None:
+            try:
+                dev_index = int(req.mic_device)
+            except ValueError:
+                for idx, d in enumerate(sd.query_devices()):
+                    if d["max_input_channels"] > 0 and str(req.mic_device).lower() in d["name"].lower():
+                        dev_index = idx
+                        break
+
+        frames = []
+
+        def callback(indata, frame_count, time_info, status):
+            frames.append(indata.copy())
+
+        try:
+            stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="float32",
+                device=dev_index,
+                callback=callback,
+            )
+            stream.start()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Could not open input device: {exc}")
+
+        filename = req.filename or f"clip_{time.strftime('%Y%m%d_%H%M%S')}.wav"
+        if not filename.lower().endswith(".wav"):
+            filename = f"{filename}.wav"
+
+        _recorder["active"] = True
+        _recorder["filename"] = filename
+        _recorder["frames"] = frames
+        _recorder["stream"] = stream
+        _recorder["start_time"] = time.perf_counter()
+
+    return {"status": "recording", "filename": filename}
+
+
+@app.post("/record-server/stop")
+def record_server_stop() -> dict:
+    import soundfile as sf
+
+    with _rec_lock:
+        if not _recorder["active"]:
+            raise HTTPException(status_code=409, detail="No server recording in progress")
+
+        stream = _recorder["stream"]
+        frames = _recorder["frames"]
+        filename = _recorder["filename"]
+        _recorder["active"] = False
+        _recorder["stream"] = None
+
+    if stream:
+        try:
+            stream.stop()
+            stream.close()
+        except Exception:
+            pass
+
+    if not frames:
+        raise HTTPException(status_code=400, detail="No audio captured")
+
+    AUDIO_DIR.mkdir(exist_ok=True)
+    target = (AUDIO_DIR / filename).resolve()
+    audio = np.concatenate(frames, axis=0).flatten()
+    sf.write(str(target), audio, SAMPLE_RATE)
+    duration = round(len(audio) / SAMPLE_RATE, 1)
+
+    return {"status": "saved", "name": filename, "seconds": duration}
+
+
+@app.get("/record-server/status")
+def record_server_status() -> dict:
+    with _rec_lock:
+        elapsed = round(time.perf_counter() - _recorder["start_time"], 1) if _recorder["active"] else 0.0
+        return {
+            "active": _recorder["active"],
+            "filename": _recorder["filename"],
+            "elapsed": elapsed,
+        }
+
+
+class BenchmarkRequest(BaseModel):
+    file: str
+    model: Literal["turbo", "large-v3"] = "turbo"
+    runtimes: list[str]
+    silence_threshold: float = 0.0
+
+
+@app.post("/benchmark")
+def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
+    with _lock:
+        if _state["status"] in ("loading", "recording"):
+            raise HTTPException(
+                status_code=409, detail="Cannot run benchmark while a recording session is active"
+            )
+
+    clip_path = _resolve_audio(req.file)
+    audio = load_audio(str(clip_path))
+    duration = audio.size / SAMPLE_RATE
+
+    available_entries = {e["name"]: e for e in probe(req.model)}
+
+    def event_stream():
+        yield f"data: {json.dumps({'type': 'init', 'file': clip_path.name, 'duration': round(duration, 1), 'runtimes': req.runtimes})}\n\n"
+
+        results = []
+        for r_name in req.runtimes:
+            entry = available_entries.get(r_name)
+            if not entry or not entry.get("available"):
+                reason = entry.get("reason") if entry else "unknown runtime"
+                yield f"data: {json.dumps({'type': 'runtime_skip', 'runtime': r_name, 'reason': reason})}\n\n"
+                continue
+
+            yield f"data: {json.dumps({'type': 'runtime_start', 'runtime': r_name, 'label': entry['label']})}\n\n"
+
+            try:
+                runtime = _get_runtime(r_name, req.model)
+                # warmup
+                runtime.transcribe(audio[: int(5.0 * SAMPLE_RATE)])
+
+                offsets = chunk_offsets(audio.size)
+                chunk_samples = int(5.0 * SAMPLE_RATE)
+                latencies = []
+                texts = []
+                skipped = 0
+
+                for i, offset in enumerate(offsets):
+                    chunk = audio[offset : offset + chunk_samples]
+                    if is_silent(chunk, req.silence_threshold):
+                        skipped += 1
+                        ev = {
+                            "type": "chunk",
+                            "runtime": r_name,
+                            "chunk": i + 1,
+                            "total": len(offsets),
+                            "offset": round(offset / SAMPLE_RATE, 1),
+                            "latency": 0.0,
+                            "rtf": 0.0,
+                            "text": "(silence, skipped)",
+                            "silent": True,
+                        }
+                        yield f"data: {json.dumps(ev)}\n\n"
+                        continue
+
+                    t0 = time.perf_counter()
+                    t_chunk = runtime.transcribe(chunk)
+                    lat = time.perf_counter() - t0
+                    rtf = lat / 5.0
+                    latencies.append(lat)
+                    texts.append(t_chunk)
+                    ev = {
+                        "type": "chunk",
+                        "runtime": r_name,
+                        "chunk": i + 1,
+                        "total": len(offsets),
+                        "offset": round(offset / SAMPLE_RATE, 1),
+                        "latency": round(lat, 2),
+                        "rtf": round(rtf, 2),
+                        "text": t_chunk,
+                        "silent": False,
+                    }
+                    yield f"data: {json.dumps(ev)}\n\n"
+
+                if latencies:
+                    rtfs = [l / 5.0 for l in latencies]
+                    stats = {
+                        "runtime": r_name,
+                        "label": entry["label"],
+                        "chunks": len(latencies),
+                        "skipped": skipped,
+                        "mean_rtf": round(statistics.mean(rtfs), 2),
+                        "median_rtf": round(statistics.median(rtfs), 2),
+                        "worst_rtf": round(max(rtfs), 2),
+                        "mean_latency": round(statistics.mean(latencies), 2),
+                        "total_latency": round(sum(latencies), 2),
+                        "sample_text": " ".join(t for t in texts if t).strip()[:140],
+                        "keeps_up": statistics.mean(rtfs) < 1.0,
+                    }
+                    results.append(stats)
+                    yield f"data: {json.dumps({'type': 'runtime_done', 'runtime': r_name, 'stats': stats})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'runtime_done', 'runtime': r_name, 'error': 'All chunks were silence'})}\n\n"
+
+            except Exception as exc:
+                yield f"data: {json.dumps({'type': 'runtime_error', 'runtime': r_name, 'error': str(exc)})}\n\n"
+
+        valid = [r for r in results if r.get("mean_rtf") is not None]
+        winner = min(valid, key=lambda x: x["mean_rtf"]) if valid else None
+        yield f"data: {json.dumps({'type': 'complete', 'results': results, 'winner': winner})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _get_runtime(runtime_name: str, model_key: str):
