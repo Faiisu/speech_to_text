@@ -104,6 +104,31 @@ class OpenVINORuntime(Runtime):
         return self._processor.batch_decode(tokens, skip_special_tokens=True)[0].strip()
 
 
+class WhisperCppRuntime(Runtime):
+    def __init__(self, model_key: str):
+        from pywhispercpp.model import Model
+
+        path = converted_dir("whispercpp", model_key)
+        weights = sorted(path.glob("*.bin")) if path.exists() else []
+        if not weights:
+            raise FileNotFoundError(
+                f"No GGML weights in {path}. Run:\n"
+                f"    uv run python convert_model.py --runtime whispercpp --model {model_key}"
+            )
+
+        self._model = Model(
+            str(weights[0]),
+            language="th",
+            print_progress=False,
+            print_realtime=False,
+        )
+        super().__init__("whispercpp", f"whisper.cpp (GGML) — {weights[0].name}")
+
+    def transcribe(self, audio: np.ndarray) -> str:
+        segments = self._model.transcribe(audio, no_context=True)
+        return "".join(segment.text for segment in segments).strip()
+
+
 class CTranslate2Runtime(Runtime):
     def __init__(self, model_key: str):
         from faster_whisper import WhisperModel
@@ -122,6 +147,18 @@ class CTranslate2Runtime(Runtime):
         segments, _ = self._model.transcribe(
             audio,
             language="th",
+            # faster-whisper defaults to beam_size=5; the PyTorch path decodes
+            # greedily. Left alone that's ~5x the work AND makes any
+            # cross-runtime timing comparison meaningless, so match greedy.
+            beam_size=1,
+            # faster-whisper otherwise re-decodes at escalating temperatures
+            # whenever output trips its quality thresholds — up to 6 passes for
+            # one chunk. The PyTorch path has no such fallback, so leaving it on
+            # both inflates latency and makes runtimes incomparable.
+            temperature=0.0,
+            # each chunk is transcribed independently here, so carrying text
+            # across calls would only help a hallucination propagate
+            condition_on_previous_text=False,
             no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
             repetition_penalty=REPETITION_PENALTY,
         )
@@ -185,11 +222,31 @@ def probe(model_key: str = "turbo") -> list[dict]:
         }
     )
 
+    ggml = converted_dir("whispercpp", model_key)
+    if not _installed("pywhispercpp"):
+        reason = "pywhispercpp not installed"
+    elif not (ggml.exists() and any(ggml.glob("*.bin"))):
+        reason = f"weights not fetched yet — convert_model.py --runtime whispercpp --model {model_key}"
+    else:
+        reason = "ready"
+    entries.append(
+        {
+            "name": "whispercpp",
+            "label": "whisper.cpp (GGML) · CPU",
+            "available": reason == "ready",
+            "reason": reason,
+            "needs_conversion": True,
+        }
+    )
+
     return entries
 
 
+RUNTIME_NAMES = ["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"]
+
+
 def load_runtime(name: str, model_key: str) -> Runtime:
-    if name not in {"pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2"}:
+    if name not in RUNTIME_NAMES:
         raise ValueError(f"Unknown runtime {name!r}")
     if model_key not in MODEL_REPOS:
         raise ValueError(f"Unknown model {model_key!r}")
@@ -200,6 +257,8 @@ def load_runtime(name: str, model_key: str) -> Runtime:
         return OpenVINORuntime(model_key, "GPU")
     if name == "openvino-cpu":
         return OpenVINORuntime(model_key, "CPU")
+    if name == "whispercpp":
+        return WhisperCppRuntime(model_key)
     return CTranslate2Runtime(model_key)
 
 

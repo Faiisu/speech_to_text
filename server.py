@@ -56,7 +56,9 @@ _state: dict = {
 
 class StartRequest(BaseModel):
     model: Literal["turbo", "large-v3"]
-    runtime: Literal["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2"] = "pytorch"
+    runtime: Literal[
+        "pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"
+    ] = "pytorch"
     source: Literal["mic", "file"] = "mic"
     file: str | None = None  # filename inside audio/, when source is "file"
     keywords: str | None = None

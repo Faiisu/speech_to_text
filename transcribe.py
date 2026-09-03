@@ -413,7 +413,7 @@ def main() -> None:
     parser.add_argument(
         "--runtime",
         default="pytorch",
-        choices=["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2"],
+        choices=["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"],
         help="How to execute the model (default: pytorch). Run "
         "'uv run python runtimes.py' to see which are usable on this machine.",
     )

@@ -86,15 +86,53 @@ def convert_ctranslate2(model_key: str) -> None:
     print(f"  wrote {target}")
 
 
+# Community GGML conversions for whisper.cpp. Only turbo has one published;
+# large-v3 would have to be converted with whisper.cpp's own script.
+GGML_REPOS = {"turbo": "korakotlee/typhoon-whisper-turbo-ggml"}
+
+
+def convert_whispercpp(model_key: str) -> None:
+    repo = GGML_REPOS.get(model_key)
+    if repo is None:
+        sys.exit(
+            f"No published GGML build for {model_key!r}. Only "
+            f"{', '.join(GGML_REPOS)} has one. To make your own, use whisper.cpp's\n"
+            "    models/convert-h5-to-ggml.py\n"
+            f"against {MODEL_REPOS[model_key]}, then drop the .bin into "
+            f"{converted_dir('whispercpp', model_key)}."
+        )
+
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        sys.exit("huggingface_hub isn't available — it ships with transformers, so check the venv.")
+
+    target = converted_dir("whispercpp", model_key)
+    target.mkdir(parents=True, exist_ok=True)
+
+    print(f"Fetching {repo} (community GGML conversion, not published by typhoon-ai)...")
+    snapshot_download(repo_id=repo, local_dir=str(target), allow_patterns=["*.bin"])
+
+    weights = sorted(target.glob("*.bin"))
+    if not weights:
+        sys.exit(f"No .bin weights found in {repo} — check what that repo actually contains.")
+    for path in weights:
+        print(f"  {path.name}  ({path.stat().st_size / 1e6:.0f} MB)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runtime", choices=["openvino", "ctranslate2"], required=True)
+    parser.add_argument(
+        "--runtime", choices=["openvino", "ctranslate2", "whispercpp"], required=True
+    )
     parser.add_argument("--model", choices=MODEL_REPOS.keys(), required=True)
     args = parser.parse_args()
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     if args.runtime == "openvino":
         convert_openvino(args.model)
+    elif args.runtime == "whispercpp":
+        convert_whispercpp(args.model)
     else:
         convert_ctranslate2(args.model)
 

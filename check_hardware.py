@@ -83,6 +83,7 @@ def main() -> None:
         ("optimum.intel", "OpenVINO wrapper for transformers models"),
         ("intel_extension_for_pytorch", "IPEX — CPU bf16/int8 + Arc GPU"),
         ("faster_whisper", "CTranslate2 int8 CPU"),
+        ("pywhispercpp", "whisper.cpp GGML (CPU/Metal/Vulkan)"),
         ("onnxruntime", "ONNX Runtime"),
     ]:
         try:

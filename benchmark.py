@@ -95,7 +95,7 @@ def main() -> None:
     parser.add_argument(
         "--runtime",
         default="pytorch",
-        choices=["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2"],
+        choices=["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"],
         help="How to execute the model (default: pytorch)",
     )
     parser.add_argument("--verbose", action="store_true", help="Print every chunk")

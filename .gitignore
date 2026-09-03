@@ -5,6 +5,7 @@ models/
 __pycache__/
 *.pyc
 .scratch/
+.DS_Store
 
 # uploaded/test clips
 audio/*.wav

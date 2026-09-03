@@ -227,6 +227,7 @@ The model is always Typhoon Whisper; what changes per machine is the machinery t
 | `openvino-gpu` | Intel integrated GPU | The interesting one on a Core Ultra machine. |
 | `openvino-cpu` | CPU | |
 | `ctranslate2` | CPU, int8 | Wants AVX-VNNI to be worth it — check with `check_hardware.py`. |
+| `whispercpp` | CPU / GPU (GGML) | Uses whisper.cpp via pywhispercpp; benefits from AVX-VNNI / SIMD or GPU acceleration. |
 
 See what's usable here and why the rest aren't:
 
@@ -239,9 +240,11 @@ Everything except `pytorch` needs the weights converted once per machine, and th
 ```bash
 uv add faster-whisper                  # for ctranslate2
 uv add "optimum-intel[openvino]"       # for openvino
+uv add pywhispercpp                    # for whispercpp
 
 uv run python convert_model.py --runtime ctranslate2 --model turbo
 uv run python convert_model.py --runtime openvino    --model turbo
+uv run python convert_model.py --runtime whispercpp  --model turbo
 ```
 
 Converted weights go in `models/` (gitignored) and are reused after that. The panel lists unavailable runtimes greyed out with the reason, and `POST /start` refuses one that isn't ready rather than failing mid-session.
