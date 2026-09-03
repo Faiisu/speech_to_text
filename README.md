@@ -174,6 +174,22 @@ Typography loads IBM Plex (Mono / Sans Condensed / Sans Thai) from Google Fonts.
 
 The Input field is a dropdown listing every microphone the server can see, so you don't need the CLI's `--list-devices` to find an index. Plugged in a USB mic or paired a Bluetooth headset while the page was open? Press **Rescan** — PortAudio caches its device list at startup, so a plain page refresh won't reveal a device connected since then. The picker (and Rescan) are disabled while a session is running.
 
+Where more than one host API is present (typical on Linux: ALSA alongside PulseAudio/PipeWire), each entry is labelled with the one it comes from, since that changes what selecting it actually does.
+
+#### Does hot-plug detection work on your machine?
+
+**Verified on macOS/CoreAudio only.** Rescan re-initialises PortAudio, which does force a real re-enumeration from the OS (a cached device query takes ~0.07ms; the re-init path ~2.75ms), but whether a newly-connected device then *appears* depends on the audio stack. On Linux it may not: when audio goes through PulseAudio/PipeWire, PortAudio often sees one aggregate input (`pulse` / `default`) rather than each piece of hardware, so plugging in a USB mic changes nothing in this list — you select the aggregate device here and pick the actual microphone at the OS level (`pactl set-default-source`, or `pavucontrol`).
+
+To find out what your machine does, run:
+
+```bash
+uv run python check_devices.py
+```
+
+It lists the inputs, waits for you to plug or unplug something, then re-scans exactly the way the Rescan button does and reports what changed.
+
+Related: ALSA can reassign device indices when hardware is added or removed, so the GUI tracks your selected device **by name** rather than by index. If the device you picked is gone after a rescan, it falls back to the system default and says so, rather than silently recording from whatever now occupies that index.
+
 ### Live feed
 
 The GUI's "Live feed" panel subscribes to `/stream` and shows chunk transcripts and keyword hits **while you're still speaking** — this is genuine streaming transcription, not record-then-process. Each 5-second chunk (1s overlap) is transcribed and pushed to the page as soon as it's ready:
