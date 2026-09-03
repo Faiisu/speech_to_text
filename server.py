@@ -6,9 +6,12 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
+import shutil
+import subprocess
+
 import sounddevice as sd
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -17,11 +20,15 @@ from transcribe import (
     DEFAULT_BACKEND_URL,
     DEFAULT_SILENCE_RMS,
     MODEL_REPOS,
+    SAMPLE_RATE,
     is_silent,
+    load_audio,
     run_recording_session,
+    run_replay_session,
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
+AUDIO_DIR = Path(__file__).parent / "audio"
 
 app = FastAPI()
 
@@ -50,6 +57,8 @@ _state: dict = {
 class StartRequest(BaseModel):
     model: Literal["turbo", "large-v3"]
     runtime: Literal["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2"] = "pytorch"
+    source: Literal["mic", "file"] = "mic"
+    file: str | None = None  # filename inside audio/, when source is "file"
     keywords: str | None = None
     mic_device: str | None = None
     silence_threshold: float = DEFAULT_SILENCE_RMS
@@ -100,6 +109,86 @@ def stream() -> StreamingResponse:
     )
 
 
+def _resolve_audio(name: str | None) -> Path:
+    """Resolve a filename to a clip inside audio/, refusing anything outside it."""
+    if not name:
+        raise HTTPException(status_code=422, detail="No audio file chosen")
+    path = (AUDIO_DIR / name).resolve()
+    if not path.is_relative_to(AUDIO_DIR.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"No such audio file: {name}")
+    return path
+
+
+def _to_16k_mono(path: Path) -> None:
+    """Rewrite a clip in place as 16kHz mono, which is all the models accept."""
+    import soundfile as sf
+
+    info = sf.info(str(path))
+    if info.samplerate == SAMPLE_RATE and info.channels == 1:
+        return
+
+    if shutil.which("ffmpeg") is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{path.name} is {info.samplerate}Hz/{info.channels}ch but 16kHz mono is "
+                "required, and ffmpeg isn't installed to convert it. Convert it yourself: "
+                f"ffmpeg -i in.wav -ar 16000 -ac 1 {path.name}"
+            ),
+        )
+
+    converted = path.with_suffix(".converted.wav")
+    result = subprocess.run(
+        ["ffmpeg", "-y", "-i", str(path), "-ar", str(SAMPLE_RATE), "-ac", "1", str(converted)],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        converted.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=f"Could not convert {path.name} to 16kHz mono")
+    converted.replace(path)
+
+
+@app.get("/audio-files")
+def audio_files() -> dict:
+    import soundfile as sf
+
+    AUDIO_DIR.mkdir(exist_ok=True)
+    files = []
+    for path in sorted(AUDIO_DIR.glob("*.wav")):
+        try:
+            info = sf.info(str(path))
+            files.append(
+                {"name": path.name, "seconds": round(info.duration, 1), "samplerate": info.samplerate}
+            )
+        except Exception:
+            continue  # unreadable file — just leave it out of the list
+    return {"files": files}
+
+
+@app.post("/audio-files")
+async def upload_audio(file: UploadFile) -> dict:
+    if not file.filename or not file.filename.lower().endswith(".wav"):
+        raise HTTPException(status_code=422, detail="Only .wav files are accepted")
+
+    AUDIO_DIR.mkdir(exist_ok=True)
+    target = (AUDIO_DIR / Path(file.filename).name).resolve()
+    if not target.is_relative_to(AUDIO_DIR.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid file name")
+
+    with target.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+
+    try:
+        _to_16k_mono(target)
+    except HTTPException:
+        target.unlink(missing_ok=True)
+        raise
+
+    return {"name": target.name}
+
+
 def _get_runtime(runtime_name: str, model_key: str):
     key = (runtime_name, model_key)
     if key not in _runtimes:
@@ -126,7 +215,15 @@ def _run_session(req: StartRequest) -> None:
             except ValueError:
                 pass
 
-        broadcast({"type": "session", "state": "recording", "session_id": session_id})
+        broadcast(
+            {
+                "type": "session",
+                "state": "recording",
+                "session_id": session_id,
+                "source": req.source,
+                "file": req.file,
+            }
+        )
 
         def on_event(event: dict) -> None:
             if event["type"] == "chunk":
@@ -143,17 +240,30 @@ def _run_session(req: StartRequest) -> None:
                 print(f"[warning] {event['message']}")
             broadcast(event)
 
-        audio = run_recording_session(
-            runtime,
-            keywords,
-            req.model,
-            req.backend_url,
-            mic_device,
-            req.silence_threshold,
-            _state["stop_event"],
-            session_id,
-            on_event=on_event,
-        )
+        if req.source == "file":
+            audio = run_replay_session(
+                runtime,
+                load_audio(str(_resolve_audio(req.file))),
+                keywords,
+                req.model,
+                req.backend_url,
+                req.silence_threshold,
+                _state["stop_event"],
+                session_id,
+                on_event=on_event,
+            )
+        else:
+            audio = run_recording_session(
+                runtime,
+                keywords,
+                req.model,
+                req.backend_url,
+                mic_device,
+                req.silence_threshold,
+                _state["stop_event"],
+                session_id,
+                on_event=on_event,
+            )
 
         if is_silent(audio, req.silence_threshold):
             reference_transcript = "(silence, skipped)"
@@ -192,6 +302,10 @@ def start(req: StartRequest) -> dict:
             raise HTTPException(
                 status_code=409, detail=f"Runtime {req.runtime!r} unavailable: {entry['reason']}"
             )
+
+    # same reasoning for the clip: fail now, not after the session starts
+    if req.source == "file":
+        _resolve_audio(req.file)
 
     with _lock:
         if _state["status"] in ("loading", "recording"):

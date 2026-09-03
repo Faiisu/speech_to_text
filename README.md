@@ -190,6 +190,16 @@ It lists the inputs, waits for you to plug or unplug something, then re-scans ex
 
 Related: ALSA can reassign device indices when hardware is added or removed, so the GUI tracks your selected device **by name** rather than by index. If the device you picked is gone after a rescan, it falls back to the system default and says so, rather than silently recording from whatever now occupies that index.
 
+### Replaying a clip instead of recording
+
+Set **Source** to *Audio file* and the session reads from a clip instead of the microphone. Everything else is identical — the same 5s/1s-overlap chunking, the same live feed, the same keyword spotting and backend reporting — so it's the easy way to see output without recording anything, and the only way to get numbers you can actually compare (a live session is different every time).
+
+Clips live in `audio/` on the server. Use **Upload** in the panel to add one from whatever machine you're browsing from, or drop files into `audio/` directly. Uploads that aren't 16kHz mono are converted automatically with ffmpeg; without ffmpeg installed you get a message telling you the conversion command to run yourself.
+
+Chunks are processed as fast as the model manages rather than paced to real time, so a 60s clip doesn't take 60s to replay — the reported latency and RTF per chunk are still the real figures.
+
+This is the quickest way to compare runtimes or models: replay the same clip, change one thing, replay again.
+
 ### Live feed
 
 The GUI's "Live feed" panel subscribes to `/stream` and shows chunk transcripts and keyword hits **while you're still speaking** — this is genuine streaming transcription, not record-then-process. Each 5-second chunk (1s overlap) is transcribed and pushed to the page as soon as it's ready:

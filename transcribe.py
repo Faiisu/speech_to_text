@@ -134,6 +134,75 @@ def spot_keywords(
             on_event({"type": "keyword", "keyword": keyword, "time": now})
 
 
+def run_replay_session(
+    runtime,
+    audio: np.ndarray,
+    keywords: list[str],
+    model_key: str,
+    backend_url: str,
+    silence_threshold: float,
+    stop_event: threading.Event,
+    session_id: str,
+    on_event=None,
+) -> np.ndarray:
+    """Feed a file through the same chunking a live session uses.
+
+    Emits exactly the events run_recording_session emits, so anything watching
+    the feed can't tell the difference — but the audio comes from disk, so the
+    run is repeatable and needs no microphone. Chunks are processed as fast as
+    the model manages rather than paced to real time; the reported latency and
+    RTF are still the real per-chunk figures.
+    """
+    chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
+    step_samples = chunk_samples - OVERLAP_SECONDS * SAMPLE_RATE
+    last_alerted: dict[str, float] = {}
+
+    def emit(event: dict) -> None:
+        if on_event:
+            on_event(event)
+
+    start = 0
+    while start + chunk_samples <= audio.size:
+        if stop_event.is_set():
+            break
+
+        chunk = audio[start : start + chunk_samples]
+        chunk_time = start / SAMPLE_RATE
+
+        if is_silent(chunk, silence_threshold):
+            emit({"type": "chunk", "time": chunk_time, "text": None, "silent": True})
+            start += step_samples
+            continue
+
+        chunk_start = time.perf_counter()
+        text = runtime.transcribe(chunk)
+        latency = time.perf_counter() - chunk_start
+        emit(
+            {
+                "type": "chunk",
+                "time": chunk_time,
+                "text": text,
+                "silent": False,
+                "latency": latency,
+                "rtf": latency / CHUNK_SECONDS,
+            }
+        )
+        if keywords:
+            spot_keywords(
+                text,
+                keywords,
+                last_alerted,
+                chunk_time,
+                model_key=model_key,
+                session_id=session_id,
+                backend_url=backend_url,
+                on_event=emit,
+            )
+        start += step_samples
+
+    return audio
+
+
 def run_recording_session(
     runtime,
     keywords: list[str],

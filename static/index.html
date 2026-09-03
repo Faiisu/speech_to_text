@@ -191,6 +191,9 @@
     margin: 0 0 0.15rem;
     font-weight: 600;
   }
+  /* an author `display` rule outranks the UA stylesheet's [hidden] rule, so
+     .field's display:flex would otherwise keep hidden fields on screen */
+  [hidden] { display: none !important; }
   .field { display: flex; flex-direction: column; gap: 0.3rem; }
   .field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
   .field-head .linkbtn { padding: 0; }
@@ -385,12 +388,30 @@
       </div>
 
       <div class="field">
+        <label for="source">Source</label>
+        <select id="source" onchange="applySource()">
+          <option value="mic">Microphone</option>
+          <option value="file">Audio file</option>
+        </select>
+      </div>
+
+      <div class="field" id="micField">
         <div class="field-head">
           <label for="micDevice">Input</label>
           <button class="linkbtn" id="rescanBtn" onclick="loadDevices(true)">Rescan</button>
         </div>
         <select id="micDevice"><option value="">System default</option></select>
         <span class="hint" id="deviceHint">Looking for inputs…</span>
+      </div>
+
+      <div class="field" id="fileField" hidden>
+        <div class="field-head">
+          <label for="audioFile">Clip</label>
+          <button class="linkbtn" id="uploadBtn" onclick="document.getElementById('uploadInput').click()">Upload</button>
+        </div>
+        <input id="uploadInput" type="file" accept=".wav,audio/wav" hidden onchange="uploadAudio(this)">
+        <select id="audioFile"></select>
+        <span class="hint" id="fileHint">Replays a clip through the same pipeline — no microphone needed, and repeatable.</span>
       </div>
 
       <div class="field">
@@ -482,6 +503,9 @@
     document.getElementById('micDevice').disabled = busy;
     document.getElementById('runtime').disabled = busy;
     document.getElementById('model').disabled = busy;
+    document.getElementById('source').disabled = busy;
+    document.getElementById('audioFile').disabled = busy;
+    document.getElementById('uploadBtn').disabled = busy;
   }
 
   function setNote(html, isError) {
@@ -494,16 +518,24 @@
       const data = await (await fetch('/status')).json();
       applyButtonState(data.status);
       lamp.dataset.state = data.status;
-      lampText.textContent = LAMP_TEXT[data.status] || data.status;
+      const replaying = data.status === 'recording' && data.config?.source === 'file';
+      lampText.textContent = replaying ? 'Replaying' : (LAMP_TEXT[data.status] || data.status);
 
       if (uiError) {
         setNote(uiError, true);
       } else if (data.error) {
         setNote(`Session failed. ${escapeHtml(data.error)}`, true);
       } else if (data.status === 'recording') {
-        setNote(`Recording.<br><span class="ref">${escapeHtml(data.session_id || '')}</span>`);
+        const what = data.config?.source === 'file'
+          ? `Replaying ${escapeHtml(data.config.file || 'clip')}.`
+          : 'Recording.';
+        setNote(`${what}<br><span class="ref">${escapeHtml(data.session_id || '')}</span>`);
       } else if (data.status === 'loading') {
-        setNote('Loading the model. Recording starts by itself once it\'s in memory.');
+        setNote(
+          data.config?.source === 'file'
+            ? 'Loading the model. The replay starts by itself once it\'s in memory.'
+            : 'Loading the model. Recording starts by itself once it\'s in memory.'
+        );
       } else if (data.status === 'stopping') {
         setNote('Finishing the current chunk, then transcribing the full clip.');
       } else {
@@ -537,6 +569,8 @@
     const body = {
       model: document.getElementById('model').value,
       runtime: document.getElementById('runtime').value,
+      source: document.getElementById('source').value,
+      file: document.getElementById('audioFile').value || null,
       keywords: document.getElementById('keywords').value.trim() || null,
       mic_device: document.getElementById('micDevice').value.trim() || null,
     };
@@ -628,6 +662,69 @@
       describeRuntime();
     } catch (err) {
       document.getElementById('runtimeHint').textContent = 'Could not check available runtimes.';
+    }
+  }
+
+  // ---- audio source ----
+  function applySource() {
+    const isFile = document.getElementById('source').value === 'file';
+    document.getElementById('micField').hidden = isFile;
+    document.getElementById('fileField').hidden = !isFile;
+    startBtn.lastChild.textContent = isFile ? 'Replay clip' : 'Start recording';
+    stopBtn.lastChild.textContent = isFile ? 'Stop replay' : 'Stop recording';
+    if (isFile) loadAudioFiles();
+  }
+
+  async function loadAudioFiles() {
+    const select = document.getElementById('audioFile');
+    const hint = document.getElementById('fileHint');
+    const previous = select.value;
+    try {
+      const data = await (await fetch('/audio-files')).json();
+      select.innerHTML = '';
+      if (!data.files.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No clips yet';
+        select.appendChild(option);
+        hint.textContent = 'Upload a .wav to replay, or drop one into the server’s audio/ folder.';
+        return;
+      }
+      for (const file of data.files) {
+        const option = document.createElement('option');
+        option.value = file.name;
+        option.textContent = `${file.name}  (${file.seconds}s)`;
+        select.appendChild(option);
+      }
+      if ([...select.options].some(o => o.value === previous)) select.value = previous;
+      hint.textContent = `${data.files.length} clip${data.files.length === 1 ? '' : 's'} available. Replays through the same pipeline as a live session.`;
+    } catch (err) {
+      hint.textContent = 'Could not list clips.';
+    }
+  }
+
+  async function uploadAudio(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const hint = document.getElementById('fileHint');
+    hint.textContent = `Uploading ${file.name}…`;
+
+    const body = new FormData();
+    body.append('file', file);
+    try {
+      const res = await fetch('/audio-files', { method: 'POST', body });
+      if (!res.ok) {
+        showError(`Upload failed — ${describeError((await res.json()).detail)}`);
+        hint.textContent = 'Upload failed.';
+        return;
+      }
+      const { name } = await res.json();
+      await loadAudioFiles();
+      document.getElementById('audioFile').value = name;
+    } catch (err) {
+      showError(`Upload failed — ${err}`);
+    } finally {
+      input.value = '';  // let the same file be picked again
     }
   }
 
@@ -740,7 +837,9 @@
     } else if (ev.type === 'session') {
       if (ev.state === 'recording') {
         resetReadouts();
-        append(marker('start', 'Recording started', ev.session_id));
+        append(ev.source === 'file'
+          ? marker('start', `Replaying ${ev.file}`, ev.session_id)
+          : marker('start', 'Recording started', ev.session_id));
       } else if (ev.state === 'stopped') {
         append(marker('end', 'Stopped', ''));
         const f = document.createElement('div');
@@ -768,6 +867,7 @@
   connectFeed();
   loadRuntimes();
   loadDevices(false);
+  applySource();
   refreshStatus();
   setInterval(refreshStatus, 3000);
 </script>
