@@ -586,7 +586,10 @@
   async function loadDevices(rescan) {
     const select = document.getElementById('micDevice');
     const hint = document.getElementById('deviceHint');
-    const previous = select.value;
+    // Track the previous pick by NAME, not index: on Linux, ALSA card numbers
+    // shift when devices are plugged or unplugged, so restoring by index could
+    // silently point at a different microphone after a rescan.
+    const previousName = select.selectedOptions[0]?.dataset.name || '';
 
     try {
       const res = await fetch('/devices' + (rescan ? '?rescan=true' : ''));
@@ -602,15 +605,24 @@
       fallback.textContent = 'System default';
       select.appendChild(fallback);
 
+      // the host API only disambiguates when more than one is present (Linux)
+      const showHostapi = data.hostapi_count > 1;
       for (const device of data.devices) {
         const option = document.createElement('option');
         option.value = String(device.index);
-        option.textContent = `${device.index} · ${device.name}${device.default ? '  (default)' : ''}`;
+        option.dataset.name = device.name;
+        const via = showHostapi ? `  [${device.hostapi}]` : '';
+        option.textContent = `${device.index} · ${device.name}${via}${device.default ? '  (default)' : ''}`;
         select.appendChild(option);
       }
 
-      // keep the operator's pick across a rescan when the device is still there
-      select.value = [...select.options].some(o => o.value === previous) ? previous : '';
+      const match = [...select.options].find(o => o.dataset.name === previousName);
+      if (previousName && !match) {
+        select.value = '';
+        hint.textContent = `“${previousName}” is no longer connected — fell back to the system default.`;
+        return;
+      }
+      if (match) select.value = match.value;
 
       const n = data.devices.length;
       hint.textContent = n

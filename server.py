@@ -240,17 +240,29 @@ def devices(rescan: bool = False) -> dict:
     except (TypeError, ValueError, IndexError):
         default_index = None
 
+    # On Linux several host APIs coexist (ALSA, and PulseAudio/PipeWire
+    # surfacing through it), and which one a device comes from changes what
+    # selecting it actually does — so report it. macOS only has Core Audio.
+    hostapis = sd.query_hostapis()
+
     inputs = [
         {
             "index": index,
             "name": device["name"],
             "channels": device["max_input_channels"],
             "default": index == default_index,
+            "hostapi": hostapis[device["hostapi"]]["name"]
+            if device["hostapi"] < len(hostapis)
+            else "unknown",
         }
         for index, device in enumerate(sd.query_devices())
         if device["max_input_channels"] > 0
     ]
-    return {"devices": inputs, "default_index": default_index}
+    return {
+        "devices": inputs,
+        "default_index": default_index,
+        "hostapi_count": len({d["hostapi"] for d in inputs}),
+    }
 
 
 @app.get("/status")
