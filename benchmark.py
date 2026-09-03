@@ -24,6 +24,7 @@ import torch
 from runtimes import load_runtime
 from transcribe import (
     CHUNK_SECONDS,
+    DEFAULT_SILENCE_RMS,
     MODEL_REPOS,
     OVERLAP_SECONDS,
     SAMPLE_RATE,
@@ -168,9 +169,9 @@ def main() -> None:
         help="Comma-separated torch thread counts to compare, e.g. 4,8,14. "
         "Defaults to whatever torch picks on its own.",
     )
-    parser.add_argument("--silence-threshold", type=float, default=0.0,
-                        help="Set above 0 to skip quiet chunks the way a live session does "
-                             "(default 0 = transcribe every chunk, for comparable timings)")
+    parser.add_argument("--silence-threshold", type=float, default=DEFAULT_SILENCE_RMS,
+                        help=f"Set above 0 to skip quiet chunks the way a live session does "
+                             f"(default: {DEFAULT_SILENCE_RMS})")
     parser.add_argument(
         "--runtime",
         default="pytorch",

@@ -624,7 +624,7 @@
 
       <div class="field">
         <label for="silenceThreshold">Silence threshold</label>
-        <input id="silenceThreshold" type="number" step="0.001" value="0.01">
+        <input id="silenceThreshold" type="number" step="0.001" value="0.02">
         <span class="hint">Chunks quieter than this are skipped instead of transcribed.</span>
       </div>
 
@@ -692,8 +692,8 @@
 
       <div class="field">
         <label for="benchSilence">Silence threshold</label>
-        <input id="benchSilence" type="number" step="0.001" value="0.0">
-        <span class="hint">0 = transcribe every chunk for accurate latency comparison.</span>
+        <input id="benchSilence" type="number" step="0.001" value="0.02">
+        <span class="hint">0.02 matches real-time sessions (chunks quieter than this are skipped).</span>
       </div>
 
       <div class="transport">
@@ -1332,7 +1332,8 @@
       alert('Please select at least one runtime.');
       return;
     }
-    const silence = parseFloat(document.getElementById('benchSilence').value) || 0.0;
+    const silenceVal = parseFloat(document.getElementById('benchSilence').value);
+    const silence = Number.isNaN(silenceVal) ? 0.02 : silenceVal;
 
     const runBtn = document.getElementById('benchRunBtn');
     runBtn.disabled = true;

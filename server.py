@@ -344,7 +344,7 @@ class BenchmarkRequest(BaseModel):
     file: str
     model: Literal["turbo", "large-v3"] = "turbo"
     runtimes: list[str]
-    silence_threshold: float = 0.0
+    silence_threshold: float = DEFAULT_SILENCE_RMS
 
 
 @app.post("/benchmark")

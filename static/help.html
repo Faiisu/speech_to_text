@@ -273,7 +273,7 @@
   </div>
 
   <div class="entry">
-    <div class="entry-head"><h3>Silence threshold</h3><span class="tag">default 0.01</span></div>
+    <div class="entry-head"><h3>Silence threshold</h3><span class="tag">default 0.02</span></div>
     <p>A loudness floor. Windows quieter than this are skipped entirely and never reach the model — shown as <span class="mono">silence — skipped</span>.</p>
     <p>This exists because these models have no way to output "nothing was said". Fed silence or room tone, they invent plausible text instead, which would produce phantom transcripts and false keyword hits. Gating on loudness first is what prevents that.</p>
     <p class="muted"><strong>Raise it</strong> if words appear while nobody is speaking — your room's noise floor is above the current setting. <strong>Lower it</strong> if quiet speech is being skipped. There's no universal correct value: it depends on the microphone's gain and how noisy the room is.</p>

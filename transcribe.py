@@ -31,7 +31,7 @@ DEBOUNCE_SECONDS = STEP_SECONDS + 0.5
 # (there's no "say nothing" output). Skip transcribing a chunk entirely if
 # its audio energy is below this RMS threshold, rather than trusting the
 # model to recognize its own silence.
-DEFAULT_SILENCE_RMS = 0.01
+DEFAULT_SILENCE_RMS = 0.02
 # Bound on how long to wait for the chunk-processing thread to notice a stop
 # request and exit. Without this, a stuck or pathologically slow transcribe()
 # call (observed in practice with a hung/slow inference call) would hang the
