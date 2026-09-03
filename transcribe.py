@@ -27,6 +27,11 @@ STEP_SECONDS = CHUNK_SECONDS - OVERLAP_SECONDS
 # duplicate detection always lands exactly one chunk later. The debounce
 # window has to cover that full step, not just the overlap itself.
 DEBOUNCE_SECONDS = STEP_SECONDS + 0.5
+# Whisper-family models hallucinate plausible-sounding text from silence
+# (there's no "say nothing" output). Skip transcribing a chunk entirely if
+# its audio energy is below this RMS threshold, rather than trusting the
+# model to recognize its own silence.
+DEFAULT_SILENCE_RMS = 0.01
 
 
 def pick_device() -> str:
@@ -65,8 +70,21 @@ def load_audio(path: str) -> np.ndarray:
 
 
 def transcribe(asr_pipeline, audio: np.ndarray) -> str:
-    result = asr_pipeline({"array": audio, "sampling_rate": SAMPLE_RATE})
+    # Whisper-family models can get stuck regenerating the same phrase in a
+    # loop when there's no clear speech to anchor generation (a distinct
+    # failure mode from silence hallucination in ADR 0004 — this happens
+    # even when is_silent() lets the chunk through). These generation
+    # settings are the standard mitigation.
+    result = asr_pipeline(
+        {"array": audio, "sampling_rate": SAMPLE_RATE},
+        generate_kwargs={"no_repeat_ngram_size": 3, "repetition_penalty": 1.3},
+    )
     return result["text"].strip()
+
+
+def is_silent(audio: np.ndarray, threshold: float) -> bool:
+    rms = float(np.sqrt(np.mean(np.square(audio)))) if audio.size else 0.0
+    return rms < threshold
 
 
 def report_event(backend_url: str, word: str, model_key: str, session_id: str) -> None:
@@ -108,13 +126,22 @@ def spot_keywords(
 
 
 def record_with_streaming(
-    asr_pipeline, keywords: list[str], model_key: str, backend_url: str
+    asr_pipeline,
+    keywords: list[str],
+    model_key: str,
+    backend_url: str,
+    mic_device: int | str | None,
+    auto_start: bool,
+    silence_threshold: float,
 ) -> np.ndarray:
     """Records from the mic, printing a chunked live transcript as it goes.
 
     Returns the full recording for a final full-clip reference pass.
     """
-    input("Press Enter to start recording...")
+    if auto_start:
+        print("Recording starts now (--auto-start). Press Enter to stop.")
+    else:
+        input("Press Enter to start recording...")
 
     session_id = str(uuid.uuid4())
     print(f"[session] {session_id}")
@@ -146,6 +173,12 @@ def record_with_streaming(
 
             chunk = buffer[next_start : next_start + chunk_samples]
             chunk_time = next_start / SAMPLE_RATE
+
+            if is_silent(chunk, silence_threshold):
+                print(f"[chunk @ {chunk_time:.1f}s] (silence, skipped)")
+                next_start += step_samples
+                continue
+
             chunk_start = time.perf_counter()
             text = transcribe(asr_pipeline, chunk)
             latency = time.perf_counter() - chunk_start
@@ -164,7 +197,11 @@ def record_with_streaming(
             next_start += step_samples
 
     stream = sd.InputStream(
-        samplerate=SAMPLE_RATE, channels=1, dtype="float32", callback=callback
+        samplerate=SAMPLE_RATE,
+        channels=1,
+        dtype="float32",
+        callback=callback,
+        device=mic_device,
     )
     with stream:
         worker = threading.Thread(target=chunk_loop, daemon=True)
@@ -191,7 +228,7 @@ def record_with_streaming(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=MODEL_REPOS.keys(), required=True)
+    parser.add_argument("--model", choices=MODEL_REPOS.keys(), required=False)
     parser.add_argument(
         "--file", help="Path to a 16kHz mono WAV file. Omit to record live from the microphone."
     )
@@ -204,7 +241,47 @@ def main() -> None:
         default=DEFAULT_BACKEND_URL,
         help=f"Backend URL to report detected keywords to (default: {DEFAULT_BACKEND_URL})",
     )
+    parser.add_argument(
+        "--mic-device",
+        help="Input device index or name substring to record from (see --list-devices). "
+        "Omit to use the system default input.",
+    )
+    parser.add_argument(
+        "--list-devices",
+        action="store_true",
+        help="List available audio input/output devices (by index) and exit.",
+    )
+    parser.add_argument(
+        "--auto-start",
+        action="store_true",
+        help="Start recording immediately once the model is loaded, without waiting for Enter. "
+        "Still requires Enter to stop.",
+    )
+    parser.add_argument(
+        "--silence-threshold",
+        type=float,
+        default=DEFAULT_SILENCE_RMS,
+        help="RMS energy below which a chunk is treated as silence and skipped, "
+        f"to avoid Whisper hallucinating text from silence (default: {DEFAULT_SILENCE_RMS}). "
+        "Lower it if quiet speech is being skipped; raise it if background noise still "
+        "triggers hallucinated transcripts.",
+    )
     args = parser.parse_args()
+
+    if args.list_devices:
+        print(sd.query_devices())
+        return
+
+    if args.model is None:
+        parser.error("--model is required unless --list-devices is given")
+
+    mic_device: int | str | None = args.mic_device
+    if mic_device is not None:
+        try:
+            mic_device = int(mic_device)
+        except ValueError:
+            pass  # treat as a device-name substring instead
+
     keywords = [k.strip() for k in args.keywords.split(",") if k.strip()] if args.keywords else []
 
     device = pick_device()
@@ -216,15 +293,25 @@ def main() -> None:
     audio = (
         load_audio(args.file)
         if args.file
-        else record_with_streaming(asr_pipeline, keywords, args.model, args.backend_url)
+        else record_with_streaming(
+            asr_pipeline,
+            keywords,
+            args.model,
+            args.backend_url,
+            mic_device,
+            args.auto_start,
+            args.silence_threshold,
+        )
     )
 
-    start = time.perf_counter()
-    text = transcribe(asr_pipeline, audio)
-    elapsed = time.perf_counter() - start
-
-    print(f"[reference transcript] {text}")
-    print(f"[latency] {elapsed:.2f}s")
+    if is_silent(audio, args.silence_threshold):
+        print("[reference transcript] (silence, skipped)")
+    else:
+        start = time.perf_counter()
+        text = transcribe(asr_pipeline, audio)
+        elapsed = time.perf_counter() - start
+        print(f"[reference transcript] {text}")
+        print(f"[latency] {elapsed:.2f}s")
 
 
 if __name__ == "__main__":

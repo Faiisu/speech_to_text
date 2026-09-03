@@ -4,11 +4,11 @@
 
 **Blocked by:** 01, 02
 
-**Status:** code complete, awaiting live verification (sandbox has no mic access; needs a human to run it interactively)
+**Status:** done — verified live by the user
 
 - [x] While recording is active, audio is buffered into 5s chunks with 1s overlap between consecutive chunks
 - [x] Each chunk is transcribed independently as soon as its window fills, without waiting for recording to stop
 - [x] Each chunk's result prints as a new log line (append-only, not overwriting previous lines) showing: transcript text, latency, and RTF_chunk
 - [x] Overlapping audio between chunks is not stitched or deduplicated — each chunk's transcript stands alone, per ADR 0001
 - [x] After recording stops, the ticket 02 full-clip reference transcript still prints as the final output
-- [ ] Verified live end-to-end by a human with microphone access
+- [x] Verified live end-to-end by a human with microphone access

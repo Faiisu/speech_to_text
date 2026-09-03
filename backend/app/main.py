@@ -37,20 +37,38 @@ def create_event(event: DetectionEvent) -> dict:
     return {"status": "stored"}
 
 
+def _or_none(value: str | None) -> str | None:
+    """Treats an omitted param and an empty-string param the same way.
+
+    Some clients send `?from=&to=` instead of leaving the key out entirely,
+    which would otherwise fail datetime parsing rather than mean "no filter".
+    """
+    return value if value else None
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    value = _or_none(value)
+    return datetime.fromisoformat(value) if value else None
+
+
 def _build_filter(
-    word: str | None, from_: datetime | None, to: datetime | None, session_id: str | None
+    word: str | None, from_: str | None, to: str | None, session_id: str | None
 ) -> tuple[str, list]:
     clauses = []
     params: list = []
+    word = _or_none(word)
+    session_id = _or_none(session_id)
+    from_dt = _parse_datetime(from_)
+    to_dt = _parse_datetime(to)
     if word is not None:
         clauses.append("word = %s")
         params.append(word)
-    if from_ is not None:
+    if from_dt is not None:
         clauses.append("detected_at >= %s")
-        params.append(from_)
-    if to is not None:
+        params.append(from_dt)
+    if to_dt is not None:
         clauses.append("detected_at <= %s")
-        params.append(to)
+        params.append(to_dt)
     if session_id is not None:
         clauses.append("session_id = %s")
         params.append(session_id)
@@ -61,8 +79,8 @@ def _build_filter(
 @app.get("/counts")
 def count_events(
     word: str | None = None,
-    from_: datetime | None = Query(default=None, alias="from"),
-    to: datetime | None = None,
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = None,
 ) -> dict:
     where, params = _build_filter(word, from_, to, session_id=None)
     with get_connection() as conn:
@@ -75,8 +93,8 @@ def count_events(
 @app.get("/events")
 def list_events(
     word: str | None = None,
-    from_: datetime | None = Query(default=None, alias="from"),
-    to: datetime | None = None,
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = None,
     session_id: str | None = None,
 ) -> list[dict]:
     where, params = _build_filter(word, from_, to, session_id)

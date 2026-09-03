@@ -4,10 +4,10 @@
 
 **Blocked by:** 01
 
-**Status:** code complete, awaiting live verification (sandbox has no mic access; needs a human to run it interactively)
+**Status:** done — verified live by the user
 
 - [x] Omitting `--file` switches the script into live microphone recording mode instead of transcribing a file
 - [x] Recording starts on Enter and stops on a second Enter (manual start/stop, no fixed duration)
 - [x] On stop, the entire recorded clip is transcribed in one batch pass using the ticket 01 transcription core, for whichever `--model` was selected
 - [x] The resulting reference transcript is printed after recording stops
-- [ ] Verified live end-to-end by a human with microphone access
+- [x] Verified live end-to-end by a human with microphone access

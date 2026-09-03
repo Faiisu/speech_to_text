@@ -4,7 +4,7 @@
 
 **Blocked by:** 03
 
-**Status:** code complete, awaiting live verification (sandbox has no mic access; needs a human to run it interactively)
+**Status:** done — verified live by the user
 
 - [x] `--keywords` accepts a comma-separated list of one or more target strings (single words or multi-word phrases)
 - [x] Each chunk's transcript is checked for an exact, case-insensitive substring match against every target keyword/phrase
@@ -12,4 +12,4 @@
 - [x] A keyword detected in the overlapping region of two consecutive chunks is not double-alerted: a repeat alert of the same keyword text is suppressed if it already fired within the debounce window. Note: the debounce window had to be widened from the originally-planned "overlap + small buffer" (~2s) to the full chunk *step* interval + buffer (~4.5s with current 5s/1s chunk settings), because overlap-caused duplicates land exactly one chunk apart in time, not within the overlap duration itself. Verified with a standalone unit check of `spot_keywords`.
 - [x] The existing raw per-chunk transcript log line and the final full-clip reference transcript are unchanged
 - [x] Running without `--keywords` behaves exactly as before (no alerts, no behavior change)
-- [ ] Verified live end-to-end by a human with microphone access
+- [x] Verified live end-to-end by a human with microphone access

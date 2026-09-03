@@ -11,3 +11,5 @@
 - [x] `GET /events` returns the matching raw events (word, detected_at, model, session_id) as a list, filterable by `word`, `from`, `to`, and `session_id`, any of which may be omitted
 - [x] Querying for a word with no matching events returns a count of 0 / an empty list, not an error
 - [x] Events ingested via ticket 06 are correctly returned by both endpoints
+
+Follow-up fix: `from`/`to`/`word`/`session_id` sent as empty strings (e.g. `?from=&to=`, which some clients send instead of omitting the key) used to 422 on datetime parsing. Now treated the same as omitting the param entirely.

@@ -4,11 +4,11 @@
 
 **Blocked by:** 04, 06
 
-**Status:** code complete, awaiting live end-to-end verification (sandbox has no mic access; needs a human to run it interactively)
+**Status:** done — verified live (real detection events for "สวัสดี", "ขอบคุณครับ", "ยินดีต้อนรับ" found in the backend after a real mic session)
 
 - [x] A `session_id` (UUID, printed at recording start) is generated once per recording session and attached to every detection event from that session
 - [x] Each detected keyword (from ticket 04's `spot_keywords`) triggers a `POST /events` to the backend with `word`, `detected_at`, `model`, and `session_id` — verified with a standalone test hitting the real backend from tickets 05-07
 - [x] The POST uses a 2s timeout, so a hung backend delays at most one chunk cycle rather than blocking indefinitely
 - [x] If the backend is unreachable, the script logs a `[backend] warning: ...` and continues — verified by pointing `--backend-url` at a closed port and confirming no crash
 - [x] Debounce (ticket 04) correctly prevents a second `POST` for the same overlap-duplicated keyword — verified only one event was stored despite two detections 4s apart
-- [ ] End-to-end verified live: speaking a keyword during a real mic recording produces an event queryable via `GET /events` and reflected in `GET /counts`
+- [x] End-to-end verified live: speaking a keyword during a real mic recording produces an event queryable via `GET /events` and reflected in `GET /counts`
