@@ -2,10 +2,11 @@
 
 Testing and benchmarking [`typhoon-ai/typhoon-whisper-turbo`](https://huggingface.co/typhoon-ai/typhoon-whisper-turbo) and [`typhoon-ai/typhoon-whisper-large-v3`](https://huggingface.co/typhoon-ai/typhoon-whisper-large-v3) — Thai-language Whisper fine-tunes — for transcription quality, keyword spotting, and hardware performance.
 
-Two parts:
+Three parts:
 
 - **`transcribe.py`** — a CLI that transcribes a file or live microphone audio, optionally spotting target keywords in real time
-- **`backend/`** — a FastAPI + TimescaleDB service that stores keyword detections reported by `transcribe.py` and exposes an API to query them
+- **`server.py`** — a local web server (same machine as the microphone) exposing a browser GUI and an HTTP API to start/stop recording and configure it remotely, instead of using the CLI directly
+- **`backend/`** — a FastAPI + TimescaleDB service that stores keyword detections reported during a recording session and exposes an API to query them
 
 See [`CONTEXT-MAP.md`](./CONTEXT-MAP.md), [`CONTEXT.md`](./CONTEXT.md), and [`docs/adr/`](./docs/adr/) for the domain vocabulary and the design decisions behind how this works.
 
@@ -142,6 +143,53 @@ curl "http://localhost:8000/counts?word=สวัสดี"
 ```
 
 If the backend is unreachable, `transcribe.py` logs a warning and keeps recording rather than crashing.
+
+## Web GUI (server.py)
+
+Instead of driving `transcribe.py` from the terminal, `server.py` runs a small local web server on the same machine as the microphone (this has to stay native, not containerized, for the same reason as `transcribe.py` itself — see ADR 0003) and exposes a browser-based control panel plus an HTTP API.
+
+```bash
+uv run python server.py
+```
+
+Starts a web server bound to `0.0.0.0` on port `5001` — reachable from other devices on the same LAN, same as the backend (see [Accessing the backend from other devices](#accessing-the-backend-from-other-devices-on-the-same-network) above; the same firewall/no-auth caveats apply here too). Open `http://localhost:5001` (or `http://<this machine's LAN IP>:5001` from another device) in a browser.
+
+The page is laid out as a monitoring panel: setup on the left, the live transcript feed as the main stage, and a status rail across the top carrying the readings that matter mid-session — record lamp, **real-time factor meter** (with a redline at 1.0, past which the model is falling behind live speech), position, chunk count, and keyword count. It's responsive down to phone width, so you can start a session and watch the feed from another device across the room.
+
+Typography loads IBM Plex (Mono / Sans Condensed / Sans Thai) from Google Fonts. If the machine is offline or firewalled the fonts simply fall back to system faces — the layout is unaffected.
+
+### HTTP API (used by the GUI, or scriptable directly)
+
+- `POST /start` — body: `{"model": "turbo|large-v3", "keywords": "...", "mic_device": "...", "silence_threshold": 0.01, "backend_url": "..."}` (all but `model` optional). Returns immediately; the actual model loading and recording happen in the background. Returns `409` if a session is already active.
+- `POST /stop` — ends the active session. Returns `409` if nothing is recording, or if the model is still loading (wait a moment and retry).
+- `GET /status` — `{"status": "idle|loading|recording|stopping", "session_id": ..., "config": ..., "reference_transcript": ..., "error": ...}`. The GUI polls this every 3 seconds to stay in sync, including from other devices/tabs.
+- `GET /stream` — Server-Sent Events feed of everything happening during a session, as it happens: `chunk` events (text, `time`, `latency`, `rtf`, or `silent: true` for skipped silence), `keyword` events, `warning` events, and `session` lifecycle events (`loading`/`recording`/`stopped`/`error`). Every connected client gets its own queue, so multiple browsers/devices can watch the same session simultaneously.
+- `GET /devices` — the input devices available for recording (index, name, channel count, which one is the system default). Add `?rescan=true` to re-initialise PortAudio and pick up a mic connected *after* the server started; refused with `409` mid-session, since tearing PortAudio down would kill the running stream.
+
+### Reference page
+
+`GET /help` (linked from the panel's top rail as "What do these mean?") explains every control and reading in plain language: how the 5s/1s-overlap chunking works and why words sometimes repeat across lines, what real-time factor / position / chunks / keywords are each telling you, what every setup field changes, and a short "when something looks wrong" table covering the failure modes this project actually hit — hallucinated words in silence, RTF above 1.0, keywords that didn't fire, and unreachable backends.
+
+### Choosing an input in the GUI
+
+The Input field is a dropdown listing every microphone the server can see, so you don't need the CLI's `--list-devices` to find an index. Plugged in a USB mic or paired a Bluetooth headset while the page was open? Press **Rescan** — PortAudio caches its device list at startup, so a plain page refresh won't reveal a device connected since then. The picker (and Rescan) are disabled while a session is running.
+
+### Live feed
+
+The GUI's "Live feed" panel subscribes to `/stream` and shows chunk transcripts and keyword hits **while you're still speaking** — this is genuine streaming transcription, not record-then-process. Each 5-second chunk (1s overlap) is transcribed and pushed to the page as soon as it's ready:
+
+```
+● recording started (d4de610d-…)
+[0.0s] เราไม่บังคับ   (latency 2.59s, RTF 0.52)
+[4.0s] สวัสดีครับ   (latency 2.72s, RTF 0.54)
+★ keyword detected: "สวัสดี" at 4.0s
+[8.0s] แล้ว   (latency 2.38s, RTF 0.48)
+■ session stopped — reference transcript: …
+```
+
+The `session stopped` line carries the full-clip reference transcript — the one pass that *is* done after recording ends, for comparison against the live chunked output. Watch `RTF`: below 1.0 means the model is keeping up with live speech; at or above 1.0 it's falling behind (see `CONTEXT.md`).
+
+Only one recording session runs at a time (one microphone). A model, once loaded, stays cached in memory for reuse by later sessions in the same server run — only the first session per model pays the loading cost.
 
 ## Project tracking
 

@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Typhoon Whisper Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --panel: #232b33;
+    --panel-deep: #1a2027;
+    --panel-raised: #2b343d;
+    --rule: #38434e;
+    --bone: #e8e3d9;
+    --dim: #7a8896;
+    --tungsten: #f2a63b;
+    --rec: #e5484d;
+
+    --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --label: 'IBM Plex Sans Condensed', 'Helvetica Neue', system-ui, sans-serif;
+    --thai: 'IBM Plex Sans Thai', 'Noto Sans Thai', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  /* Plex Mono ligates "--" into a dash — which would misprint CLI flags. */
+  code, .tc, .stat, .val, .ref, .link-state {
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "calt" 0;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    color: var(--bone);
+    background: var(--panel-deep);
+    padding: 0.05em 0.3em;
+    border: 1px solid var(--rule);
+  }
+
+  body {
+    margin: 0;
+    height: 100vh;
+    background: var(--panel);
+    color: var(--bone);
+    font-family: var(--thai);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+  }
+
+  /* ---- status rail ---- */
+  .rail {
+    display: flex;
+    align-items: center;
+    gap: 1.75rem;
+    padding: 0.75rem 1.25rem;
+    background: var(--panel-raised);
+    border-bottom: 1px solid var(--rule);
+    flex-wrap: wrap;
+  }
+
+  .lamp {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-family: var(--label);
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+  .lamp .bulb {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--dim);
+    box-shadow: none;
+    flex: none;
+  }
+  .lamp[data-state="recording"] .bulb { background: var(--rec); box-shadow: 0 0 9px var(--rec); animation: breathe 1.4s ease-in-out infinite; }
+  .lamp[data-state="loading"]   .bulb { background: var(--tungsten); box-shadow: 0 0 9px var(--tungsten); animation: breathe 1s ease-in-out infinite; }
+  .lamp[data-state="stopping"]  .bulb { background: var(--tungsten); box-shadow: 0 0 6px var(--tungsten); }
+  .lamp[data-state="recording"] { color: var(--rec); }
+  .lamp[data-state="loading"], .lamp[data-state="stopping"] { color: var(--tungsten); }
+
+  @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { .lamp .bulb { animation: none !important; } }
+
+  .wordmark {
+    font-family: var(--label);
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .railref {
+    margin-right: auto;
+    font-family: var(--label);
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    color: var(--dim);
+    text-decoration: none;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 1px;
+    white-space: nowrap;
+  }
+  .railref:hover { color: var(--tungsten); border-bottom-color: var(--tungsten); }
+  .railref:focus-visible { outline: 2px solid var(--tungsten); outline-offset: 3px; }
+
+  /* ---- readouts ---- */
+  .gauges {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 0.15rem 0 0.15rem 1.5rem;
+    border-left: 1px solid var(--rule);
+  }
+  .readout { display: flex; flex-direction: column; gap: 0.25rem; }
+  .readout .cap {
+    font-family: var(--label);
+    font-size: 0.62rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .readout .val {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.05rem;
+    font-weight: 500;
+    line-height: 1;
+  }
+
+  /* the signature: a peak meter with a redline at 1.0 */
+  .meter-wrap { display: flex; align-items: baseline; gap: 0.6rem; }
+  .meter {
+    position: relative;
+    width: 124px; height: 11px;
+    background: var(--panel-deep);
+    border: 1px solid var(--rule);
+    overflow: hidden;
+    /* ghost ticks so it reads as a scale even at rest */
+    background-image: repeating-linear-gradient(90deg, transparent 0 24px, var(--rule) 24px 25px);
+  }
+  .meter .fill {
+    position: absolute; inset: 0 auto 0 0;
+    width: 0;
+    background: var(--tungsten);
+    transition: width 0.35s ease-out, background-color 0.2s;
+  }
+  .meter .redline {
+    position: absolute; top: -2px; bottom: -2px; left: 50%;  /* 1.0 on a 0–2 scale */
+    width: 1px; z-index: 2;
+    /* above the fill, and legible against a red over-threshold fill —
+       otherwise the marker vanishes exactly when it matters */
+    background: var(--bone); box-shadow: 0 0 0 1px rgba(26, 32, 39, 0.65);
+  }
+  .meter.over .fill { background: var(--rec); }
+  @media (prefers-reduced-motion: reduce) { .meter .fill { transition: none; } }
+
+  /* ---- body split ---- */
+  .split {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    min-height: 0;
+    min-width: 0;
+  }
+  .split > * { min-width: 0; }
+
+  /* ---- config panel ---- */
+  .config {
+    background: var(--panel);
+    border-right: 1px solid var(--rule);
+    padding: 1.25rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+  .config h2 {
+    font-family: var(--label);
+    font-size: 0.68rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin: 0 0 0.15rem;
+    font-weight: 600;
+  }
+  .field { display: flex; flex-direction: column; gap: 0.3rem; }
+  .field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+  .field-head .linkbtn { padding: 0; }
+  .field label {
+    font-family: var(--label);
+    font-size: 0.66rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--dim);
+    font-weight: 600;
+  }
+  .field .hint { font-size: 0.7rem; color: var(--dim); font-family: var(--thai); }
+  .field input, .field select {
+    background: var(--panel-deep);
+    border: 1px solid var(--rule);
+    color: var(--bone);
+    padding: 0.5rem 0.6rem;
+    font-family: var(--thai);
+    font-size: 0.88rem;
+    width: 100%;
+  }
+  .field input::placeholder { color: #5d6b78; }
+  .field input:focus-visible, .field select:focus-visible,
+  .btn:focus-visible, .linkbtn:focus-visible {
+    outline: 2px solid var(--tungsten);
+    outline-offset: 1px;
+  }
+
+  .transport { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.35rem; }
+  .btn {
+    font-family: var(--label);
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-size: 0.82rem;
+    padding: 0.75rem;
+    border: 1px solid var(--rule);
+    background: var(--panel-raised);
+    color: var(--bone);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+  }
+  .btn .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex: none; }
+  .btn .sq { width: 9px; height: 9px; background: currentColor; flex: none; }
+  .btn-start { border-color: var(--rec); color: var(--rec); }
+  .btn-start:hover:not(:disabled) { background: var(--rec); color: #fff; }
+  .btn-stop:hover:not(:disabled) { background: var(--bone); color: var(--panel); border-color: var(--bone); }
+  .btn:disabled { opacity: 0.32; cursor: not-allowed; }
+
+  .note {
+    font-size: 0.76rem;
+    line-height: 1.45;
+    padding: 0.6rem 0.7rem;
+    border-left: 2px solid var(--rule);
+    color: var(--dim);
+  }
+  .note.error { border-left-color: var(--rec); color: #ffb4b6; }
+  .note .ref { font-family: var(--mono); font-size: 0.72rem; word-break: break-all; }
+
+  /* ---- feed ---- */
+  .stage { display: grid; grid-template-rows: auto 1fr; min-height: 0; background: var(--panel-deep); }
+  .stage-head {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.6rem 1.25rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .stage-head h2 {
+    font-family: var(--label);
+    font-size: 0.68rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--dim); margin: 0; font-weight: 600;
+  }
+  .link-state {
+    font-family: var(--mono); font-size: 0.68rem;
+    color: var(--dim); margin-right: auto;
+  }
+  .link-state.live { color: var(--tungsten); }
+  .link-state.down { color: var(--rec); }
+  .linkbtn {
+    background: none; border: none; color: var(--dim); cursor: pointer;
+    font-family: var(--label); font-size: 0.68rem; letter-spacing: 0.15em;
+    text-transform: uppercase; padding: 0.2rem;
+  }
+  .linkbtn:hover { color: var(--bone); }
+
+  #feed { overflow-y: auto; padding: 0.5rem 0; }
+
+  /* Keep the readings next to the words they describe instead of stranding
+     them against the far edge on a wide display. */
+  .row, .marker, .final { max-width: 78rem; }
+
+  .row { display: grid; grid-template-columns: 4.5rem 1fr auto; gap: 0.9rem; align-items: baseline; padding: 0.3rem 1.25rem; }
+  .row .tc { font-family: var(--mono); font-size: 0.74rem; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .row .text { font-family: var(--thai); font-size: 0.98rem; line-height: 1.5; word-break: break-word; }
+  .row .stat { font-family: var(--mono); font-size: 0.7rem; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .row-silent .text { color: #5d6b78; font-style: italic; font-size: 0.85rem; }
+  .row-hit { background: rgba(242, 166, 59, 0.09); border-left: 2px solid var(--tungsten); padding-left: calc(1.25rem - 2px); }
+  .row-hit .text { color: var(--tungsten); font-weight: 600; }
+  .row-hit .tc { color: var(--tungsten); }
+  .row-warn { border-left: 2px solid var(--rec); padding-left: calc(1.25rem - 2px); }
+  .row-warn .text { color: #ffb4b6; font-size: 0.85rem; }
+
+  .marker { padding: 0.7rem 1.25rem 0.5rem; display: flex; align-items: center; gap: 0.7rem; }
+  .marker .bar { flex: 1; height: 1px; background: var(--rule); }
+  .marker .cap {
+    font-family: var(--label); font-size: 0.64rem; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--dim); white-space: nowrap;
+  }
+  .marker.start .cap { color: var(--rec); }
+  .marker.end .cap { color: var(--bone); }
+  .marker.end .ref, .marker.start .ref { font-family: var(--mono); font-size: 0.68rem; color: var(--dim); }
+
+  .final { padding: 0.1rem 1.25rem 0.9rem 1.25rem; display: grid; grid-template-columns: 4.5rem 1fr; gap: 0.9rem; }
+  .final .cap { font-family: var(--label); font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+  .final .text { font-family: var(--thai); font-size: 0.92rem; line-height: 1.55; color: var(--bone); }
+
+  .empty { padding: 2.5rem 1.25rem; color: var(--dim); font-size: 0.88rem; line-height: 1.6; max-width: 34rem; }
+  .empty strong { color: var(--bone); font-weight: 500; display: block; margin-bottom: 0.35rem; }
+
+  @media (max-width: 820px) {
+    body { height: auto; overflow: auto; }
+    .split { grid-template-columns: minmax(0, 1fr); }
+    .config { border-right: none; border-bottom: 1px solid var(--rule); }
+    .stage { min-height: 60vh; }
+    .wordmark { display: none; }
+
+    .rail { gap: 0.9rem 1.1rem; padding: 0.7rem 1rem; }
+    .lamp { margin-right: auto; }
+    /* the gauge cluster can't hold its desktop width on a phone */
+    .gauges {
+      flex-wrap: wrap;
+      gap: 0.7rem 1.4rem;
+      padding-left: 0;
+      border-left: none;
+      width: 100%;
+    }
+    .meter { width: 88px; }
+
+    .row { grid-template-columns: 3.4rem minmax(0, 1fr); padding-inline: 1rem; }
+    .row .stat { grid-column: 2; }
+    .row-hit { padding-left: calc(1rem - 2px); }
+    .row-warn { padding-left: calc(1rem - 2px); }
+    .marker, .final, .empty, .stage-head { padding-inline: 1rem; }
+    .final { grid-template-columns: 3.4rem minmax(0, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+  <header class="rail">
+    <div class="lamp" id="lamp" data-state="idle"><span class="bulb"></span><span id="lampText">Ready</span></div>
+    <div class="wordmark">Typhoon Whisper</div>
+    <a class="railref" href="/help">What do these mean?</a>
+
+    <div class="gauges">
+      <div class="readout">
+        <span class="cap">Real-time factor</span>
+        <div class="meter-wrap">
+          <div class="meter" id="meter"><div class="fill" id="meterFill"></div><div class="redline"></div></div>
+          <span class="val" id="rtfVal" style="font-size:0.9rem">—</span>
+        </div>
+      </div>
+
+      <div class="readout"><span class="cap">Position</span><span class="val" id="posVal">00:00</span></div>
+      <div class="readout"><span class="cap">Chunks</span><span class="val" id="chunkVal">0</span></div>
+      <div class="readout"><span class="cap">Keywords</span><span class="val" id="hitVal" style="color:var(--tungsten)">0</span></div>
+    </div>
+  </header>
+
+  <div class="split">
+    <aside class="config">
+      <h2>Setup</h2>
+
+      <div class="field">
+        <label for="model">Model</label>
+        <select id="model">
+          <option value="turbo">turbo</option>
+          <option value="large-v3">large-v3</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="keywords">Keywords</label>
+        <input id="keywords" type="text" placeholder="สวัสดี, ขอบคุณครับ">
+        <span class="hint">Comma-separated. Leave empty to transcribe only.</span>
+      </div>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="micDevice">Input</label>
+          <button class="linkbtn" id="rescanBtn" onclick="loadDevices(true)">Rescan</button>
+        </div>
+        <select id="micDevice"><option value="">System default</option></select>
+        <span class="hint" id="deviceHint">Looking for inputs…</span>
+      </div>
+
+      <div class="field">
+        <label for="silenceThreshold">Silence threshold</label>
+        <input id="silenceThreshold" type="number" step="0.001" value="0.01">
+        <span class="hint">Chunks quieter than this are skipped instead of transcribed.</span>
+      </div>
+
+      <div class="field">
+        <label for="backendUrl">Backend</label>
+        <input id="backendUrl" type="text" value="http://localhost:8000">
+        <span class="hint">Where keyword hits are recorded.</span>
+      </div>
+
+      <div class="transport">
+        <button class="btn btn-start" id="startBtn" onclick="startRecording()"><span class="dot"></span>Start recording</button>
+        <button class="btn btn-stop" id="stopBtn" onclick="stopRecording()"><span class="sq"></span>Stop recording</button>
+      </div>
+
+      <div class="note" id="note">Ready to record.</div>
+    </aside>
+
+    <main class="stage">
+      <div class="stage-head">
+        <h2>Live feed</h2>
+        <span class="link-state" id="feedState">connecting</span>
+        <button class="linkbtn" onclick="clearFeed()">Clear</button>
+      </div>
+      <div id="feed">
+        <div class="empty">
+          <strong>Nothing on the wire yet.</strong>
+          Press start, then speak. Each 5-second chunk is transcribed while you're still talking and lands here — with its latency and real-time factor. Keyword hits are flagged as they're caught.
+        </div>
+      </div>
+    </main>
+  </div>
+
+<script>
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const note = document.getElementById('note');
+  const lamp = document.getElementById('lamp');
+  const lampText = document.getElementById('lampText');
+  const meter = document.getElementById('meter');
+  const meterFill = document.getElementById('meterFill');
+  const rtfVal = document.getElementById('rtfVal');
+  const posVal = document.getElementById('posVal');
+  const chunkVal = document.getElementById('chunkVal');
+  const hitVal = document.getElementById('hitVal');
+  const feed = document.getElementById('feed');
+  const feedState = document.getElementById('feedState');
+
+  const LAMP_TEXT = { idle: 'Ready', loading: 'Loading model', recording: 'Recording', stopping: 'Stopping' };
+
+  let uiError = null;   // sticky until the next start/stop, so the 3s poll can't wipe it
+  let feedEmpty = true;
+  let chunks = 0;
+  let hits = 0;
+
+  function timecode(seconds) {
+    const m = Math.floor(seconds / 60), s = Math.floor(seconds % 60);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  function setRtf(rtf) {
+    rtfVal.textContent = rtf.toFixed(2);
+    meterFill.style.width = `${Math.min(rtf / 2, 1) * 100}%`;
+    meter.classList.toggle('over', rtf >= 1);
+    rtfVal.style.color = rtf >= 1 ? 'var(--rec)' : 'var(--bone)';
+  }
+
+  function resetReadouts() {
+    chunks = 0; hits = 0;
+    chunkVal.textContent = '0';
+    hitVal.textContent = '0';
+    posVal.textContent = '00:00';
+    rtfVal.textContent = '—';
+    rtfVal.style.color = 'var(--bone)';
+    meterFill.style.width = '0';
+    meter.classList.remove('over');
+  }
+
+  function applyButtonState(status) {
+    const busy = status === 'loading' || status === 'recording' || status === 'stopping';
+    startBtn.disabled = busy;
+    stopBtn.disabled = !(status === 'recording' || status === 'stopping');
+    // rescanning tears PortAudio down, so the server refuses it mid-session
+    document.getElementById('rescanBtn').disabled = busy;
+    document.getElementById('micDevice').disabled = busy;
+  }
+
+  function setNote(html, isError) {
+    note.innerHTML = html;
+    note.className = isError ? 'note error' : 'note';
+  }
+
+  async function refreshStatus() {
+    try {
+      const data = await (await fetch('/status')).json();
+      applyButtonState(data.status);
+      lamp.dataset.state = data.status;
+      lampText.textContent = LAMP_TEXT[data.status] || data.status;
+
+      if (uiError) {
+        setNote(uiError, true);
+      } else if (data.error) {
+        setNote(`Session failed. ${escapeHtml(data.error)}`, true);
+      } else if (data.status === 'recording') {
+        setNote(`Recording.<br><span class="ref">${escapeHtml(data.session_id || '')}</span>`);
+      } else if (data.status === 'loading') {
+        setNote('Loading the model. Recording starts by itself once it\'s in memory.');
+      } else if (data.status === 'stopping') {
+        setNote('Finishing the current chunk, then transcribing the full clip.');
+      } else {
+        setNote('Ready to record.');
+      }
+    } catch (err) {
+      setNote(`Can't reach the server. ${escapeHtml(String(err))}`, true);
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function describeError(detail) {
+    // FastAPI sends a string for our own 409s, and a list of field errors for 422s
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+      return detail.map(d => `${(d.loc || []).slice(1).join('.')}: ${d.msg}`).join('; ');
+    }
+    return JSON.stringify(detail);
+  }
+
+  function showError(message) {
+    uiError = escapeHtml(message);
+    refreshStatus();
+  }
+
+  async function startRecording() {
+    uiError = null;
+    const body = {
+      model: document.getElementById('model').value,
+      keywords: document.getElementById('keywords').value.trim() || null,
+      mic_device: document.getElementById('micDevice').value.trim() || null,
+    };
+
+    // Only send these when actually filled in. A blank number field parses to
+    // NaN, which JSON.stringify turns into null, which the server rejects
+    // outright; a blank URL would be accepted as "" and then fail on every
+    // detection report. Omitting them lets the server apply its own defaults.
+    const threshold = parseFloat(document.getElementById('silenceThreshold').value);
+    if (!Number.isNaN(threshold)) body.silence_threshold = threshold;
+
+    const backendUrl = document.getElementById('backendUrl').value.trim();
+    if (backendUrl) body.backend_url = backendUrl;
+
+    try {
+      const res = await fetch('/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        showError(`Couldn't start. ${describeError((await res.json()).detail)}`);
+        return;
+      }
+    } catch (err) {
+      showError(`Can't reach the server. ${err}`);
+      return;
+    }
+    resetReadouts();
+    refreshStatus();
+
+    // On a phone the setup panel fills the screen, so the feed you just asked
+    // for would start below the fold. Bring it up.
+    if (window.matchMedia('(max-width: 820px)').matches) {
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      document.querySelector('.stage').scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+    }
+  }
+
+  async function stopRecording() {
+    uiError = null;
+    try {
+      const res = await fetch('/stop', { method: 'POST' });
+      if (!res.ok) {
+        showError(`Couldn't stop. ${describeError((await res.json()).detail)}`);
+        return;
+      }
+    } catch (err) {
+      showError(`Can't reach the server. ${err}`);
+      return;
+    }
+    refreshStatus();
+  }
+
+  // ---- input devices ----
+  async function loadDevices(rescan) {
+    const select = document.getElementById('micDevice');
+    const hint = document.getElementById('deviceHint');
+    const previous = select.value;
+
+    try {
+      const res = await fetch('/devices' + (rescan ? '?rescan=true' : ''));
+      if (!res.ok) {
+        showError(`Couldn't list inputs. ${describeError((await res.json()).detail)}`);
+        return;
+      }
+      const data = await res.json();
+
+      select.innerHTML = '';
+      const fallback = document.createElement('option');
+      fallback.value = '';
+      fallback.textContent = 'System default';
+      select.appendChild(fallback);
+
+      for (const device of data.devices) {
+        const option = document.createElement('option');
+        option.value = String(device.index);
+        option.textContent = `${device.index} · ${device.name}${device.default ? '  (default)' : ''}`;
+        select.appendChild(option);
+      }
+
+      // keep the operator's pick across a rescan when the device is still there
+      select.value = [...select.options].some(o => o.value === previous) ? previous : '';
+
+      const n = data.devices.length;
+      hint.textContent = n
+        ? `${n} input${n === 1 ? '' : 's'} found. Rescan after plugging in or pairing a mic.`
+        : 'No inputs found. Connect a microphone, then rescan.';
+    } catch (err) {
+      hint.textContent = `Couldn't reach the server to list inputs.`;
+    }
+  }
+
+  // ---- live feed ----
+  function clearFeed() {
+    feed.innerHTML = '<div class="empty"><strong>Cleared.</strong>The next chunk to arrive will show up here.</div>';
+    feedEmpty = true;
+  }
+
+  function append(node) {
+    if (feedEmpty) { feed.innerHTML = ''; feedEmpty = false; }
+    // only auto-scroll when the reader is already at the bottom
+    const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 48;
+    feed.appendChild(node);
+    if (atBottom) feed.scrollTop = feed.scrollHeight;
+  }
+
+  function row(cls, tc, text, stat) {
+    const el = document.createElement('div');
+    el.className = `row ${cls}`;
+    el.innerHTML = `<span class="tc"></span><span class="text"></span><span class="stat"></span>`;
+    el.children[0].textContent = tc;
+    el.children[1].textContent = text;
+    el.children[2].textContent = stat || '';
+    return el;
+  }
+
+  function marker(cls, caption, ref) {
+    const el = document.createElement('div');
+    el.className = `marker ${cls}`;
+    el.innerHTML = `<span class="cap"></span><span class="ref"></span><span class="bar"></span>`;
+    el.children[0].textContent = caption;
+    el.children[1].textContent = ref || '';
+    return el;
+  }
+
+  function renderEvent(ev) {
+    if (ev.type === 'connected') return;
+
+    if (ev.type === 'chunk') {
+      chunks += 1;
+      chunkVal.textContent = chunks;
+      posVal.textContent = timecode(ev.time);
+      if (ev.silent) {
+        append(row('row-silent', timecode(ev.time), 'silence — skipped', ''));
+      } else {
+        setRtf(ev.rtf);
+        append(row('', timecode(ev.time), ev.text, `${ev.latency.toFixed(2)}s · ${ev.rtf.toFixed(2)}`));
+      }
+
+    } else if (ev.type === 'keyword') {
+      hits += 1;
+      hitVal.textContent = hits;
+      append(row('row-hit', timecode(ev.time), ev.keyword, 'keyword'));
+
+    } else if (ev.type === 'warning') {
+      append(row('row-warn', '', ev.message, ''));
+
+    } else if (ev.type === 'session') {
+      if (ev.state === 'recording') {
+        resetReadouts();
+        append(marker('start', 'Recording started', ev.session_id));
+      } else if (ev.state === 'stopped') {
+        append(marker('end', 'Stopped', ''));
+        const f = document.createElement('div');
+        f.className = 'final';
+        f.innerHTML = `<span class="cap">Full clip</span><span class="text"></span>`;
+        f.children[1].textContent = ev.reference_transcript;
+        append(f);
+      } else if (ev.state === 'error') {
+        append(row('row-warn', '', ev.message, ''));
+      }
+      refreshStatus();
+    }
+  }
+
+  function connectFeed() {
+    const source = new EventSource('/stream');
+    source.onopen = () => { feedState.textContent = 'live'; feedState.className = 'link-state live'; };
+    source.onmessage = (e) => {
+      try { renderEvent(JSON.parse(e.data)); } catch (err) { /* ignore malformed frame */ }
+    };
+    // EventSource reconnects on its own; just reflect the state
+    source.onerror = () => { feedState.textContent = 'reconnecting'; feedState.className = 'link-state down'; };
+  }
+
+  connectFeed();
+  loadDevices(false);
+  refreshStatus();
+  setInterval(refreshStatus, 3000);
+</script>
+</body>
+</html>

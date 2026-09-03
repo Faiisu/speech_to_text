@@ -32,6 +32,13 @@ DEBOUNCE_SECONDS = STEP_SECONDS + 0.5
 # its audio energy is below this RMS threshold, rather than trusting the
 # model to recognize its own silence.
 DEFAULT_SILENCE_RMS = 0.01
+# Bound on how long to wait for the chunk-processing thread to notice a stop
+# request and exit. Without this, a stuck or pathologically slow transcribe()
+# call (observed in practice with a hung/slow inference call) would hang the
+# CLI's "press Enter to stop" and, worse, the server's /stop indefinitely
+# with zero feedback. Generous enough to cover one slow chunk (RTF > 1 has
+# been observed on this hardware) without waiting forever on a genuine hang.
+STOP_JOIN_TIMEOUT_SECONDS = 60
 
 
 def pick_device() -> str:
@@ -112,6 +119,7 @@ def spot_keywords(
     model_key: str,
     session_id: str,
     backend_url: str,
+    on_event=None,
 ) -> None:
     lowered = text.lower()
     for keyword in keywords:
@@ -121,34 +129,32 @@ def spot_keywords(
         if last is not None and now - last < DEBOUNCE_SECONDS:
             continue
         last_alerted[keyword] = now
-        print(f'[keyword detected] "{keyword}" at {now:.1f}s')
         report_event(backend_url, keyword, model_key, session_id)
+        if on_event:
+            on_event({"type": "keyword", "keyword": keyword, "time": now})
 
 
-def record_with_streaming(
+def run_recording_session(
     asr_pipeline,
     keywords: list[str],
     model_key: str,
     backend_url: str,
     mic_device: int | str | None,
-    auto_start: bool,
     silence_threshold: float,
+    stop_event: threading.Event,
+    session_id: str,
+    on_event=None,
 ) -> np.ndarray:
-    """Records from the mic, printing a chunked live transcript as it goes.
+    """Records from the mic and transcribes chunks until stop_event is set.
+
+    on_event, if given, is called with a dict for every chunk/silence/keyword
+    event as it happens (used by server.py to stream live updates; the CLI
+    passes a callback that just prints, to keep its existing output).
 
     Returns the full recording for a final full-clip reference pass.
     """
-    if auto_start:
-        print("Recording starts now (--auto-start). Press Enter to stop.")
-    else:
-        input("Press Enter to start recording...")
-
-    session_id = str(uuid.uuid4())
-    print(f"[session] {session_id}")
-
     frames: list[np.ndarray] = []
     lock = threading.Lock()
-    stop_event = threading.Event()
 
     def callback(indata, frame_count, time_info, status) -> None:
         with lock:
@@ -157,6 +163,10 @@ def record_with_streaming(
     chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
     step_samples = chunk_samples - OVERLAP_SECONDS * SAMPLE_RATE
     last_alerted: dict[str, float] = {}
+
+    def emit(event: dict) -> None:
+        if on_event:
+            on_event(event)
 
     def chunk_loop() -> None:
         next_start = 0
@@ -175,7 +185,7 @@ def record_with_streaming(
             chunk_time = next_start / SAMPLE_RATE
 
             if is_silent(chunk, silence_threshold):
-                print(f"[chunk @ {chunk_time:.1f}s] (silence, skipped)")
+                emit({"type": "chunk", "time": chunk_time, "text": None, "silent": True})
                 next_start += step_samples
                 continue
 
@@ -183,7 +193,16 @@ def record_with_streaming(
             text = transcribe(asr_pipeline, chunk)
             latency = time.perf_counter() - chunk_start
             rtf = latency / CHUNK_SECONDS
-            print(f"[chunk @ {chunk_time:.1f}s] {text} (latency {latency:.2f}s, RTF {rtf:.2f})")
+            emit(
+                {
+                    "type": "chunk",
+                    "time": chunk_time,
+                    "text": text,
+                    "silent": False,
+                    "latency": latency,
+                    "rtf": rtf,
+                }
+            )
             if keywords:
                 spot_keywords(
                     text,
@@ -193,6 +212,7 @@ def record_with_streaming(
                     model_key=model_key,
                     session_id=session_id,
                     backend_url=backend_url,
+                    on_event=emit,
                 )
             next_start += step_samples
 
@@ -206,9 +226,20 @@ def record_with_streaming(
     with stream:
         worker = threading.Thread(target=chunk_loop, daemon=True)
         worker.start()
-        input("Recording... press Enter to stop.")
-        stop_event.set()
-        worker.join()
+        stop_event.wait()
+        worker.join(timeout=STOP_JOIN_TIMEOUT_SECONDS)
+        if worker.is_alive():
+            emit(
+                {
+                    "type": "warning",
+                    "message": (
+                        f"chunk processing did not stop within {STOP_JOIN_TIMEOUT_SECONDS}s "
+                        "of the stop request (likely a stuck or very slow transcription call). "
+                        "Returning the audio captured so far; the background thread may still "
+                        "be running and holding the model/microphone."
+                    ),
+                }
+            )
 
     with lock:
         full_audio = (
@@ -219,11 +250,64 @@ def record_with_streaming(
 
     if full_audio.size == 0:
         raise RuntimeError(
-            "No audio was captured. Check that this terminal has microphone "
-            "permission (System Settings > Privacy & Security > Microphone)."
+            "No audio was captured. Check that this process has microphone "
+            "permission and the selected input device is correct."
         )
 
     return full_audio
+
+
+def record_with_streaming(
+    asr_pipeline,
+    keywords: list[str],
+    model_key: str,
+    backend_url: str,
+    mic_device: int | str | None,
+    auto_start: bool,
+    silence_threshold: float,
+) -> np.ndarray:
+    """CLI wrapper: prints terminal output, start/stop driven by Enter keypresses."""
+    if auto_start:
+        print("Recording starts now (--auto-start). Press Enter to stop.")
+    else:
+        input("Press Enter to start recording...")
+
+    session_id = str(uuid.uuid4())
+    print(f"[session] {session_id}")
+
+    def on_event(event: dict) -> None:
+        if event["type"] == "chunk":
+            if event["silent"]:
+                print(f"[chunk @ {event['time']:.1f}s] (silence, skipped)")
+            else:
+                print(
+                    f"[chunk @ {event['time']:.1f}s] {event['text']} "
+                    f"(latency {event['latency']:.2f}s, RTF {event['rtf']:.2f})"
+                )
+        elif event["type"] == "keyword":
+            print(f'[keyword detected] "{event["keyword"]}" at {event["time"]:.1f}s')
+        elif event["type"] == "warning":
+            print(f"[warning] {event['message']}")
+
+    stop_event = threading.Event()
+
+    def wait_for_enter() -> None:
+        input("Recording... press Enter to stop.")
+        stop_event.set()
+
+    threading.Thread(target=wait_for_enter, daemon=True).start()
+
+    return run_recording_session(
+        asr_pipeline,
+        keywords,
+        model_key,
+        backend_url,
+        mic_device,
+        silence_threshold,
+        stop_event,
+        session_id,
+        on_event=on_event,
+    )
 
 
 def main() -> None:

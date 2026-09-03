@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Typhoon Whisper — Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --panel: #232b33;
+    --panel-deep: #1a2027;
+    --panel-raised: #2b343d;
+    --rule: #38434e;
+    --bone: #e8e3d9;
+    --dim: #7a8896;
+    --tungsten: #f2a63b;
+    --rec: #e5484d;
+
+    --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --label: 'IBM Plex Sans Condensed', 'Helvetica Neue', system-ui, sans-serif;
+    --thai: 'IBM Plex Sans Thai', 'Noto Sans Thai', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  code, .mono {
+    font-family: var(--mono);
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "calt" 0;
+  }
+  code {
+    font-size: 0.9em;
+    color: var(--bone);
+    background: var(--panel-deep);
+    padding: 0.05em 0.35em;
+    border: 1px solid var(--rule);
+  }
+
+  body {
+    margin: 0;
+    background: var(--panel);
+    color: var(--bone);
+    font-family: var(--thai);
+    line-height: 1.65;
+  }
+
+  .rail {
+    display: flex; align-items: center; gap: 1rem;
+    padding: 0.75rem 1.25rem;
+    background: var(--panel-raised);
+    border-bottom: 1px solid var(--rule);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .rail .wordmark {
+    font-family: var(--label); font-weight: 600; letter-spacing: 0.2em;
+    text-transform: uppercase; font-size: 0.8rem; color: var(--dim);
+  }
+  .rail .here {
+    font-family: var(--label); font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; font-size: 0.8rem; color: var(--bone);
+  }
+  .rail a {
+    margin-left: auto;
+    font-family: var(--label); font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; font-size: 0.75rem;
+    color: var(--tungsten); text-decoration: none;
+    border: 1px solid var(--rule); padding: 0.35rem 0.8rem;
+  }
+  .rail a:hover { background: var(--tungsten); color: var(--panel); border-color: var(--tungsten); }
+  .rail a:focus-visible { outline: 2px solid var(--tungsten); outline-offset: 2px; }
+
+  main { max-width: 54rem; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+
+  .lede { font-size: 1.05rem; color: var(--bone); margin: 0 0 0.6rem; }
+  .lede-sub { color: var(--dim); margin: 0 0 3rem; }
+
+  h2 {
+    font-family: var(--label);
+    font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--tungsten); font-weight: 600;
+    margin: 3.25rem 0 0.25rem; padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  h2:first-of-type { margin-top: 0; }
+  .section-note { color: var(--dim); font-size: 0.9rem; margin: 0.9rem 0 1.75rem; }
+
+  .entry { margin: 0 0 2rem; }
+  .entry-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.45rem; }
+  .entry-head h3 {
+    font-family: var(--label); font-size: 0.95rem; letter-spacing: 0.1em;
+    text-transform: uppercase; font-weight: 600; margin: 0; color: var(--bone);
+  }
+  .tag {
+    font-family: var(--mono); font-size: 0.68rem; color: var(--dim);
+    border: 1px solid var(--rule); padding: 0.1rem 0.4rem;
+    font-variant-ligatures: none;
+  }
+  .entry p { margin: 0 0 0.7rem; }
+  .entry p:last-child { margin-bottom: 0; }
+  .muted { color: var(--dim); font-size: 0.92rem; }
+
+  /* chunk timeline diagram */
+  .timeline { margin: 1.5rem 0 0.75rem; }
+  .track { position: relative; height: 26px; margin-bottom: 6px; }
+  .win {
+    position: absolute; top: 0; height: 26px;
+    background: rgba(242, 166, 59, 0.16);
+    border: 1px solid var(--tungsten);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 0.7rem; color: var(--tungsten);
+    font-variant-ligatures: none;
+    white-space: nowrap; overflow: hidden;
+  }
+  .win-short { display: none; }
+  .ruler { position: relative; height: 22px; border-top: 1px solid var(--rule); }
+  .ruler span {
+    position: absolute; top: 4px; transform: translateX(-50%);
+    font-family: var(--mono); font-size: 0.68rem; color: var(--dim);
+  }
+  .ruler span::before {
+    content: ''; position: absolute; top: -5px; left: 50%;
+    width: 1px; height: 4px; background: var(--rule);
+  }
+  .overlap-note { color: var(--tungsten); font-size: 0.82rem; margin-top: 0.9rem; }
+
+  /* rtf demo meters */
+  .demo { display: flex; flex-direction: column; gap: 0.7rem; margin: 1.1rem 0; }
+  .demo-row { display: flex; align-items: center; gap: 0.9rem; }
+  .meter {
+    position: relative; width: 150px; height: 11px; flex: none;
+    background: var(--panel-deep); border: 1px solid var(--rule); overflow: hidden;
+    background-image: repeating-linear-gradient(90deg, transparent 0 29px, var(--rule) 29px 30px);
+  }
+  .meter .fill { position: absolute; inset: 0 auto 0 0; background: var(--tungsten); }
+  .meter .fill.over { background: var(--rec); }
+  /* drawn above the fill, in a colour that reads against both the empty
+     track and a red over-threshold fill — the moment you most need to see it */
+  .meter .redline {
+    position: absolute; top: -2px; bottom: -2px; left: 50%; width: 1px; z-index: 2;
+    background: var(--bone); box-shadow: 0 0 0 1px rgba(26, 32, 39, 0.65);
+  }
+  .demo-val { font-family: var(--mono); font-size: 0.9rem; width: 3rem; font-variant-ligatures: none; }
+  .demo-val.good { color: var(--tungsten); }
+  .demo-val.bad { color: var(--rec); }
+  .demo-text { font-size: 0.9rem; color: var(--dim); }
+
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0 0; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 0.7rem 0.9rem 0.7rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-family: var(--label); font-size: 0.68rem; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--dim); font-weight: 600;
+  }
+  td:first-child { width: 38%; padding-right: 1.5rem; color: var(--bone); }
+  td:last-child { color: var(--dim); }
+
+  @media (max-width: 640px) {
+    main { padding: 1.75rem 1rem 4rem; }
+    /* the full label doesn't fit a window box at phone width */
+    .win-long { display: none; }
+    .win-short { display: inline; }
+    .win { font-size: 0.64rem; }
+    .demo-row { flex-wrap: wrap; gap: 0.5rem 0.9rem; }
+    table, td:first-child { width: auto; }
+    td, th { display: block; border-bottom: none; padding: 0.15rem 0; }
+    tr { display: block; border-bottom: 1px solid var(--rule); padding: 0.7rem 0; }
+    thead { display: none; }
+    td:first-child { font-family: var(--label); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.8rem; }
+  }
+</style>
+</head>
+<body>
+
+<header class="rail">
+  <span class="wordmark">Typhoon Whisper</span>
+  <span class="here">Reference</span>
+  <a href="/">← Back to panel</a>
+</header>
+
+<main>
+  <p class="lede">This rig listens through a microphone and transcribes Thai speech in 5-second slices <em>while you're still talking</em>, flagging any keyword you've asked it to watch for.</p>
+  <p class="lede-sub">Everything below explains what each control changes and what each reading is telling you.</p>
+
+  <h2>How a session works</h2>
+  <p class="section-note">Worth reading first — it explains why the readings behave the way they do.</p>
+
+  <p>The models behind this (<code>typhoon-whisper-turbo</code> and <code>typhoon-whisper-large-v3</code>) have no streaming mode: they transcribe a finished clip, not a running microphone. So live transcription is faked by slicing the incoming audio into <strong>5-second windows that overlap by 1 second</strong>, and transcribing each window as soon as it fills.</p>
+
+  <div class="timeline">
+    <div class="track">
+      <div class="win" style="left:0%;   width:31.25%"><span class="win-long">window 1 · 0–5s</span><span class="win-short">0–5s</span></div>
+    </div>
+    <div class="track">
+      <div class="win" style="left:25%;  width:31.25%"><span class="win-long">window 2 · 4–9s</span><span class="win-short">4–9s</span></div>
+    </div>
+    <div class="track">
+      <div class="win" style="left:50%;  width:31.25%"><span class="win-long">window 3 · 8–13s</span><span class="win-short">8–13s</span></div>
+    </div>
+    <div class="ruler">
+      <span style="left:0%">0s</span>
+      <span style="left:25%">4s</span>
+      <span style="left:50%">8s</span>
+      <span style="left:75%">12s</span>
+      <span style="left:100%">16s</span>
+    </div>
+    <p class="overlap-note">Each window starts 4 seconds after the last, so consecutive windows share 1 second of audio.</p>
+  </div>
+
+  <p>That 1-second overlap exists so a word spoken right on a boundary isn't sliced in half — it lands whole in at least one window. The cost: audio in the overlap is transcribed twice, so <strong>the same word can legitimately appear at the end of one line and the start of the next</strong>. That's expected, not a fault. Lines are never stitched together or de-duplicated.</p>
+
+  <p>When you press stop, the <strong>whole recording is transcribed once more in a single pass</strong> and shown as <span class="mono">Full clip</span>. With the entire recording as context it's usually the more accurate version — compare it against the live lines to see what the chunking cost you.</p>
+
+  <h2>Readings</h2>
+  <p class="section-note">The rail across the top of the panel, left to right.</p>
+
+  <div class="entry">
+    <div class="entry-head"><h3>Real-time factor</h3><span class="tag">latency ÷ 5s</span></div>
+    <p>The one number that answers <em>can this keep up with live speech?</em> It's how long a window took to transcribe, divided by the 5 seconds of audio it covered.</p>
+    <div class="demo">
+      <div class="demo-row">
+        <div class="meter"><div class="fill" style="width:27%"></div><div class="redline"></div></div>
+        <span class="demo-val good">0.54</span>
+        <span class="demo-text">Transcribed in 2.7s. Keeping up comfortably.</span>
+      </div>
+      <div class="demo-row">
+        <div class="meter"><div class="fill over" style="width:82%"></div><div class="redline"></div></div>
+        <span class="demo-val bad">1.63</span>
+        <span class="demo-text">Transcribed in 8.1s. Falling behind — lag grows the longer you talk.</span>
+      </div>
+    </div>
+    <p>The pale line across the middle of the meter marks <strong>1.0</strong>, the break-even point. Below it, transcription finishes faster than you speak. At or above it, each window takes longer than the audio it covers, so the transcript drifts further behind real time the longer the session runs. The meter tops out at 2.0.</p>
+    <p class="muted">Expect this to move a lot: a window packed with continuous speech takes far longer than a window with one short phrase, because there are more words to generate. Test with the busiest speech you actually expect, not short test phrases.</p>
+  </div>
+
+  <div class="entry">
+    <div class="entry-head"><h3>Position</h3><span class="tag">mm:ss</span></div>
+    <p>Where the most recent window <em>starts</em> within the recording — not a clock of how long you've been recording. It advances in 4-second steps (<span class="mono">00:00</span>, <span class="mono">00:04</span>, <span class="mono">00:08</span>…) because that's the spacing between window starts.</p>
+    <p class="muted">If the model is running slower than real time, Position lags behind wall-clock time. That gap is the transcript falling behind, and it's the same thing the real-time factor is warning you about.</p>
+  </div>
+
+  <div class="entry">
+    <div class="entry-head"><h3>Chunks</h3></div>
+    <p>How many windows have been handled this session, including ones skipped as silence. Roughly one every 4 seconds of recording.</p>
+  </div>
+
+  <div class="entry">
+    <div class="entry-head"><h3>Keywords</h3></div>
+    <p>How many keyword detections have fired this session, after duplicate suppression. Each one is also sent to the backend to be recorded.</p>
+    <p class="muted">This counts detections, not distinct words — one keyword caught three times counts as three.</p>
+  </div>
+
+  <h2>Setup</h2>
+  <p class="section-note">Changes apply to the next recording you start, not the one already running.</p>
+
+  <div class="entry">
+    <div class="entry-head"><h3>Model</h3></div>
+    <p><strong>turbo</strong> is the smaller, faster model — fewer decoder layers, so less time per window and a lower real-time factor. <strong>large-v3</strong> is the full-size model: slower, generally more accurate on hard audio. Both are Thai fine-tunes of Whisper.</p>
+    <p class="muted">Switching models the first time costs a download; after that the model is cached on disk, and stays in memory for the rest of the server run. Only the first session on each model waits for loading.</p>
+  </div>
+
+  <div class="entry">
+    <div class="entry-head"><h3>Keywords</h3></div>
+    <p>Comma-separated words or phrases to watch for, e.g. <code>สวัสดี, ขอบคุณครับ</code>. Each window's transcript is checked for each one as plain text containment, case-insensitive. Leave it empty to just transcribe and record nothing.</p>
+    <p>Matching is <strong>literal</strong>: it finds the characters you typed, so it only fires if the model transcribed the word the way you spelled it. It won't catch near-misses or alternate spellings.</p>
+    <p class="muted">A keyword caught twice within about 4.5 seconds only reports once. The overlap between windows means one spoken word can show up in two consecutive transcripts, and this stops that being counted twice — the trade-off is that genuinely saying the same word twice in quick succession also reports once.</p>
+  </div>
+
+  <div class="entry">
+    <div class="entry-head"><h3>Input</h3></div>
+    <p>Which microphone to record from. <span class="mono">System default</span> uses whatever the OS has selected.</p>
+    <p class="muted">Connected a USB mic or paired a Bluetooth headset after starting the server? Press <strong>Rescan</strong> — the audio layer caches its device list at startup, so reloading the page alone won't reveal it. Rescan is unavailable mid-session because it resets that audio layer.</p>
+  </div>
+
+  <div class="entry">
+    <div class="entry-head"><h3>Silence threshold</h3><span class="tag">default 0.01</span></div>
+    <p>A loudness floor. Windows quieter than this are skipped entirely and never reach the model — shown as <span class="mono">silence — skipped</span>.</p>
+    <p>This exists because these models have no way to output "nothing was said". Fed silence or room tone, they invent plausible text instead, which would produce phantom transcripts and false keyword hits. Gating on loudness first is what prevents that.</p>
+    <p class="muted"><strong>Raise it</strong> if words appear while nobody is speaking — your room's noise floor is above the current setting. <strong>Lower it</strong> if quiet speech is being skipped. There's no universal correct value: it depends on the microphone's gain and how noisy the room is.</p>
+  </div>
+
+  <div class="entry">
+    <div class="entry-head"><h3>Backend</h3></div>
+    <p>Where keyword detections get sent to be stored, so you can count and query them later. Each detection is recorded with the word, the time, which model found it, and which session it came from.</p>
+    <p class="muted">If it's unreachable, recording carries on and a warning appears in the feed — detections are simply not recorded. Transcription never depends on it.</p>
+  </div>
+
+  <h2>When something looks wrong</h2>
+
+  <table>
+    <thead><tr><th>What you see</th><th>What it means</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Words appear while nobody is speaking</td>
+        <td>Room noise is clearing the silence threshold and reaching the model, which then invents text. Raise the silence threshold.</td>
+      </tr>
+      <tr>
+        <td>The same word ends one line and starts the next</td>
+        <td>Normal. Consecutive windows share 1 second of audio and lines are never stitched together.</td>
+      </tr>
+      <tr>
+        <td>Real-time factor sits above 1.0</td>
+        <td>Windows take longer to transcribe than the audio they cover, so the transcript falls progressively behind. Try the turbo model, or accept the lag if you only need the transcript afterwards.</td>
+      </tr>
+      <tr>
+        <td>A keyword you clearly said wasn't flagged</td>
+        <td>Either the model transcribed it differently from how you spelled it — check the line it should have matched — or it was suppressed as a duplicate within ~4.5 seconds of the previous hit.</td>
+      </tr>
+      <tr>
+        <td>A warning about reaching the backend</td>
+        <td>The backend URL is wrong or the service isn't running. Recording is unaffected; only the record of detections is lost.</td>
+      </tr>
+      <tr>
+        <td>Stopping takes a few seconds</td>
+        <td>The window being transcribed has to finish first, then the whole recording is transcribed once more for the full-clip version.</td>
+      </tr>
+      <tr>
+        <td>No microphones in the Input list</td>
+        <td>Nothing is connected, or the process lacks microphone permission. Connect a mic and press Rescan.</td>
+      </tr>
+    </tbody>
+  </table>
+</main>
+
+</body>
+</html>
