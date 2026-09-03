@@ -587,7 +587,10 @@
       </div>
 
       <div class="field">
-        <label for="runtime">Runtime</label>
+        <div class="field-head">
+          <label for="runtime">Runtime</label>
+          <a class="linkbtn" href="/help#runtimes" target="_blank" style="text-decoration:none">Compare runtimes ↗</a>
+        </div>
         <select id="runtime" onchange="describeRuntime()"><option value="pytorch">PyTorch (CPU / Apple GPU)</option></select>
         <span class="hint" id="runtimeHint">Checking what this machine can run…</span>
       </div>
@@ -683,7 +686,10 @@
       </div>
 
       <div class="field">
-        <label>Runtimes to compare</label>
+        <div class="field-head">
+          <label>Runtimes to compare</label>
+          <a class="linkbtn" href="/help#runtimes" target="_blank" style="text-decoration:none">Engine details ↗</a>
+        </div>
         <div id="benchRuntimesList" style="display:flex; flex-direction:column; gap:0.45rem; margin-top:0.4rem">
           <!-- Checkboxes populated dynamically -->
         </div>

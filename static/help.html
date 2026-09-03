@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Typhoon Whisper — Reference</title>
+<title>Typhoon Whisper — Reference &amp; Guide</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
@@ -17,6 +17,7 @@
     --dim: #7a8896;
     --tungsten: #f2a63b;
     --rec: #e5484d;
+    --green: #46a758;
 
     --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
     --label: 'IBM Plex Sans Condensed', 'Helvetica Neue', system-ui, sans-serif;
@@ -46,6 +47,7 @@
     line-height: 1.65;
   }
 
+  /* ---- Header Rail ---- */
   .rail {
     display: flex; align-items: center; gap: 1rem;
     padding: 0.75rem 1.25rem;
@@ -67,39 +69,92 @@
     text-transform: uppercase; font-size: 0.75rem;
     color: var(--tungsten); text-decoration: none;
     border: 1px solid var(--rule); padding: 0.35rem 0.8rem;
+    transition: all 0.15s ease;
   }
   .rail a:hover { background: var(--tungsten); color: var(--panel); border-color: var(--tungsten); }
   .rail a:focus-visible { outline: 2px solid var(--tungsten); outline-offset: 2px; }
 
-  main { max-width: 54rem; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+  /* ---- Navigation Tab Bar ---- */
+  .nav-bar {
+    background: var(--panel-deep);
+    border-bottom: 1px solid var(--rule);
+    position: sticky; top: 49px; z-index: 9;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .nav-bar::-webkit-scrollbar { display: none; }
+  .nav-tabs {
+    max-width: 56rem; margin: 0 auto; padding: 0 1.25rem;
+    display: flex; gap: 0.35rem;
+  }
+  .nav-tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--dim);
+    font-family: var(--label);
+    font-weight: 600;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.75rem 0.85rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+    display: flex; align-items: center; gap: 0.4rem;
+  }
+  .nav-tab:hover { color: var(--bone); }
+  .nav-tab.active {
+    color: var(--tungsten);
+    border-bottom-color: var(--tungsten);
+    background: rgba(242, 166, 59, 0.05);
+  }
 
-  .lede { font-size: 1.05rem; color: var(--bone); margin: 0 0 0.6rem; }
-  .lede-sub { color: var(--dim); margin: 0 0 3rem; }
+  main { max-width: 56rem; margin: 0 auto; padding: 2.2rem 1.25rem 5rem; }
+
+  .lede { font-size: 1.05rem; color: var(--bone); margin: 0 0 0.5rem; }
+  .lede-sub { color: var(--dim); margin: 0 0 2rem; font-size: 0.92rem; }
+
+  .help-section { display: none; }
+  .help-section.active { display: block; animation: fadeIn 0.2s ease-in; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
   h2 {
     font-family: var(--label);
-    font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase;
+    font-size: 0.76rem; letter-spacing: 0.22em; text-transform: uppercase;
     color: var(--tungsten); font-weight: 600;
-    margin: 3.25rem 0 0.25rem; padding-bottom: 0.5rem;
+    margin: 2.2rem 0 0.25rem; padding-bottom: 0.5rem;
     border-bottom: 1px solid var(--rule);
   }
   h2:first-of-type { margin-top: 0; }
-  .section-note { color: var(--dim); font-size: 0.9rem; margin: 0.9rem 0 1.75rem; }
+  .section-note { color: var(--dim); font-size: 0.9rem; margin: 0.75rem 0 1.5rem; }
 
-  .entry { margin: 0 0 2rem; }
-  .entry-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.45rem; }
+  .entry {
+    margin: 0 0 2rem;
+    background: var(--panel-deep);
+    border: 1px solid var(--rule);
+    padding: 1.2rem 1.35rem;
+    border-radius: 4px;
+  }
+  .entry-head { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
   .entry-head h3 {
-    font-family: var(--label); font-size: 0.95rem; letter-spacing: 0.1em;
+    font-family: var(--label); font-size: 1.05rem; letter-spacing: 0.08em;
     text-transform: uppercase; font-weight: 600; margin: 0; color: var(--bone);
   }
   .tag {
-    font-family: var(--mono); font-size: 0.68rem; color: var(--dim);
-    border: 1px solid var(--rule); padding: 0.1rem 0.4rem;
+    font-family: var(--mono); font-size: 0.7rem; color: var(--dim);
+    border: 1px solid var(--rule); padding: 0.1rem 0.45rem;
+    background: var(--panel-raised);
     font-variant-ligatures: none;
+    border-radius: 2px;
   }
-  .entry p { margin: 0 0 0.7rem; }
+  .tag.active { border-color: var(--green); color: var(--green); }
+  .tag.warn { border-color: var(--tungsten); color: var(--tungsten); }
+  .entry p { margin: 0 0 0.7rem; font-size: 0.93rem; }
   .entry p:last-child { margin-bottom: 0; }
-  .muted { color: var(--dim); font-size: 0.92rem; }
+  .entry ul { margin: 0.5rem 0 0.75rem 1.2rem; padding: 0; font-size: 0.92rem; color: var(--bone); }
+  .entry li { margin-bottom: 0.35rem; }
+  .muted { color: var(--dim); font-size: 0.88rem; }
 
   /* chunk timeline diagram */
   .timeline { margin: 1.5rem 0 0.75rem; }
@@ -135,8 +190,6 @@
   }
   .meter .fill { position: absolute; inset: 0 auto 0 0; background: var(--tungsten); }
   .meter .fill.over { background: var(--rec); }
-  /* drawn above the fill, in a colour that reads against both the empty
-     track and a red over-threshold fill — the moment you most need to see it */
   .meter .redline {
     position: absolute; top: -2px; bottom: -2px; left: 50%; width: 1px; z-index: 2;
     background: var(--bone); box-shadow: 0 0 0 1px rgba(26, 32, 39, 0.65);
@@ -146,27 +199,48 @@
   .demo-val.bad { color: var(--rec); }
   .demo-text { font-size: 0.9rem; color: var(--dim); }
 
-  table { width: 100%; border-collapse: collapse; margin: 1rem 0 0; font-size: 0.92rem; }
-  th, td { text-align: left; padding: 0.7rem 0.9rem 0.7rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0 1.5rem; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 0.75rem 0.9rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
   th {
     font-family: var(--label); font-size: 0.68rem; letter-spacing: 0.16em;
     text-transform: uppercase; color: var(--dim); font-weight: 600;
+    background: var(--panel-deep);
   }
-  td:first-child { width: 38%; padding-right: 1.5rem; color: var(--bone); }
+  td:first-child { color: var(--bone); font-weight: 500; }
   td:last-child { color: var(--dim); }
 
-  @media (max-width: 640px) {
-    main { padding: 1.75rem 1rem 4rem; }
-    /* the full label doesn't fit a window box at phone width */
+  .callout {
+    background: rgba(242, 166, 59, 0.08);
+    border-left: 3px solid var(--tungsten);
+    padding: 0.9rem 1.1rem;
+    margin: 1.2rem 0;
+    font-size: 0.9rem;
+  }
+  .callout strong { color: var(--tungsten); }
+
+  .nav-footer {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--rule);
+  }
+  .nav-footer button {
+    background: var(--panel-raised); border: 1px solid var(--rule); color: var(--bone);
+    font-family: var(--label); font-size: 0.75rem; letter-spacing: 0.1em;
+    text-transform: uppercase; padding: 0.5rem 1rem; cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .nav-footer button:hover { border-color: var(--tungsten); color: var(--tungsten); }
+
+  @media (max-width: 720px) {
+    main { padding: 1.5rem 1rem 4rem; }
     .win-long { display: none; }
     .win-short { display: inline; }
     .win { font-size: 0.64rem; }
     .demo-row { flex-wrap: wrap; gap: 0.5rem 0.9rem; }
     table, td:first-child { width: auto; }
-    td, th { display: block; border-bottom: none; padding: 0.15rem 0; }
-    tr { display: block; border-bottom: 1px solid var(--rule); padding: 0.7rem 0; }
+    td, th { display: block; border-bottom: none; padding: 0.2rem 0; }
+    tr { display: block; border-bottom: 1px solid var(--rule); padding: 0.75rem 0; }
     thead { display: none; }
-    td:first-child { font-family: var(--label); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.8rem; }
+    td:first-child { font-family: var(--label); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.85rem; color: var(--tungsten); }
   }
 </style>
 </head>
@@ -174,153 +248,440 @@
 
 <header class="rail">
   <span class="wordmark">Typhoon Whisper</span>
-  <span class="here">Reference</span>
+  <span class="here">Reference &amp; Documentation</span>
   <a href="/">← Back to panel</a>
 </header>
 
+<nav class="nav-bar">
+  <div class="nav-tabs">
+    <button class="nav-tab active" data-tab="runtimes" onclick="switchHelpTab('runtimes')">⚡ Runtimes &amp; Hardware</button>
+    <button class="nav-tab" data-tab="benchmark" onclick="switchHelpTab('benchmark')">⏱️ Benchmark Studio</button>
+    <button class="nav-tab" data-tab="session" onclick="switchHelpTab('session')">Session Flow</button>
+    <button class="nav-tab" data-tab="readings" onclick="switchHelpTab('readings')">Readings &amp; Gauges</button>
+    <button class="nav-tab" data-tab="setup" onclick="switchHelpTab('setup')">Setup &amp; Config</button>
+    <button class="nav-tab" data-tab="troubleshoot" onclick="switchHelpTab('troubleshoot')">Troubleshooting</button>
+  </div>
+</nav>
+
 <main>
-  <p class="lede">This rig listens through a microphone and transcribes Thai speech in 5-second slices <em>while you're still talking</em>, flagging any keyword you've asked it to watch for.</p>
-  <p class="lede-sub">Everything below explains what each control changes and what each reading is telling you.</p>
+  <p class="lede">Complete technical documentation and reference guide for Typhoon Whisper Real-Time STT.</p>
+  <p class="lede-sub">Select a topic from the navigation bar above to view detailed guides on execution engines, hardware acceleration, benchmarking, and streaming settings.</p>
 
-  <h2>How a session works</h2>
-  <p class="section-note">Worth reading first — it explains why the readings behave the way they do.</p>
+  <!-- ========================================== -->
+  <!-- TAB 1: RUNTIMES & HARDWARE                 -->
+  <!-- ========================================== -->
+  <section class="help-section active" id="sec-runtimes">
+    <h2>Execution Runtimes (Backends)</h2>
+    <p class="section-note">The model weights are always Typhoon Whisper (Turbo or Large-v3); what changes across runtimes is the execution engine and the hardware processor running it.</p>
 
-  <p>The models behind this (<code>typhoon-whisper-turbo</code> and <code>typhoon-whisper-large-v3</code>) have no streaming mode: they transcribe a finished clip, not a running microphone. So live transcription is faked by slicing the incoming audio into <strong>5-second windows that overlap by 1 second</strong>, and transcribing each window as soon as it fills.</p>
-
-  <div class="timeline">
-    <div class="track">
-      <div class="win" style="left:0%;   width:31.25%"><span class="win-long">window 1 · 0–5s</span><span class="win-short">0–5s</span></div>
+    <div class="callout">
+      <strong>Why does the runtime matter?</strong> Whisper inference is computationally heavy. On an Intel Core Ultra 5 125H box, plain PyTorch CPU float32 is slow (RTF &gt; 1.0, falls behind live speech). Switching to <strong>whisper.cpp</strong> (GGML Q5_0), <strong>CTranslate2</strong> (int8 with AVX-VNNI), or <strong>OpenVINO</strong> (Intel Arc iGPU) drops latency by 3× to 5×, enabling continuous real-time transcription.
     </div>
-    <div class="track">
-      <div class="win" style="left:25%;  width:31.25%"><span class="win-long">window 2 · 4–9s</span><span class="win-short">4–9s</span></div>
-    </div>
-    <div class="track">
-      <div class="win" style="left:50%;  width:31.25%"><span class="win-long">window 3 · 8–13s</span><span class="win-short">8–13s</span></div>
-    </div>
-    <div class="ruler">
-      <span style="left:0%">0s</span>
-      <span style="left:25%">4s</span>
-      <span style="left:50%">8s</span>
-      <span style="left:75%">12s</span>
-      <span style="left:100%">16s</span>
-    </div>
-    <p class="overlap-note">Each window starts 4 seconds after the last, so consecutive windows share 1 second of audio.</p>
-  </div>
 
-  <p>That 1-second overlap exists so a word spoken right on a boundary isn't sliced in half — it lands whole in at least one window. The cost: audio in the overlap is transcribed twice, so <strong>the same word can legitimately appear at the end of one line and the start of the next</strong>. That's expected, not a fault. Lines are never stitched together or de-duplicated.</p>
-
-  <p>When you press stop, the <strong>whole recording is transcribed once more in a single pass</strong> and shown as <span class="mono">Full clip</span>. With the entire recording as context it's usually the more accurate version — compare it against the live lines to see what the chunking cost you.</p>
-
-  <h2>Readings</h2>
-  <p class="section-note">The rail across the top of the panel, left to right.</p>
-
-  <div class="entry">
-    <div class="entry-head"><h3>Real-time factor</h3><span class="tag">latency ÷ 5s</span></div>
-    <p>The one number that answers <em>can this keep up with live speech?</em> It's how long a window took to transcribe, divided by the 5 seconds of audio it covered.</p>
-    <div class="demo">
-      <div class="demo-row">
-        <div class="meter"><div class="fill" style="width:27%"></div><div class="redline"></div></div>
-        <span class="demo-val good">0.54</span>
-        <span class="demo-text">Transcribed in 2.7s. Keeping up comfortably.</span>
+    <!-- 1. PyTorch -->
+    <div class="entry">
+      <div class="entry-head">
+        <h3>1. PyTorch (<code>pytorch</code>)</h3>
+        <span class="tag">Default</span>
+        <span class="tag">Apple MPS / CPU float32</span>
       </div>
-      <div class="demo-row">
-        <div class="meter"><div class="fill over" style="width:82%"></div><div class="redline"></div></div>
-        <span class="demo-val bad">1.63</span>
-        <span class="demo-text">Transcribed in 8.1s. Falling behind — lag grows the longer you talk.</span>
-      </div>
+      <p>Standard implementation using Hugging Face <code>transformers</code> and <code>torch</code>.</p>
+      <ul>
+        <li><strong>On Apple Silicon (Mac):</strong> Uses Apple Metal Performance Shaders (MPS GPU). Extremely fast and responsive due to unified memory architecture.</li>
+        <li><strong>On Intel/AMD x86 (Linux/Windows):</strong> Runs on CPU in float32. Does not use int8 quantization, tensor cores, or integrated GPU acceleration.</li>
+        <li><strong>Conversion:</strong> Zero conversion required. Downloads directly from Hugging Face Hub on first load.</li>
+        <li><strong>Best for:</strong> Development on Mac, or as an absolute accuracy baseline. On Intel Core Ultra boxes, this is the slowest option.</li>
+      </ul>
     </div>
-    <p>The pale line across the middle of the meter marks <strong>1.0</strong>, the break-even point. Below it, transcription finishes faster than you speak. At or above it, each window takes longer than the audio it covers, so the transcript drifts further behind real time the longer the session runs. The meter tops out at 2.0.</p>
-    <p class="muted">Expect this to move a lot: a window packed with continuous speech takes far longer than a window with one short phrase, because there are more words to generate. Test with the busiest speech you actually expect, not short test phrases.</p>
-  </div>
 
-  <div class="entry">
-    <div class="entry-head"><h3>Position</h3><span class="tag">mm:ss</span></div>
-    <p>Where the most recent window <em>starts</em> within the recording — not a clock of how long you've been recording. It advances in 4-second steps (<span class="mono">00:00</span>, <span class="mono">00:04</span>, <span class="mono">00:08</span>…) because that's the spacing between window starts.</p>
-    <p class="muted">If the model is running slower than real time, Position lags behind wall-clock time. That gap is the transcript falling behind, and it's the same thing the real-time factor is warning you about.</p>
-  </div>
+    <!-- 2. whisper.cpp -->
+    <div class="entry">
+      <div class="entry-head">
+        <h3>2. whisper.cpp (<code>whispercpp</code>)</h3>
+        <span class="tag active">Recommended CPU Engine</span>
+        <span class="tag">GGML Q5_0 Quantization</span>
+      </div>
+      <p>High-performance pure C/C++ port of OpenAI Whisper developed by Georgi Gerganov, bound via <code>pywhispercpp</code>.</p>
+      <ul>
+        <li><strong>Weight format:</strong> 5-bit integer quantized GGML weights (<code>q5_0</code>). Model file size is only <strong>574 MB</strong> (Turbo), cutting memory bandwidth dramatically.</li>
+        <li><strong>Hardware Acceleration:</strong> Uses CPU vector SIMD instructions (AVX, AVX2, AVX-VNNI on x86, Metal on macOS). Zero Python runtime overhead during active transcription passes.</li>
+        <li><strong>Decoding:</strong> Configured with greedy decoding (<code>temperature=0.0</code>) and silent window termination to eliminate synthetic hallucinations.</li>
+        <li><strong>Conversion command:</strong> <code>uv run python convert_model.py --runtime whispercpp --model turbo</code> (downloads community GGML weights from Hugging Face).</li>
+        <li><strong>Best for:</strong> Fast CPU inference with minimal RAM usage, robust behavior on silence.</li>
+      </ul>
+    </div>
 
-  <div class="entry">
-    <div class="entry-head"><h3>Chunks</h3></div>
-    <p>How many windows have been handled this session, including ones skipped as silence. Roughly one every 4 seconds of recording.</p>
-  </div>
+    <!-- 3. CTranslate2 -->
+    <div class="entry">
+      <div class="entry-head">
+        <h3>3. CTranslate2 (<code>ctranslate2</code>)</h3>
+        <span class="tag active">Recommended for AVX-VNNI</span>
+        <span class="tag">int8 Quantization</span>
+      </div>
+      <p>Custom C++ inference engine specifically designed for Transformer models, used through <code>faster-whisper</code>.</p>
+      <ul>
+        <li><strong>Weight format:</strong> 8-bit integer quantization (<code>int8</code>).</li>
+        <li><strong>Hardware Acceleration:</strong> Heavily accelerated on modern Intel CPUs equipped with <strong>AVX-VNNI</strong> (Vector Neural Network Instructions) like Intel Meteor Lake (Core Ultra 5 125H).</li>
+        <li><strong>Optimized Decoding:</strong> Uses <code>beam_size=1</code>, <code>temperature=0.0</code>, and <code>condition_on_previous_text=False</code> to avoid 6-pass escalating temperature loops during synthetic/silent audio.</li>
+        <li><strong>Conversion command:</strong> <code>uv run python convert_model.py --runtime ctranslate2 --model turbo</code>.</li>
+        <li><strong>Best for:</strong> Intel Core Ultra CPUs when running CPU inference with AVX-VNNI.</li>
+      </ul>
+    </div>
 
-  <div class="entry">
-    <div class="entry-head"><h3>Keywords</h3></div>
-    <p>How many keyword detections have fired this session, after duplicate suppression. Each one is also sent to the backend to be recorded.</p>
-    <p class="muted">This counts detections, not distinct words — one keyword caught three times counts as three.</p>
-  </div>
+    <!-- 4. OpenVINO GPU -->
+    <div class="entry">
+      <div class="entry-head">
+        <h3>4. OpenVINO GPU (<code>openvino-gpu</code>)</h3>
+        <span class="tag active">Recommended for Intel Arc iGPU</span>
+        <span class="tag">Intel Xe / Arc iGPU</span>
+      </div>
+      <p>Intel OpenVINO runtime compiled specifically for Intel integrated graphics (<code>GPU.0</code> / <code>renderD128</code>).</p>
+      <ul>
+        <li><strong>Offload Strategy:</strong> Offloads the heavy matrix multiplications of Whisper completely to the Intel Arc integrated GPU.</li>
+        <li><strong>CPU Relief:</strong> Keeps host CPU utilization minimal, leaving all CPU cores free for host applications, databases, or speech pipelines.</li>
+        <li><strong>Conversion command:</strong> <code>uv run python convert_model.py --runtime openvino --model turbo</code>.</li>
+        <li><strong>Best for:</strong> Advantech UBX-330M and Intel Core Ultra devices when you want GPU offloading.</li>
+      </ul>
+    </div>
 
-  <h2>Setup</h2>
-  <p class="section-note">Changes apply to the next recording you start, not the one already running.</p>
+    <!-- 5. OpenVINO CPU -->
+    <div class="entry">
+      <div class="entry-head">
+        <h3>5. OpenVINO CPU (<code>openvino-cpu</code>)</h3>
+        <span class="tag">Intel CPU Vector Pipeline</span>
+      </div>
+      <p>Intel OpenVINO runtime optimized for Intel CPU vector instruction pipelines (AVX2, AVX-512, AMX).</p>
+      <ul>
+        <li>Shares the same converted OpenVINO model directory as <code>openvino-gpu</code>.</li>
+        <li>Executes on the CPU if an integrated GPU is busy or unavailable.</li>
+      </ul>
+    </div>
 
-  <div class="entry">
-    <div class="entry-head"><h3>Model</h3></div>
-    <p><strong>turbo</strong> is the smaller, faster model — fewer decoder layers, so less time per window and a lower real-time factor. <strong>large-v3</strong> is the full-size model: slower, generally more accurate on hard audio. Both are Thai fine-tunes of Whisper.</p>
-    <p class="muted">Switching models the first time costs a download; after that the model is cached on disk, and stays in memory for the rest of the server run. Only the first session on each model waits for loading.</p>
-  </div>
+    <h2>Hardware Compatibility Matrix</h2>
+    <p class="section-note">Recommended choices based on deployment machine architecture.</p>
 
-  <div class="entry">
-    <div class="entry-head"><h3>Keywords</h3></div>
-    <p>Comma-separated words or phrases to watch for, e.g. <code>สวัสดี, ขอบคุณครับ</code>. Each window's transcript is checked for each one as plain text containment, case-insensitive. Leave it empty to just transcribe and record nothing.</p>
-    <p>Matching is <strong>literal</strong>: it finds the characters you typed, so it only fires if the model transcribed the word the way you spelled it. It won't catch near-misses or alternate spellings.</p>
-    <p class="muted">A keyword caught twice within about 4.5 seconds only reports once. The overlap between windows means one spoken word can show up in two consecutive transcripts, and this stops that being counted twice — the trade-off is that genuinely saying the same word twice in quick succession also reports once.</p>
-  </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Target Machine</th>
+          <th>Processor / Accelerators</th>
+          <th>Recommended Runtime</th>
+          <th>Expected RTF</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Advantech UBX-330M</strong></td>
+          <td>Intel Core Ultra 5 125H (14 cores, Arc iGPU, AVX-VNNI)</td>
+          <td><code>openvino-gpu</code> (iGPU offload) or <code>ctranslate2</code> / <code>whispercpp</code> (AVX-VNNI)</td>
+          <td>0.20 – 0.45 (Fast Real-time)</td>
+        </tr>
+        <tr>
+          <td><strong>Apple Silicon Mac</strong></td>
+          <td>M1 / M2 / M3 / M4 (Apple Metal GPU)</td>
+          <td><code>pytorch</code> (native MPS) or <code>whispercpp</code> (Metal)</td>
+          <td>0.15 – 0.35 (Fast Real-time)</td>
+        </tr>
+        <tr>
+          <td><strong>Standard Intel x86 PC</strong></td>
+          <td>Intel 11th–14th Gen Core CPUs</td>
+          <td><code>ctranslate2</code> or <code>whispercpp</code></td>
+          <td>0.30 – 0.65 (Real-time)</td>
+        </tr>
+        <tr>
+          <td><strong>Generic AMD / Legacy x86</strong></td>
+          <td>AMD Ryzen / Older Intel without AVX-VNNI</td>
+          <td><code>whispercpp</code> (GGML Q5_0)</td>
+          <td>0.40 – 0.85 (Real-time)</td>
+        </tr>
+      </tbody>
+    </table>
 
-  <div class="entry">
-    <div class="entry-head"><h3>Input</h3></div>
-    <p>Which microphone to record from. <span class="mono">System default</span> uses whatever the OS has selected.</p>
-    <p class="muted">Connected a USB mic or paired a Bluetooth headset after starting the server? Press <strong>Rescan</strong> — the audio layer caches its device list at startup, so reloading the page alone won't reveal it. Rescan is unavailable mid-session because it resets that audio layer.</p>
-  </div>
+    <div class="nav-footer">
+      <span>Next: Benchmark Studio</span>
+      <button onclick="switchHelpTab('benchmark')">Benchmark Studio →</button>
+    </div>
+  </section>
 
-  <div class="entry">
-    <div class="entry-head"><h3>Silence threshold</h3><span class="tag">default 0.02</span></div>
-    <p>A loudness floor. Windows quieter than this are skipped entirely and never reach the model — shown as <span class="mono">silence — skipped</span>.</p>
-    <p>This exists because these models have no way to output "nothing was said". Fed silence or room tone, they invent plausible text instead, which would produce phantom transcripts and false keyword hits. Gating on loudness first is what prevents that.</p>
-    <p class="muted"><strong>Raise it</strong> if words appear while nobody is speaking — your room's noise floor is above the current setting. <strong>Lower it</strong> if quiet speech is being skipped. There's no universal correct value: it depends on the microphone's gain and how noisy the room is.</p>
-  </div>
+  <!-- ========================================== -->
+  <!-- TAB 2: BENCHMARK STUDIO                    -->
+  <!-- ========================================== -->
+  <section class="help-section" id="sec-benchmark">
+    <h2>Benchmark Studio</h2>
+    <p class="section-note">How to accurately measure, compare, and verify execution performance.</p>
 
-  <div class="entry">
-    <div class="entry-head"><h3>Backend</h3></div>
-    <p>Where keyword detections get sent to be stored, so you can count and query them later. Each detection is recorded with the word, the time, which model found it, and which session it came from.</p>
-    <p class="muted">If it's unreachable, recording carries on and a warning appears in the feed — detections are simply not recorded. Transcription never depends on it.</p>
-  </div>
+    <div class="entry">
+      <div class="entry-head"><h3>Why Fixed-Clip Benchmarking?</h3></div>
+      <p>A live microphone session cannot be compared mathematically against another live session: you speak with different cadence, different pauses, and different words every time. A run that looks faster might simply mean you spoke less.</p>
+      <p><strong>Benchmark Studio</strong> replays a fixed audio clip through the exact same 5-second chunking and 1-second overlap pipeline that the live mic session uses. Because the audio feed is strictly identical across runs, timing differences reflect true hardware throughput.</p>
+    </div>
 
-  <h2>When something looks wrong</h2>
+    <div class="entry">
+      <div class="entry-head"><h3>Recording Benchmark Clips</h3></div>
+      <p>You can record a reference test clip directly without third-party recording software:</p>
+      <ul>
+        <li><strong>On Web GUI:</strong> Click the <strong>Record</strong> button next to the clip dropdown. You can choose between:
+          <ul>
+            <li><strong>Browser Mic:</strong> Records audio from your laptop or phone over the network with a live audio level (VU) meter.</li>
+            <li><strong>Server Mic:</strong> Records directly from the microphone plugged into the host device (e.g. Jabra SPEAK 510 or Logitech Brio on UBX-330M).</li>
+          </ul>
+          The audio is automatically converted to 16kHz mono WAV and saved to <code>audio/</code> on the server.
+        </li>
+        <li><strong>On CLI Terminal:</strong> Run <code>benchmark.py</code> with <code>--record</code>:
+          <pre><code>uv run python benchmark.py --model turbo --record test_clip.wav --duration 10</code></pre>
+        </li>
+      </ul>
+    </div>
 
-  <table>
-    <thead><tr><th>What you see</th><th>What it means</th></tr></thead>
-    <tbody>
-      <tr>
-        <td>Words appear while nobody is speaking</td>
-        <td>Room noise is clearing the silence threshold and reaching the model, which then invents text. Raise the silence threshold.</td>
-      </tr>
-      <tr>
-        <td>The same word ends one line and starts the next</td>
-        <td>Normal. Consecutive windows share 1 second of audio and lines are never stitched together.</td>
-      </tr>
-      <tr>
-        <td>Real-time factor sits above 1.0</td>
-        <td>Windows take longer to transcribe than the audio they cover, so the transcript falls progressively behind. Try the turbo model, or accept the lag if you only need the transcript afterwards.</td>
-      </tr>
-      <tr>
-        <td>A keyword you clearly said wasn't flagged</td>
-        <td>Either the model transcribed it differently from how you spelled it — check the line it should have matched — or it was suppressed as a duplicate within ~4.5 seconds of the previous hit.</td>
-      </tr>
-      <tr>
-        <td>A warning about reaching the backend</td>
-        <td>The backend URL is wrong or the service isn't running. Recording is unaffected; only the record of detections is lost.</td>
-      </tr>
-      <tr>
-        <td>Stopping takes a few seconds</td>
-        <td>The window being transcribed has to finish first, then the whole recording is transcribed once more for the full-clip version.</td>
-      </tr>
-      <tr>
-        <td>No microphones in the Input list</td>
-        <td>Nothing is connected, or the process lacks microphone permission. Connect a mic and press Rescan.</td>
-      </tr>
-    </tbody>
-  </table>
+    <div class="entry">
+      <div class="entry-head"><h3>Interpreting Benchmark Results</h3></div>
+      <ul>
+        <li><strong>🏆 Winner Banner:</strong> Identifies the fastest runtime and calculates the speedup factor over baseline PyTorch (e.g. <em>3.5× faster than PyTorch</em>).</li>
+        <li><strong>Real-Time Factor (RTF):</strong> Latency divided by chunk duration (5s).
+          <ul>
+            <li><strong>RTF &lt; 1.0 (Green):</strong> Real-time capable. Transcription finishes faster than speech arrives.</li>
+            <li><strong>RTF &ge; 1.0 (Red):</strong> Slower than real-time. Lag accumulates with longer sessions.</li>
+          </ul>
+        </li>
+        <li><strong>Worst RTF:</strong> The longest time taken on any individual chunk in the clip. Crucial for detecting thermal throttling or cold-start spikes.</li>
+        <li><strong>Sample Transcript:</strong> Preview of the transcribed Thai text to confirm accuracy wasn't compromised by aggressive quantization.</li>
+      </ul>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>CPU Thread Pinning on Hybrid Architectures</h3></div>
+      <p>On hybrid Intel CPUs (such as the Core Ultra 5 125H with 4 P-cores, 8 E-cores, and 2 LP E-cores), using all 14 cores can actually be <em>slower</em> than using only the Performance cores, because slower E-cores delay thread synchronization barriers.</p>
+      <p>Use <code>taskset</code> to isolate inference to Performance cores:</p>
+      <pre><code># Pin to P-core threads (CPUs 0-7) with 8 threads:
+taskset -c 0-7 uv run python benchmark.py --model turbo --file audio/clip.wav --threads 8</code></pre>
+    </div>
+
+    <div class="nav-footer">
+      <button onclick="switchHelpTab('runtimes')">← Runtimes</button>
+      <button onclick="switchHelpTab('session')">Session Flow →</button>
+    </div>
+  </section>
+
+  <!-- ========================================== -->
+  <!-- TAB 3: SESSION FLOW                        -->
+  <!-- ========================================== -->
+  <section class="help-section" id="sec-session">
+    <h2>How a Session Works</h2>
+    <p class="section-note">Explains why the live readings and chunk outputs behave the way they do.</p>
+
+    <p>Whisper models (<code>typhoon-whisper-turbo</code> and <code>typhoon-whisper-large-v3</code>) do not have native streaming architecture: they accept a complete audio tensor, not an unbounded audio stream. Live transcription is achieved by windowing incoming audio into <strong>5-second slices that overlap by 1 second</strong>, transcribing each window as soon as it fills.</p>
+
+    <div class="timeline">
+      <div class="track">
+        <div class="win" style="left:0%;   width:31.25%"><span class="win-long">window 1 · 0–5s</span><span class="win-short">0–5s</span></div>
+      </div>
+      <div class="track">
+        <div class="win" style="left:25%;  width:31.25%"><span class="win-long">window 2 · 4–9s</span><span class="win-short">4–9s</span></div>
+      </div>
+      <div class="track">
+        <div class="win" style="left:50%;  width:31.25%"><span class="win-long">window 3 · 8–13s</span><span class="win-short">8–13s</span></div>
+      </div>
+      <div class="ruler">
+        <span style="left:0%">0s</span>
+        <span style="left:25%">4s</span>
+        <span style="left:50%">8s</span>
+        <span style="left:75%">12s</span>
+        <span style="left:100%">16s</span>
+      </div>
+      <p class="overlap-note">Each window starts 4 seconds after the last, so consecutive windows share 1 second of audio.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>The 1-Second Boundary Overlap</h3></div>
+      <p>The 1-second overlap guarantees that words spoken across window boundaries aren't sliced in half. The consequence: words spoken during the overlap will legitimately appear at the end of one chunk and the beginning of the next chunk. This is expected behavior and demonstrates that no audio is dropped.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Full-Clip Reference Pass</h3></div>
+      <p>When you press <strong>Stop recording</strong>, the entire captured audio file is transcribed once more in a single batch pass, rendered as <span class="mono">Full clip</span>. Having the entire speech context allows the model to achieve its highest accuracy, allowing you to evaluate how close the chunked live stream was to the ground truth.</p>
+    </div>
+
+    <div class="nav-footer">
+      <button onclick="switchHelpTab('benchmark')">← Benchmark Studio</button>
+      <button onclick="switchHelpTab('readings')">Readings &amp; Gauges →</button>
+    </div>
+  </section>
+
+  <!-- ========================================== -->
+  <!-- TAB 4: READINGS & GAUGES                   -->
+  <!-- ========================================== -->
+  <section class="help-section" id="sec-readings">
+    <h2>Status Rail Readings &amp; Gauges</h2>
+    <p class="section-note">The instruments displayed across the top rail of the main interface.</p>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Real-time factor (RTF)</h3><span class="tag">latency ÷ 5.0s</span></div>
+      <p>The definitive metric of real-time speech capability. It is the time taken to transcribe a chunk divided by the audio duration of that chunk (5 seconds).</p>
+      <div class="demo">
+        <div class="demo-row">
+          <div class="meter"><div class="fill" style="width:27%"></div><div class="redline"></div></div>
+          <span class="demo-val good">0.54</span>
+          <span class="demo-text">Transcribed in 2.7s. Keeping up comfortably with live speech.</span>
+        </div>
+        <div class="demo-row">
+          <div class="meter"><div class="fill over" style="width:82%"></div><div class="redline"></div></div>
+          <span class="demo-val bad">1.63</span>
+          <span class="demo-text">Transcribed in 8.1s. Falling behind — backlog increases continuously.</span>
+        </div>
+      </div>
+      <p>The pale vertical line across the meter marks <strong>1.0</strong> (break-even). Below 1.0, transcription finishes before new speech finishes arriving. At or above 1.0, the pipeline falls progressively behind.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Position</h3><span class="tag">mm:ss</span></div>
+      <p>The timestamp of the beginning of the most recent audio chunk. It advances in 4-second steps (<span class="mono">00:00</span>, <span class="mono">00:04</span>, <span class="mono">00:08</span>...) corresponding to window start offsets.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Chunks</h3></div>
+      <p>Total count of 5-second slices processed during the current session, including silent chunks that were skipped.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Keywords</h3></div>
+      <p>Number of keyword detection events caught and reported to the backend. Duplicate occurrences within the overlap period are suppressed automatically.</p>
+    </div>
+
+    <div class="nav-footer">
+      <button onclick="switchHelpTab('session')">← Session Flow</button>
+      <button onclick="switchHelpTab('setup')">Setup &amp; Config →</button>
+    </div>
+  </section>
+
+  <!-- ========================================== -->
+  <!-- TAB 5: SETUP & CONFIG                      -->
+  <!-- ========================================== -->
+  <section class="help-section" id="sec-setup">
+    <h2>Setup Controls &amp; Parameters</h2>
+    <p class="section-note">Settings applied when starting new live sessions or replaying audio.</p>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Model</h3><span class="tag">turbo</span><span class="tag">large-v3</span></div>
+      <p><strong>turbo:</strong> 4 decoder layers, 574 MB weights. Extremely fast, lightweight, and ideal for edge and low-power hardware.</p>
+      <p><strong>large-v3:</strong> 32 decoder layers. Higher word accuracy on complex or heavily accented Thai speech, but requires significantly higher compute throughput.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Silence threshold</h3><span class="tag active">default 0.02</span></div>
+      <p>Audio energy floor calculated via Root Mean Square (RMS). Chunks with audio energy below this threshold are skipped and logged as <span class="mono">silence — skipped</span>.</p>
+      <p>Whisper models lack an explicit "silence" token; when presented with low-level background noise or room tone, they tend to hallucinate plausible Thai text or loop repetitive phrases. Energy gating filters this noise out before sending audio to the model.</p>
+      <p class="muted"><strong>Raise to 0.03–0.04</strong> if ambient room noise triggers false text. <strong>Lower to 0.01</strong> if quiet or whisper-level speech is being missed.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Keywords</h3></div>
+      <p>Comma-separated list of target Thai words or phrases (e.g. <code>สวัสดี, ขอบคุณครับ</code>). Matches are exact substring matches, case-insensitive.</p>
+      <p>Detections within ~4.5 seconds are debounced to prevent a single spoken word located in a boundary overlap from firing twice.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Input Device &amp; Rescan</h3></div>
+      <p>Selects the active microphone device. Click <strong>Rescan</strong> if you plug in a USB mic (e.g. Jabra SPEAK 510) or pair a Bluetooth headset after the server has already started.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Backend URL</h3></div>
+      <p>HTTP destination where keyword events are dispatched (default: <code>http://localhost:8000</code>). If the backend is offline, transcription continues without interruption.</p>
+    </div>
+
+    <div class="nav-footer">
+      <button onclick="switchHelpTab('readings')">← Readings &amp; Gauges</button>
+      <button onclick="switchHelpTab('troubleshoot')">Troubleshooting →</button>
+    </div>
+  </section>
+
+  <!-- ========================================== -->
+  <!-- TAB 6: TROUBLESHOOTING                     -->
+  <!-- ========================================== -->
+  <section class="help-section" id="sec-troubleshoot">
+    <h2>When Something Looks Wrong</h2>
+    <p class="section-note">Common symptoms, underlying causes, and corrective actions.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Observed Symptom</th>
+          <th>Root Cause &amp; Resolution</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Words appear while nobody is speaking</td>
+          <td>Ambient room noise or microphone gain is exceeding the silence gate. <strong>Increase Silence threshold</strong> from <code>0.02</code> to <code>0.03</code> or <code>0.04</code>.</td>
+        </tr>
+        <tr>
+          <td>Quiet speech is skipped</td>
+          <td>Microphone input gain is too low or mouth is far from mic. <strong>Lower Silence threshold</strong> to <code>0.01</code> or increase OS mic input volume.</td>
+        </tr>
+        <tr>
+          <td>Runtime is disabled / greyed out in dropdown</td>
+          <td>Model weights have not been converted for this backend yet. Run the corresponding conversion script (e.g. <code>uv run python convert_model.py --runtime whispercpp --model turbo</code>).</td>
+        </tr>
+        <tr>
+          <td>Real-time factor sits above 1.0 (Meter red)</td>
+          <td>Processing latency is slower than audio duration. Switch to a faster runtime (<code>whispercpp</code>, <code>ctranslate2</code>, or <code>openvino-gpu</code>), switch to the <code>turbo</code> model, or pin threads.</td>
+        </tr>
+        <tr>
+          <td>The same word appears at the end of one line and start of next</td>
+          <td>Normal behavior. Consecutive 5-second windows share 1 second of overlap audio to prevent split words.</td>
+        </tr>
+        <tr>
+          <td>Keyword was spoken but not detected</td>
+          <td>Check the transcribed chunk text — if the model transcribed with different spelling or phrasing, exact substring matching won't trigger. Also check if it fired within the 4.5s debounce window.</td>
+        </tr>
+        <tr>
+          <td>Microphone not found in input list</td>
+          <td>Device was plugged in after server started, or missing OS microphone permissions. Click <strong>Rescan</strong> in the setup panel.</td>
+        </tr>
+        <tr>
+          <td>Stopping takes a few seconds</td>
+          <td>The server waits for the current chunk inference pass to complete cleanly, then generates the full-clip reference transcript.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="nav-footer">
+      <button onclick="switchHelpTab('setup')">← Setup &amp; Config</button>
+      <button onclick="switchHelpTab('runtimes')">Back to Runtimes ⚡</button>
+    </div>
+  </section>
 </main>
 
+<script>
+  function switchHelpTab(tabId) {
+    const valid = ['runtimes', 'benchmark', 'session', 'readings', 'setup', 'troubleshoot'];
+    if (!valid.includes(tabId)) tabId = 'runtimes';
+
+    document.querySelectorAll('.nav-tab').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === tabId);
+    });
+
+    document.querySelectorAll('.help-section').forEach(sec => {
+      sec.classList.toggle('active', sec.id === `sec-${tabId}`);
+    });
+
+    history.replaceState(null, '', `#${tabId}`);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    const hash = window.location.hash.replace('#', '');
+    if (hash) {
+      switchHelpTab(hash);
+    }
+  });
+
+  window.addEventListener('hashchange', () => {
+    const hash = window.location.hash.replace('#', '');
+    if (hash) {
+      switchHelpTab(hash);
+    }
+  });
+</script>
 </body>
 </html>
