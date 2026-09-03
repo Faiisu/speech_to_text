@@ -1,0 +1,231 @@
+import argparse
+import platform
+import threading
+import time
+import uuid
+from datetime import datetime, timezone
+
+import numpy as np
+import requests
+import sounddevice as sd
+import soundfile as sf
+import torch
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+
+DEFAULT_BACKEND_URL = "http://localhost:8000"
+
+MODEL_REPOS = {
+    "turbo": "typhoon-ai/typhoon-whisper-turbo",
+    "large-v3": "typhoon-ai/typhoon-whisper-large-v3",
+}
+
+SAMPLE_RATE = 16_000
+CHUNK_SECONDS = 5
+OVERLAP_SECONDS = 1
+STEP_SECONDS = CHUNK_SECONDS - OVERLAP_SECONDS
+# Consecutive chunks are exactly STEP_SECONDS apart, so an overlap-caused
+# duplicate detection always lands exactly one chunk later. The debounce
+# window has to cover that full step, not just the overlap itself.
+DEBOUNCE_SECONDS = STEP_SECONDS + 0.5
+
+
+def pick_device() -> str:
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def load_pipeline(model_key: str, device: str):
+    repo_id = MODEL_REPOS[model_key]
+    dtype = torch.float16 if device == "mps" else torch.float32
+
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(repo_id, dtype=dtype)
+    model.to(device)
+    processor = AutoProcessor.from_pretrained(repo_id)
+
+    return pipeline(
+        "automatic-speech-recognition",
+        model=model,
+        tokenizer=processor.tokenizer,
+        feature_extractor=processor.feature_extractor,
+        chunk_length_s=30,
+        device=device,
+    )
+
+
+def load_audio(path: str) -> np.ndarray:
+    audio, sample_rate = sf.read(path, dtype="float32", always_2d=False)
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    if sample_rate != SAMPLE_RATE:
+        raise ValueError(
+            f"Expected {SAMPLE_RATE}Hz audio, got {sample_rate}Hz. Resample the file first."
+        )
+    return audio
+
+
+def transcribe(asr_pipeline, audio: np.ndarray) -> str:
+    result = asr_pipeline({"array": audio, "sampling_rate": SAMPLE_RATE})
+    return result["text"].strip()
+
+
+def report_event(backend_url: str, word: str, model_key: str, session_id: str) -> None:
+    try:
+        requests.post(
+            f"{backend_url}/events",
+            json={
+                "word": word,
+                "detected_at": datetime.now(timezone.utc).isoformat(),
+                "model": model_key,
+                "session_id": session_id,
+            },
+            timeout=2,
+        )
+    except requests.RequestException as exc:
+        print(f"[backend] warning: failed to report event: {exc}")
+
+
+def spot_keywords(
+    text: str,
+    keywords: list[str],
+    last_alerted: dict[str, float],
+    now: float,
+    *,
+    model_key: str,
+    session_id: str,
+    backend_url: str,
+) -> None:
+    lowered = text.lower()
+    for keyword in keywords:
+        if keyword.lower() not in lowered:
+            continue
+        last = last_alerted.get(keyword)
+        if last is not None and now - last < DEBOUNCE_SECONDS:
+            continue
+        last_alerted[keyword] = now
+        print(f'[keyword detected] "{keyword}" at {now:.1f}s')
+        report_event(backend_url, keyword, model_key, session_id)
+
+
+def record_with_streaming(
+    asr_pipeline, keywords: list[str], model_key: str, backend_url: str
+) -> np.ndarray:
+    """Records from the mic, printing a chunked live transcript as it goes.
+
+    Returns the full recording for a final full-clip reference pass.
+    """
+    input("Press Enter to start recording...")
+
+    session_id = str(uuid.uuid4())
+    print(f"[session] {session_id}")
+
+    frames: list[np.ndarray] = []
+    lock = threading.Lock()
+    stop_event = threading.Event()
+
+    def callback(indata, frame_count, time_info, status) -> None:
+        with lock:
+            frames.append(indata.copy())
+
+    chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
+    step_samples = chunk_samples - OVERLAP_SECONDS * SAMPLE_RATE
+    last_alerted: dict[str, float] = {}
+
+    def chunk_loop() -> None:
+        next_start = 0
+        while not stop_event.is_set():
+            with lock:
+                buffer = (
+                    np.concatenate(frames, axis=0).flatten()
+                    if frames
+                    else np.empty(0, dtype="float32")
+                )
+            if len(buffer) < next_start + chunk_samples:
+                time.sleep(0.1)
+                continue
+
+            chunk = buffer[next_start : next_start + chunk_samples]
+            chunk_time = next_start / SAMPLE_RATE
+            chunk_start = time.perf_counter()
+            text = transcribe(asr_pipeline, chunk)
+            latency = time.perf_counter() - chunk_start
+            rtf = latency / CHUNK_SECONDS
+            print(f"[chunk @ {chunk_time:.1f}s] {text} (latency {latency:.2f}s, RTF {rtf:.2f})")
+            if keywords:
+                spot_keywords(
+                    text,
+                    keywords,
+                    last_alerted,
+                    chunk_time,
+                    model_key=model_key,
+                    session_id=session_id,
+                    backend_url=backend_url,
+                )
+            next_start += step_samples
+
+    stream = sd.InputStream(
+        samplerate=SAMPLE_RATE, channels=1, dtype="float32", callback=callback
+    )
+    with stream:
+        worker = threading.Thread(target=chunk_loop, daemon=True)
+        worker.start()
+        input("Recording... press Enter to stop.")
+        stop_event.set()
+        worker.join()
+
+    with lock:
+        full_audio = (
+            np.concatenate(frames, axis=0).flatten()
+            if frames
+            else np.empty(0, dtype="float32")
+        )
+
+    if full_audio.size == 0:
+        raise RuntimeError(
+            "No audio was captured. Check that this terminal has microphone "
+            "permission (System Settings > Privacy & Security > Microphone)."
+        )
+
+    return full_audio
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", choices=MODEL_REPOS.keys(), required=True)
+    parser.add_argument(
+        "--file", help="Path to a 16kHz mono WAV file. Omit to record live from the microphone."
+    )
+    parser.add_argument(
+        "--keywords",
+        help="Comma-separated keywords/phrases to spot during live recording, e.g. 'สวัสดี,ขอบคุณครับ'",
+    )
+    parser.add_argument(
+        "--backend-url",
+        default=DEFAULT_BACKEND_URL,
+        help=f"Backend URL to report detected keywords to (default: {DEFAULT_BACKEND_URL})",
+    )
+    args = parser.parse_args()
+    keywords = [k.strip() for k in args.keywords.split(",") if k.strip()] if args.keywords else []
+
+    device = pick_device()
+    print(f"[device] {device} ({platform.system()} {platform.machine()})")
+
+    print(f"[model] loading {MODEL_REPOS[args.model]}...")
+    asr_pipeline = load_pipeline(args.model, device)
+
+    audio = (
+        load_audio(args.file)
+        if args.file
+        else record_with_streaming(asr_pipeline, keywords, args.model, args.backend_url)
+    )
+
+    start = time.perf_counter()
+    text = transcribe(asr_pipeline, audio)
+    elapsed = time.perf_counter() - start
+
+    print(f"[reference transcript] {text}")
+    print(f"[latency] {elapsed:.2f}s")
+
+
+if __name__ == "__main__":
+    main()

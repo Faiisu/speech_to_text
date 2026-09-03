@@ -1,0 +1,5 @@
+# Simulate real-time transcription via chunked, overlapping buffering
+
+Neither `typhoon-ai/typhoon-whisper-turbo` nor `typhoon-ai/typhoon-whisper-large-v3` support native streaming inference — both are trained and shipped as batch sequence-to-sequence Whisper fine-tunes. To test real-time-feeling transcription anyway, the recording pipeline buffers live audio into fixed 5-second windows with 1-second overlap between consecutive windows, and independently re-runs full transcription on each window as it fills.
+
+This means each chunk's transcript is logged as-is, without stitching or deduplicating the overlapping audio region between adjacent chunks — some words may appear to repeat across consecutive log lines. This is an accepted artifact of the approach, not a bug: true incremental/streaming ASR (with proper text stitching) would require a fundamentally different model architecture or a purpose-built streaming wrapper, which is out of scope for this testing effort. A full-clip batch transcription is also run once when a session ends, to serve as a manual quality reference against the chunked output.
