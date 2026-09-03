@@ -207,6 +207,73 @@ The `session stopped` line carries the full-clip reference transcript — the on
 
 Only one recording session runs at a time (one microphone). A model, once loaded, stays cached in memory for reuse by later sessions in the same server run — only the first session per model pays the loading cost.
 
+## Runtimes
+
+The model is always Typhoon Whisper; what changes per machine is the machinery that executes it. Pick one in the panel's **Runtime** field, or with `--runtime` on the CLI and benchmark.
+
+| Runtime | Runs on | Notes |
+|---|---|---|
+| `pytorch` | anywhere | Apple MPS if present, else CPU float32. Always works; the slowest option on an Intel box. |
+| `openvino-gpu` | Intel integrated GPU | The interesting one on a Core Ultra machine. |
+| `openvino-cpu` | CPU | |
+| `ctranslate2` | CPU, int8 | Wants AVX-VNNI to be worth it — check with `check_hardware.py`. |
+
+See what's usable here and why the rest aren't:
+
+```bash
+uv run python runtimes.py
+```
+
+Everything except `pytorch` needs the weights converted once per machine, and the libraries installed:
+
+```bash
+uv add faster-whisper                  # for ctranslate2
+uv add "optimum-intel[openvino]"       # for openvino
+
+uv run python convert_model.py --runtime ctranslate2 --model turbo
+uv run python convert_model.py --runtime openvino    --model turbo
+```
+
+Converted weights go in `models/` (gitignored) and are reused after that. The panel lists unavailable runtimes greyed out with the reason, and `POST /start` refuses one that isn't ready rather than failing mid-session.
+
+> **Not verified by the author.** The `pytorch` path is tested. The OpenVINO and CTranslate2 paths were written against hardware that wasn't available for testing (no Intel GPU, no AVX-VNNI), so treat the first run on the target machine as the real test — the conversion step in particular may need adjusting for a fine-tuned model.
+
+## Measuring performance
+
+Live microphone sessions can't be compared against each other — every run says something different, so a faster number might just mean you spoke less. To compare models, machines, or optimisation attempts, replay a **fixed clip** through the same 5s/1s-overlap chunking the live path uses:
+
+```bash
+uv run python benchmark.py --model turbo --file clip.wav
+```
+
+Reports per-chunk latency and real-time factor, plus mean/median/worst across the clip, and whether it would keep up with live speech (mean RTF below 1.0). The first inference is excluded as warm-up so the numbers reflect steady state.
+
+Use a clip of realistic continuous speech, not a short test phrase — a chunk packed with words takes far longer than one with a single utterance, so short clips flatter the result.
+
+### Finding the best thread count
+
+On hybrid Intel CPUs (P-cores + E-cores + low-power E-cores) using every core is often *slower* than using only the fast ones, because the slowest core holds up each synchronised operation:
+
+```bash
+uv run python benchmark.py --model turbo --file clip.wav --threads 4,8,14
+```
+
+It prints a row per setting and names the winner. To pin to performance cores specifically, combine with `taskset` (on a Core Ultra 5 125H the P-core threads are usually CPUs 0–7):
+
+```bash
+taskset -c 0-7 uv run python benchmark.py --model turbo --file clip.wav --threads 8
+```
+
+### What this machine is actually capable of
+
+```bash
+uv run python check_hardware.py
+```
+
+Reports the CPU, core count, the instruction sets that matter for inference (notably **AVX-VNNI**, which makes int8 models much faster), which accelerators are present (Intel NPU, integrated GPU, Hailo module), how many threads torch is using, and which optimised runtimes are installed.
+
+Worth being clear about the current state: the transcription path is plain PyTorch on CPU in float32, which on an Intel Core Ultra box leaves the integrated GPU, the NPU, and int8 acceleration completely unused. That was a deliberate deferral (see ADR 0003's sibling decision in the session notes) — measure a baseline with `benchmark.py` before deciding whether the added complexity of OpenVINO or CTranslate2 is worth it.
+
 ## Project tracking
 
 Tickets for this project's work are tracked as local markdown files under [`.scratch/typhoon-whisper-test/issues/`](./.scratch/typhoon-whisper-test/issues/).

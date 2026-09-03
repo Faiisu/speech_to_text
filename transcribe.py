@@ -135,7 +135,7 @@ def spot_keywords(
 
 
 def run_recording_session(
-    asr_pipeline,
+    runtime,
     keywords: list[str],
     model_key: str,
     backend_url: str,
@@ -190,7 +190,7 @@ def run_recording_session(
                 continue
 
             chunk_start = time.perf_counter()
-            text = transcribe(asr_pipeline, chunk)
+            text = runtime.transcribe(chunk)
             latency = time.perf_counter() - chunk_start
             rtf = latency / CHUNK_SECONDS
             emit(
@@ -258,7 +258,7 @@ def run_recording_session(
 
 
 def record_with_streaming(
-    asr_pipeline,
+    runtime,
     keywords: list[str],
     model_key: str,
     backend_url: str,
@@ -298,7 +298,7 @@ def record_with_streaming(
     threading.Thread(target=wait_for_enter, daemon=True).start()
 
     return run_recording_session(
-        asr_pipeline,
+        runtime,
         keywords,
         model_key,
         backend_url,
@@ -342,6 +342,13 @@ def main() -> None:
         "Still requires Enter to stop.",
     )
     parser.add_argument(
+        "--runtime",
+        default="pytorch",
+        choices=["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2"],
+        help="How to execute the model (default: pytorch). Run "
+        "'uv run python runtimes.py' to see which are usable on this machine.",
+    )
+    parser.add_argument(
         "--silence-threshold",
         type=float,
         default=DEFAULT_SILENCE_RMS,
@@ -368,17 +375,20 @@ def main() -> None:
 
     keywords = [k.strip() for k in args.keywords.split(",") if k.strip()] if args.keywords else []
 
-    device = pick_device()
-    print(f"[device] {device} ({platform.system()} {platform.machine()})")
+    # imported here rather than at module scope: runtimes.py imports from this
+    # module, so a top-level import would be circular
+    from runtimes import load_runtime
 
-    print(f"[model] loading {MODEL_REPOS[args.model]}...")
-    asr_pipeline = load_pipeline(args.model, device)
+    print(f"[platform] {platform.system()} {platform.machine()}")
+    print(f"[model] loading {MODEL_REPOS[args.model]} via {args.runtime}...")
+    runtime = load_runtime(args.runtime, args.model)
+    print(f"[runtime] {runtime.description}")
 
     audio = (
         load_audio(args.file)
         if args.file
         else record_with_streaming(
-            asr_pipeline,
+            runtime,
             keywords,
             args.model,
             args.backend_url,
@@ -392,7 +402,7 @@ def main() -> None:
         print("[reference transcript] (silence, skipped)")
     else:
         start = time.perf_counter()
-        text = transcribe(asr_pipeline, audio)
+        text = runtime.transcribe(audio)
         elapsed = time.perf_counter() - start
         print(f"[reference transcript] {text}")
         print(f"[latency] {elapsed:.2f}s")

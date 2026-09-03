@@ -12,15 +12,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
+from runtimes import load_runtime, probe
 from transcribe import (
     DEFAULT_BACKEND_URL,
     DEFAULT_SILENCE_RMS,
     MODEL_REPOS,
     is_silent,
-    load_pipeline,
-    pick_device,
     run_recording_session,
-    transcribe,
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -38,7 +36,7 @@ def help_page() -> str:
     return (STATIC_DIR / "help.html").read_text(encoding="utf-8")
 
 _lock = threading.Lock()
-_pipelines: dict[str, object] = {}  # model_key -> cached pipeline, loading is slow
+_runtimes: dict[tuple[str, str], object] = {}  # (runtime, model) -> loaded runtime; loading is slow
 _state: dict = {
     "status": "idle",  # idle | loading | recording | stopping
     "config": None,
@@ -51,6 +49,7 @@ _state: dict = {
 
 class StartRequest(BaseModel):
     model: Literal["turbo", "large-v3"]
+    runtime: Literal["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2"] = "pytorch"
     keywords: str | None = None
     mic_device: str | None = None
     silence_threshold: float = DEFAULT_SILENCE_RMS
@@ -101,18 +100,18 @@ def stream() -> StreamingResponse:
     )
 
 
-def _get_pipeline(model_key: str):
-    if model_key not in _pipelines:
-        device = pick_device()
-        _pipelines[model_key] = load_pipeline(model_key, device)
-    return _pipelines[model_key]
+def _get_runtime(runtime_name: str, model_key: str):
+    key = (runtime_name, model_key)
+    if key not in _runtimes:
+        _runtimes[key] = load_runtime(runtime_name, model_key)
+    return _runtimes[key]
 
 
 def _run_session(req: StartRequest) -> None:
     session_id = _state["session_id"]
     try:
         broadcast({"type": "session", "state": "loading", "session_id": session_id})
-        asr_pipeline = _get_pipeline(req.model)
+        runtime = _get_runtime(req.runtime, req.model)
 
         with _lock:
             if _state["status"] != "loading":
@@ -145,7 +144,7 @@ def _run_session(req: StartRequest) -> None:
             broadcast(event)
 
         audio = run_recording_session(
-            asr_pipeline,
+            runtime,
             keywords,
             req.model,
             req.backend_url,
@@ -159,7 +158,7 @@ def _run_session(req: StartRequest) -> None:
         if is_silent(audio, req.silence_threshold):
             reference_transcript = "(silence, skipped)"
         else:
-            reference_transcript = transcribe(asr_pipeline, audio)
+            reference_transcript = runtime.transcribe(audio)
 
         with _lock:
             _state["reference_transcript"] = reference_transcript
@@ -184,6 +183,16 @@ def _run_session(req: StartRequest) -> None:
 
 @app.post("/start")
 def start(req: StartRequest) -> dict:
+    # Check the runtime is usable before accepting the request, so an
+    # unconverted or uninstalled backend fails immediately with the reason
+    # rather than after the session has already gone into "loading".
+    if (req.runtime, req.model) not in _runtimes:
+        entry = next((e for e in probe(req.model) if e["name"] == req.runtime), None)
+        if entry and not entry["available"]:
+            raise HTTPException(
+                status_code=409, detail=f"Runtime {req.runtime!r} unavailable: {entry['reason']}"
+            )
+
     with _lock:
         if _state["status"] in ("loading", "recording"):
             raise HTTPException(status_code=409, detail="A recording session is already active")
@@ -210,6 +219,23 @@ def stop() -> dict:
         _state["stop_event"].set()
         _state["status"] = "stopping"
     return {"status": "stopping"}
+
+
+@app.get("/runtimes")
+def runtimes(model: str = "turbo") -> dict:
+    """Which execution backends are usable here, and why the others aren't.
+
+    Availability depends on the machine (Intel GPU present?), what's installed
+    (openvino, faster-whisper), and whether the weights have been converted for
+    that runtime — so it's reported per model.
+    """
+    if model not in MODEL_REPOS:
+        raise HTTPException(status_code=422, detail=f"Unknown model {model!r}")
+    loaded = {name for name, key in _runtimes if key == model}
+    entries = probe(model)
+    for entry in entries:
+        entry["loaded"] = entry["name"] in loaded
+    return {"runtimes": entries}
 
 
 @app.get("/devices")

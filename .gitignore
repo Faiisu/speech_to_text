@@ -1,0 +1,7 @@
+# converted model weights — multi-GB, regenerate with convert_model.py
+models/
+
+.venv/
+__pycache__/
+*.pyc
+.scratch/
