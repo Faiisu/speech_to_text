@@ -244,6 +244,7 @@ class ServerRecordRequest(BaseModel):
 
 
 @app.post("/record-server/start")
+@app.post("/record-server/start/")
 def record_server_start(req: ServerRecordRequest) -> dict:
     with _lock:
         if _state["status"] in ("loading", "recording"):
@@ -294,6 +295,7 @@ def record_server_start(req: ServerRecordRequest) -> dict:
 
 
 @app.post("/record-server/stop")
+@app.post("/record-server/stop/")
 def record_server_stop() -> dict:
     import soundfile as sf
 
@@ -327,6 +329,7 @@ def record_server_stop() -> dict:
 
 
 @app.get("/record-server/status")
+@app.get("/record-server/status/")
 def record_server_status() -> dict:
     with _rec_lock:
         elapsed = round(time.perf_counter() - _recorder["start_time"], 1) if _recorder["active"] else 0.0
@@ -345,6 +348,7 @@ class BenchmarkRequest(BaseModel):
 
 
 @app.post("/benchmark")
+@app.post("/benchmark/")
 def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
     with _lock:
         if _state["status"] in ("loading", "recording"):
