@@ -251,12 +251,38 @@ Converted weights go in `models/` (gitignored) and are reused after that. The pa
 
 > **Not verified by the author.** The `pytorch` path is tested. The OpenVINO and CTranslate2 paths were written against hardware that wasn't available for testing (no Intel GPU, no AVX-VNNI), so treat the first run on the target machine as the real test — the conversion step in particular may need adjusting for a fine-tuned model.
 
-## Measuring performance
+## Measuring performance & Benchmark Studio
 
-Live microphone sessions can't be compared against each other — every run says something different, so a faster number might just mean you spoke less. To compare models, machines, or optimisation attempts, replay a **fixed clip** through the same 5s/1s-overlap chunking the live path uses:
+Live microphone sessions can't be compared against each other — every run says something different, so a faster number might just mean you spoke less. To compare models, machines, or optimisation attempts, replay a **fixed clip** through the same 5s/1s-overlap chunking the live path uses.
+
+### 1. Benchmark Studio on Web GUI (`http://localhost:5001`)
+
+Open the Web GUI and click **⚡ Benchmark** in the top navigation:
+- **Record reference audio directly**: Click **Record** to record a reference clip from your browser microphone (laptop/phone over LAN) or the device's hardware microphone (e.g. Jabra Speak 510 or Logitech Brio). It automatically converts to 16kHz mono WAV and selects it.
+- **Select model & execution runtimes**: Check the runtimes you want to compare side-by-side (`pytorch`, `ctranslate2`, `whispercpp`, `openvino-gpu`, `openvino-cpu`).
+- **Run Benchmark**: Watch real-time chunk transcription progress.
+- **Visual Results**:
+  - 🏆 **Fastest runtime banner** with speedup factor over baseline PyTorch.
+  - **Color-coded RTF bar chart** with the 1.0 real-time threshold red line (green = keeps up, red = lags behind).
+  - **Comparison table** with latency, mean RTF, worst RTF, real-time capability, and Thai transcript previews.
+
+### 2. CLI Benchmarking (`benchmark.py`)
+
+#### Record audio directly from CLI
+Record a test clip from the microphone, save it to `audio/my_clip.wav`, and immediately benchmark it:
 
 ```bash
-uv run python benchmark.py --model turbo --file clip.wav
+# Record for 10 seconds and benchmark with whispercpp:
+uv run python benchmark.py --model turbo --record my_clip.wav --duration 10 --runtime whispercpp
+
+# Or record until pressing Enter:
+uv run python benchmark.py --model turbo --record my_clip.wav
+```
+
+#### Replay an existing clip
+
+```bash
+uv run python benchmark.py --model turbo --file audio/test_clip.wav --runtime whispercpp
 ```
 
 Reports per-chunk latency and real-time factor, plus mean/median/worst across the clip, and whether it would keep up with live speech (mean RTF below 1.0). The first inference is excluded as warm-up so the numbers reflect steady state.
