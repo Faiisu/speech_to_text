@@ -593,7 +593,8 @@ uv run python convert_model.py --runtime openvino --model turbo</pre><button typ
       <div class="cmd"><pre>              source(bf16)   int8    int4
 openvino-gpu      0.60        0.53    0.56   RTF
 openvino-cpu      2.53        1.39    1.45   RTF</pre><button type="button" onclick="copyCmd(this)">Copy</button></div>
-      <p>So the device is worth far more than the format here, int8 is worth taking on the CPU, and int4 is worth nothing on either — slower than int8 <em>and</em> the first to garble the Thai on the noisiest chunk. Compressed weights are expanded again before they are multiplied, so they buy memory, not arithmetic.</p>
+      <p>So the device is worth far more than the format here: int8 nearly halves the CPU time, while on the GPU all three are within run-to-run variance of one another (a repeat run read 0.59 / 0.59 / 0.50). Compressed weights are expanded again before they are multiplied — they buy memory, not arithmetic, and the memory only becomes the bottleneck on the slower device.</p>
+      <p>Which leaves accuracy as the tie-breaker on the GPU, and there the order is unambiguous: each step down in precision garbled more of the Thai on the noisiest chunk. Take int8 on the CPU, and on the GPU take the largest build that keeps up.</p>
     </div>
 
     <h2>Checking your work</h2>
@@ -655,6 +656,13 @@ uv run python check_hardware.py  # CPU, AVX-VNNI, iGPU, NPU, thread count</pre><
         <li><strong>Worst RTF:</strong> The longest time taken on any individual chunk in the clip. Crucial for detecting thermal throttling or cold-start spikes.</li>
         <li><strong>Sample Transcript:</strong> Preview of the transcribed Thai text to confirm accuracy wasn't compromised by aggressive quantization.</li>
       </ul>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Comparing models, not just runtimes</h3></div>
+      <p><strong>Models to compare</strong> and <strong>Runtimes to compare</strong> are both checkbox lists, and the run is every combination of the two. Tick one model and several runtimes to find the fastest engine; tick one runtime and several models to answer a different question — whether <code>turbo-int8</code> earns its speed against the <code>turbo</code> it was compressed from, on your audio rather than someone's benchmark suite.</p>
+      <p>Availability is checked per model, so a pair that can't run (a model never converted for that runtime) is skipped with the reason rather than taking the run down. Read the <strong>Sample Transcript</strong> column as carefully as the RTF one: on this project's own Thai clip, each step down in precision was faster and slightly more garbled, and only the transcript column shows the second half of that trade.</p>
+      <p>Equivalent on the CLI: <code>--model turbo,turbo-int8 --runtime openvino-gpu</code>.</p>
     </div>
 
     <div class="entry">

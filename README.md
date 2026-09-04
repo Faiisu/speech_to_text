@@ -310,10 +310,15 @@ Converted weights go in `models/` (gitignored) and are reused after that. The pa
 > | `whispercpp` | q5_0 | 4.27 (at 8 threads) | no |
 >
 > Two things worth carrying forward. **The device mattered more than the format:** the same weights move from
-> 2.53 to 0.60 just by running on the iGPU. **Fewer bits is not automatically faster:** int8 bought a lot on the
-> CPU (2.53 → 1.39) and little on the GPU (0.60 → 0.53), and int4 was *slower* than int8 on both while visibly
-> degrading the Thai transcript on the noisiest chunk. `whispercpp` remains unexplained — q5_0 weights, the
+> 2.53 to 0.60 just by running on the iGPU — a bigger gap than any amount of quantisation produced.
+> **Fewer bits is not automatically faster:** int8 bought a lot on the CPU (2.53 → 1.39) and next to nothing on
+> the GPU. The three GPU rows are within run-to-run variance of each other (a repeat run put them at 0.59 /
+> 0.59 / 0.50), so treat them as tied on speed and decide on the transcript instead — where each step down in
+> precision was visibly worse on the noisiest chunk. `whispercpp` remains unexplained: q5_0 weights, the
 > lightest of the lot, and still the slowest after its thread count was fixed.
+>
+> Numbers this close need repeating before they mean anything. One pass over three 5s chunks is enough to rank
+> `openvino-gpu` against `ctranslate2`; it is not enough to rank int8 against int4.
 
 ## Measuring performance & Benchmark Studio
 
@@ -352,6 +357,18 @@ uv run python benchmark.py --model turbo --file audio/test_clip.wav --runtime wh
 Reports per-chunk latency and real-time factor, plus mean/median/worst across the clip, and whether it would keep up with live speech (mean RTF below 1.0). The first inference is excluded as warm-up so the numbers reflect steady state.
 
 Use a clip of realistic continuous speech, not a short test phrase — a chunk packed with words takes far longer than one with a single utterance, so short clips flatter the result.
+
+### Comparing models on one runtime
+
+The runtime is only half the question — the other half is which model, and whether a compressed build is worth what it costs in accuracy. Pass several keys to `--model` and they are replayed through the same clip on the same runtime:
+
+```bash
+uv run python benchmark.py --model turbo,turbo-int8,turbo-int4 --file clip.wav --runtime openvino-gpu
+```
+
+The table gains a model column, and underneath it prints what each model actually heard, because a model that is faster and wrong is not faster. A combination that can't run (a model never converted for that runtime) is reported and skipped rather than ending the sweep.
+
+In the Web GUI the same thing lives in **Benchmark Studio**: models and runtimes are both checkbox lists, and every ticked model is run on every ticked runtime. Availability is checked per model — `ctranslate2` can be ready for `turbo` and missing for `turbo-int8` — so unrunnable pairs are skipped with the reason instead of failing the run.
 
 ### Finding the best thread count
 

@@ -7,6 +7,7 @@ be compared across models, machines, and optimisation attempts.
 
     uv run python benchmark.py --model turbo --file clip.wav
     uv run python benchmark.py --model turbo --file clip.wav --threads 4,8,14
+    uv run python benchmark.py --model turbo,turbo-int8 --file clip.wav --runtime openvino-gpu
 
 Real-time factor is the headline: below 1.0 the model transcribes a chunk
 faster than the chunk's audio takes to speak, so it can keep up with a live
@@ -160,7 +161,16 @@ def main() -> None:
     # discover() rather than model_repos(): a model that exists only as
     # converted weights (an int8 OpenVINO build, say) has no repo and would
     # otherwise be unbenchmarkable, which is exactly backwards.
-    parser.add_argument("--model", choices=discover().keys(), required=True)
+    #
+    # Comma-separated rather than choices=, so several models can be compared
+    # on one runtime — the question "is int8 worth it here" is about models,
+    # not runtimes, and it needs the same fixed clip to mean anything.
+    parser.add_argument(
+        "--model",
+        required=True,
+        help="Model key, or several to compare: turbo,turbo-int8. "
+        f"Available here: {', '.join(discover())}",
+    )
     parser.add_argument("--file", help="16kHz mono WAV to replay (or provide --record)")
     parser.add_argument(
         "--record",
@@ -207,16 +217,25 @@ def main() -> None:
     if not args.file:
         parser.error("Either --file or --record must be specified.")
 
+    known = discover()
+    models = [m.strip() for m in args.model.split(",") if m.strip()]
+    unknown = [m for m in models if m not in known]
+    if unknown:
+        parser.error(
+            f"Unknown model(s) {', '.join(unknown)}. Available here: {', '.join(known)}"
+        )
+
     audio = load_audio(args.file)
     duration = audio.size / SAMPLE_RATE
     offsets = chunk_offsets(audio.size)
 
     print(f"machine  : {platform.system()} {platform.machine()}")
     print(f"torch    : {torch.__version__}")
-    try:
-        print(f"model    : {resolve_repo(args.model)}")
-    except KeyError:
-        print(f"model    : {args.model}  (converted weights only, no source repo)")
+    for model_key in models:
+        try:
+            print(f"model    : {resolve_repo(model_key)}")
+        except KeyError:
+            print(f"model    : {model_key}  (converted weights only, no source repo)")
     print(f"runtime  : {args.runtime}")
     print(f"clip     : {args.file}  ({duration:.1f}s audio, {len(offsets)} chunks of {CHUNK_SECONDS}s)")
 
@@ -229,45 +248,76 @@ def main() -> None:
         else [None]
     )
 
-    print(f"\n{'threads':>8}  {'chunks':>6}  {'mean RTF':>9}  {'median':>7}  {'worst':>7}  {'mean lat':>9}  keeps up?")
-    print("-" * 72)
+    model_column = max(len(m) for m in models) if len(models) > 1 else 0
+    header = f"{'model':>{model_column}}  " if model_column else ""
+    print(f"\n{header}{'threads':>8}  {'chunks':>6}  {'mean RTF':>9}  {'median':>7}  "
+          f"{'worst':>7}  {'mean lat':>9}  keeps up?")
+    print("-" * (72 + model_column + 2 * bool(model_column)))
 
     results = []
-    for threads in thread_counts:
-        # Reloaded per count: CTranslate2, whisper.cpp and OpenVINO all fix
-        # their thread pool when the model is built, so setting it afterwards
-        # (which is all this used to do, via torch.set_num_threads) changed
-        # nothing at all for three of the five runtimes.
-        runtime = load_runtime(args.runtime, args.model, threads)
-        if threads == thread_counts[0]:
-            print(f"  {runtime.description}")
-            print(f"  language: {LANGUAGES[args.language]}")
-        # First inference pays for lazy init and cache warm-up; exclude it so
-        # the reported numbers reflect steady-state throughput.
-        runtime.transcribe(audio[: CHUNK_SECONDS * SAMPLE_RATE], args.language)
-        stats = run_pass(
-            runtime, audio, args.silence_threshold, args.verbose, language=args.language
-        )
-        label = "default" if threads is None else str(threads)
-        if not stats["chunks"]:
-            print(f"{label:>8}  every chunk was skipped as silence")
-            continue
-        keeps_up = "yes" if stats["mean_rtf"] < 1 else "NO"
-        print(
-            f"{label:>8}  {stats['chunks']:>6}  {stats['mean_rtf']:>9.2f}  "
-            f"{stats['median_rtf']:>7.2f}  {stats['worst_rtf']:>7.2f}  "
-            f"{stats['mean_latency']:>8.2f}s  {keeps_up}"
-        )
-        results.append((threads, stats))
+    for model_key in models:
+        for threads in thread_counts:
+            # Reloaded per count: CTranslate2, whisper.cpp and OpenVINO all fix
+            # their thread pool when the model is built, so setting it
+            # afterwards (which is all this used to do, via
+            # torch.set_num_threads) changed nothing at all for three of the
+            # five runtimes.
+            try:
+                runtime = load_runtime(args.runtime, model_key, threads)
+            except (FileNotFoundError, RuntimeError, ValueError, KeyError) as exc:
+                # One unconvertible or undeployable combination must not take
+                # the whole sweep down with it — say which one and carry on,
+                # the way the panel greys out a runtime rather than failing.
+                reason = str(exc).splitlines()[0]
+                if len(models) * len(thread_counts) == 1:
+                    raise SystemExit(f"{model_key} on {args.runtime}: {reason}") from None
+                print(f"{model_key:>{model_column}}  skipped — {reason}")
+                break
+            if model_key == models[0] and threads == thread_counts[0]:
+                print(f"  {runtime.description}")
+                print(f"  language: {LANGUAGES[args.language]}")
+            # First inference pays for lazy init and cache warm-up; exclude it
+            # so the reported numbers reflect steady-state throughput.
+            runtime.transcribe(audio[: CHUNK_SECONDS * SAMPLE_RATE], args.language)
+            stats = run_pass(
+                runtime, audio, args.silence_threshold, args.verbose, language=args.language
+            )
+            prefix = f"{model_key:>{model_column}}  " if model_column else ""
+            label = "default" if threads is None else str(threads)
+            if not stats["chunks"]:
+                print(f"{prefix}{label:>8}  every chunk was skipped as silence")
+                continue
+            keeps_up = "yes" if stats["mean_rtf"] < 1 else "NO"
+            print(
+                f"{prefix}{label:>8}  {stats['chunks']:>6}  {stats['mean_rtf']:>9.2f}  "
+                f"{stats['median_rtf']:>7.2f}  {stats['worst_rtf']:>7.2f}  "
+                f"{stats['mean_latency']:>8.2f}s  {keeps_up}"
+            )
+            results.append((model_key, threads, stats))
 
     if len(results) > 1:
-        best = min(results, key=lambda r: r[1]["mean_rtf"])
-        worst = max(results, key=lambda r: r[1]["mean_rtf"])
-        gain = (worst[1]["mean_rtf"] / best[1]["mean_rtf"] - 1) * 100
+        best = min(results, key=lambda r: r[2]["mean_rtf"])
+        worst = max(results, key=lambda r: r[2]["mean_rtf"])
+        gain = (worst[2]["mean_rtf"] / best[2]["mean_rtf"] - 1) * 100
+
+        def describe(entry) -> str:
+            model_key, threads, _ = entry
+            thread_part = "default threads" if threads is None else f"{threads} threads"
+            return f"{model_key} at {thread_part}" if len(models) > 1 else thread_part
+
         print(
-            f"\nbest: {best[0]} threads (mean RTF {best[1]['mean_rtf']:.2f}) — "
-            f"{gain:.0f}% faster than {worst[0]} threads"
+            f"\nbest: {describe(best)} (mean RTF {best[2]['mean_rtf']:.2f}) — "
+            f"{gain:.0f}% faster than {describe(worst)}"
         )
+
+    if len(models) > 1:
+        # Speed is only half of a model comparison: a smaller or more
+        # compressed model that mangles the words is not a win. Print what
+        # each one actually said, on the same audio, for eyeballing.
+        print("\nwhat each model heard:")
+        for model_key, threads, stats in results:
+            if threads == thread_counts[0] and stats.get("sample_text"):
+                print(f"  {model_key:>{model_column}}  {stats['sample_text']}")
 
 
 if __name__ == "__main__":

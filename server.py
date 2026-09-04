@@ -428,13 +428,24 @@ def record_server_status() -> dict:
 
 class BenchmarkRequest(BaseModel):
     file: str
+    # `models` compares several models on the same runtime; `model` is the
+    # single-model form the panel used to send and still the fallback. A run
+    # is every combination of the two lists, so one request can answer both
+    # "which runtime is fastest" and "which model is fastest" — and, with two
+    # of each, whether those two answers interact.
     model: str = "turbo"
+    models: list[str] = []
     runtimes: list[str]
 
     @field_validator("model")
     @classmethod
     def _known_model(cls, value: str) -> str:
         return _validate_model(value)
+
+    @field_validator("models")
+    @classmethod
+    def _known_models(cls, value: list[str]) -> list[str]:
+        return [_validate_model(v) for v in value]
 
     silence_threshold: float = DEFAULT_SILENCE_RMS
     language: str = DEFAULT_LANGUAGE
@@ -463,7 +474,9 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
     # Validate the clip before claiming the slot below — anything that raises
     # after the flag is set would leak it, since the generator that clears it
     # never gets to run.
-    _check_language_supported(req.model, req.language)
+    models = req.models or [req.model]
+    for model_key in models:
+        _check_language_supported(model_key, req.language)
     clip_path = _resolve_audio(req.file)
     audio = load_audio(str(clip_path))
     duration = audio.size / SAMPLE_RATE
@@ -477,23 +490,29 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
             raise HTTPException(status_code=409, detail="A benchmark is already running")
         _benchmark["active"] = True
 
-    available_entries = {e["name"]: e for e in probe(req.model)}
+    # Availability is per model, not per machine: ctranslate2 can be ready for
+    # turbo and missing for turbo-int8, since each model is converted
+    # separately. Probing once for the first model would mark the second one's
+    # combinations available and then fail at load.
+    available_by_model = {m: {e["name"]: e for e in probe(m)} for m in models}
 
     def event_stream():
-        yield f"data: {json.dumps({'type': 'init', 'file': clip_path.name, 'duration': round(duration, 1), 'runtimes': req.runtimes, 'language': req.language})}\n\n"
+        yield f"data: {json.dumps({'type': 'init', 'file': clip_path.name, 'duration': round(duration, 1), 'models': models, 'runtimes': req.runtimes, 'language': req.language})}\n\n"
 
         results = []
-        for r_name in req.runtimes:
-            entry = available_entries.get(r_name)
+        for model_key, r_name in ((m, r) for m in models for r in req.runtimes):
+            combo = f"{model_key}::{r_name}"
+            entry = available_by_model[model_key].get(r_name)
             if not entry or not entry.get("available"):
                 reason = entry.get("reason") if entry else "unknown runtime"
-                yield f"data: {json.dumps({'type': 'runtime_skip', 'runtime': r_name, 'reason': reason})}\n\n"
+                yield f"data: {json.dumps({'type': 'runtime_skip', 'id': combo, 'model': model_key, 'runtime': r_name, 'reason': reason})}\n\n"
                 continue
 
-            yield f"data: {json.dumps({'type': 'runtime_start', 'runtime': r_name, 'label': entry['label']})}\n\n"
+            label = entry["label"] if len(models) == 1 else f"{model_key} · {entry['label']}"
+            yield f"data: {json.dumps({'type': 'runtime_start', 'id': combo, 'model': model_key, 'runtime': r_name, 'label': label})}\n\n"
 
             try:
-                runtime = _get_runtime(r_name, req.model)
+                runtime = _get_runtime(r_name, model_key)
                 # warmup
                 runtime.transcribe(audio[: CHUNK_SECONDS * SAMPLE_RATE], req.language)
 
@@ -509,6 +528,8 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                         skipped += 1
                         ev = {
                             "type": "chunk",
+                            "id": combo,
+                            "model": model_key,
                             "runtime": r_name,
                             "chunk": i + 1,
                             "total": len(offsets),
@@ -529,6 +550,8 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                     texts.append(t_chunk)
                     ev = {
                         "type": "chunk",
+                        "id": combo,
+                        "model": model_key,
                         "runtime": r_name,
                         "chunk": i + 1,
                         "total": len(offsets),
@@ -543,8 +566,10 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                 if latencies:
                     rtfs = [l / CHUNK_SECONDS for l in latencies]
                     stats = {
+                        "id": combo,
+                        "model": model_key,
                         "runtime": r_name,
-                        "label": entry["label"],
+                        "label": label,
                         "chunks": len(latencies),
                         "skipped": skipped,
                         "mean_rtf": round(statistics.mean(rtfs), 2),
@@ -552,16 +577,19 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                         "worst_rtf": round(max(rtfs), 2),
                         "mean_latency": round(statistics.mean(latencies), 2),
                         "total_latency": round(sum(latencies), 2),
-                        "sample_text": " ".join(t for t in texts if t).strip()[:140],
+                        # longer than it looks in the table: comparing models
+                        # is a comparison of words, not only of latency, so the
+                        # full-ish transcript has to survive to the client
+                        "sample_text": " ".join(t for t in texts if t).strip()[:400],
                         "keeps_up": statistics.mean(rtfs) < 1.0,
                     }
                     results.append(stats)
-                    yield f"data: {json.dumps({'type': 'runtime_done', 'runtime': r_name, 'stats': stats})}\n\n"
+                    yield f"data: {json.dumps({'type': 'runtime_done', 'id': combo, 'model': model_key, 'runtime': r_name, 'stats': stats})}\n\n"
                 else:
-                    yield f"data: {json.dumps({'type': 'runtime_done', 'runtime': r_name, 'error': 'All chunks were silence'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'runtime_done', 'id': combo, 'model': model_key, 'runtime': r_name, 'error': 'All chunks were silence'})}\n\n"
 
             except Exception as exc:
-                yield f"data: {json.dumps({'type': 'runtime_error', 'runtime': r_name, 'error': str(exc)})}\n\n"
+                yield f"data: {json.dumps({'type': 'runtime_error', 'id': combo, 'model': model_key, 'runtime': r_name, 'error': str(exc)})}\n\n"
 
         valid = [r for r in results if r.get("mean_rtf") is not None]
         winner = min(valid, key=lambda x: x["mean_rtf"]) if valid else None

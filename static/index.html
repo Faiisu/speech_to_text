@@ -685,8 +685,14 @@
       </div>
 
       <div class="field">
-        <label for="benchModel">Model</label>
-        <select id="benchModel" onchange="loadBenchRuntimes()"></select>
+        <div class="field-head">
+          <label>Models to compare</label>
+          <a class="linkbtn" href="/help#models" target="_blank" style="text-decoration:none">Model details ↗</a>
+        </div>
+        <div id="benchModelsList" style="display:flex; flex-direction:column; gap:0.45rem; margin-top:0.4rem">
+          <!-- Checkboxes populated dynamically -->
+        </div>
+        <span class="hint">Tick more than one to compare models on the same runtime and the same audio — an int8 build against the one it came from, say. Every model is run on every runtime ticked below.</span>
       </div>
 
       <div class="field">
@@ -728,7 +734,7 @@
       <div id="benchContent" style="padding: 1.25rem; overflow-y: auto; height: calc(100% - 45px);">
         <div class="empty" id="benchEmpty">
           <strong>Compare execution engines with a fixed clip.</strong>
-          Choose a clip and select the runtimes to test. Each runtime processes the audio through the exact same 5s/1s-overlap chunking pipeline. The fastest backend and real-time capability (RTF &lt; 1.0) will be revealed.
+          Choose a clip, then tick the models and the runtimes to test. Every ticked model is run on every ticked runtime, through the exact same 5s/1s-overlap chunking pipeline — so you can compare engines on one model, models on one engine, or the whole grid at once. Watch both columns: the fastest row is not always the one that got the words right.
         </div>
         <div id="benchRunningProgress" hidden style="margin-bottom: 1.5rem;">
           <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem">
@@ -983,7 +989,7 @@
   }
 
   async function loadModels(announce) {
-    const selects = ['model', 'benchModel'].map(id => document.getElementById(id));
+    const selects = ['model'].map(id => document.getElementById(id));
     const previous = selects.map(s => s.value);
     try {
       const res = await fetch('/models');
@@ -1004,6 +1010,7 @@
         const keep = modelInfo.some(m => m.key === previous[i]) ? previous[i] : data.default;
         if (keep) select.value = keep;
       });
+      renderBenchModels(data.default);
       describeModel();
       if (announce) {
         document.getElementById('modelHint').textContent =
@@ -1020,6 +1027,12 @@
         option.textContent = 'turbo';
         select.appendChild(option);
       });
+      // the benchmark's model list is checkboxes, so it needs the same
+      // fallback the select gets — an empty list silently refuses to run
+      if (!document.querySelector('input[name="benchModel"]')) {
+        modelInfo = modelInfo.length ? modelInfo : [{ key: 'turbo', label: 'turbo' }];
+        renderBenchModels('turbo');
+      }
       document.getElementById('modelHint').textContent =
         `Couldn't load the model list (${err.message}) — falling back to turbo.`;
     }
@@ -1223,9 +1236,39 @@
     }
   }
 
+  // The benchmark's models are checkboxes, not a select: comparing models is
+  // the point of the studio, and a select can only ask about one.
+  function renderBenchModels(defaultKey) {
+    const container = document.getElementById('benchModelsList');
+    const previous = benchSelectedModels();
+    container.innerHTML = '';
+    for (const entry of modelInfo) {
+      const label = document.createElement('label');
+      label.className = 'check-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.name = 'benchModel';
+      cb.value = entry.key;
+      cb.checked = previous.length ? previous.includes(entry.key) : entry.key === defaultKey;
+      cb.onchange = loadBenchRuntimes;
+      const text = document.createElement('span');
+      text.textContent = entry.label;
+      label.appendChild(cb);
+      label.appendChild(text);
+      container.appendChild(label);
+    }
+  }
+
+  function benchSelectedModels() {
+    return Array.from(document.querySelectorAll('input[name="benchModel"]:checked')).map(c => c.value);
+  }
+
   async function loadBenchRuntimes() {
     const container = document.getElementById('benchRuntimesList');
-    const model = document.getElementById('benchModel').value;
+    // Availability is per model. With several ticked, the first one decides
+    // what is offered and the server skips (and reports) any combination the
+    // others can't run, rather than this list lying about one of them.
+    const model = benchSelectedModels()[0] || document.getElementById('model').value;
     try {
       const res = await fetch(`/runtimes?model=${encodeURIComponent(model)}`);
       if (!res.ok) return;
@@ -1452,7 +1495,11 @@
       alert('Please select an audio clip to benchmark.');
       return;
     }
-    const model = document.getElementById('benchModel').value;
+    const checkedModels = benchSelectedModels();
+    if (!checkedModels.length) {
+      alert('Please select at least one model.');
+      return;
+    }
     const checkedRuntimes = Array.from(document.querySelectorAll('input[name="benchRuntime"]:checked')).map(c => c.value);
     if (!checkedRuntimes.length) {
       alert('Please select at least one runtime.');
@@ -1481,7 +1528,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           file,
-          model,
+          models: checkedModels,
           runtimes: checkedRuntimes,
           silence_threshold: silence,
           language: document.getElementById('benchLanguage').value,
@@ -1520,9 +1567,13 @@
               const statusText = ev.silent
                 ? `[${ev.offset}s] silence (skipped)`
                 : `[${ev.offset}s] lat: ${ev.latency}s · RTF: ${ev.rtf} · "${escapeHtml(ev.text.slice(0, 50))}"`;
-              document.getElementById('benchLiveChunkLog').textContent = `${ev.runtime} — ${statusText}`;
+              const who = ev.model && checkedModels.length > 1 ? `${ev.model} · ${ev.runtime}` : ev.runtime;
+              document.getElementById('benchLiveChunkLog').textContent = `${who} — ${statusText}`;
             } else if (ev.type === 'runtime_done') {
               if (ev.stats) benchResults.push(ev.stats);
+            } else if (ev.type === 'runtime_skip') {
+              const who = ev.model && checkedModels.length > 1 ? `${ev.model} · ${ev.runtime}` : ev.runtime;
+              document.getElementById('benchLiveChunkLog').textContent = `${who} — skipped: ${ev.reason}`;
             } else if (ev.type === 'complete') {
               renderBenchmarkSummary(ev.results, ev.winner);
             }
@@ -1552,12 +1603,17 @@
     // Sort results by RTF ascending (fastest first)
     const sorted = [...results].sort((a, b) => (a.mean_rtf || 999) - (b.mean_rtf || 999));
     const fastest = sorted[0];
+    const models = [...new Set(results.map(r => r.model).filter(Boolean))];
+    const manyModels = models.length > 1;
 
     // Winner Banner
     if (fastest) {
       const banner = document.createElement('div');
       banner.className = 'bench-winner';
-      const baseline = sorted.find(r => r.runtime === 'pytorch');
+      // Compare like with like: the speed-up is against pytorch running the
+      // same model, not against whichever model happened to be run on it.
+      const baseline = sorted.find(r => r.runtime === 'pytorch' && r.model === fastest.model)
+        || sorted.find(r => r.runtime === 'pytorch');
       let speedupText = '';
       if (baseline && baseline !== fastest && fastest.mean_rtf > 0) {
         const factor = (baseline.mean_latency / fastest.mean_latency).toFixed(1);
@@ -1566,7 +1622,7 @@
       banner.innerHTML = `
         <div class="bench-winner-icon">🏆</div>
         <div>
-          <div class="bench-winner-title">Fastest Runtime: ${escapeHtml(fastest.label)}</div>
+          <div class="bench-winner-title">Fastest ${manyModels ? 'combination' : 'runtime'}: ${escapeHtml(fastest.label)}</div>
           <div class="bench-winner-desc">
             Mean latency <strong>${fastest.mean_latency}s</strong> per 5s chunk (RTF <strong>${fastest.mean_rtf}</strong>)${speedupText}.
             ${fastest.keeps_up ? '✅ Fast enough to keep up with live real-time speech!' : '⚠️ Slower than real-time on this machine.'}
@@ -1590,7 +1646,8 @@
 
       rowsHtml += `
         <tr>
-          <td><strong>${escapeHtml(r.label)}</strong><br><span class="stat">${r.runtime}</span></td>
+          ${manyModels ? `<td><strong>${escapeHtml(r.model || '—')}</strong></td>` : ''}
+          <td><strong>${escapeHtml(manyModels ? (r.label || '').split(' · ').pop() : r.label)}</strong><br><span class="stat">${r.runtime}</span></td>
           <td class="mono">${r.mean_latency}s</td>
           <td class="mono">
             <div style="display:flex; align-items:center; gap:0.6rem">
@@ -1603,7 +1660,7 @@
           </td>
           <td class="mono">${r.worst_rtf}</td>
           <td>${badge}</td>
-          <td style="color:var(--dim); font-size:0.8rem; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.sample_text)}">
+          <td style="color:var(--dim); font-size:0.8rem; max-width:${manyModels ? '420px' : '240px'}; ${manyModels ? '' : 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;'}" title="${escapeHtml(r.sample_text)}">
             ${escapeHtml(r.sample_text || '—')}
           </td>
         </tr>
@@ -1614,6 +1671,7 @@
       <table class="bench-table">
         <thead>
           <tr>
+            ${manyModels ? '<th>Model</th>' : ''}
             <th>Runtime</th>
             <th>Mean Latency</th>
             <th>Mean RTF</th>
