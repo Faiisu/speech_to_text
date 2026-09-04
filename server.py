@@ -13,7 +13,7 @@ import sounddevice as sd
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 import numpy as np
 import statistics
@@ -22,7 +22,9 @@ from benchmark import chunk_offsets
 from model_catalog import discover, model_repos
 from runtimes import RUNTIME_NAMES, load_runtime, probe
 from transcribe import (
-    CHUNK_SECONDS,
+    DEFAULT_CHUNKING,
+    MAX_CHUNK_SECONDS,
+    Chunking,
     DEFAULT_BACKEND_URL,
     DEFAULT_LANGUAGE,
     DEFAULT_SILENCE_RMS,
@@ -74,6 +76,11 @@ class StartRequest(BaseModel):
     keywords: str | None = None
     mic_device: str | None = None
     silence_threshold: float = DEFAULT_SILENCE_RMS
+    # Whisper pads every chunk to 30s, so a longer chunk spreads one fixed
+    # encoder pass over more audio — at the cost of the speaker waiting a
+    # whole chunk before seeing anything. Chunking validates the pair.
+    chunk_seconds: float = DEFAULT_CHUNKING.chunk_seconds
+    overlap_seconds: float = DEFAULT_CHUNKING.overlap_seconds
     backend_url: str = DEFAULT_BACKEND_URL
     # validated against LANGUAGES rather than a Literal so the list of offered
     # languages lives in exactly one place (transcribe.LANGUAGES)
@@ -90,6 +97,18 @@ class StartRequest(BaseModel):
     @classmethod
     def _known_model(cls, value: str) -> str:
         return _validate_model(value)
+
+    @model_validator(mode="after")
+    def _valid_chunking(self):
+        try:
+            Chunking(self.chunk_seconds, self.overlap_seconds)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from None
+        return self
+
+    @property
+    def chunking(self) -> Chunking:
+        return Chunking(self.chunk_seconds, self.overlap_seconds)
 
     @field_validator("runtime")
     @classmethod
@@ -448,7 +467,21 @@ class BenchmarkRequest(BaseModel):
         return [_validate_model(v) for v in value]
 
     silence_threshold: float = DEFAULT_SILENCE_RMS
+    chunk_seconds: float = DEFAULT_CHUNKING.chunk_seconds
+    overlap_seconds: float = DEFAULT_CHUNKING.overlap_seconds
     language: str = DEFAULT_LANGUAGE
+
+    @model_validator(mode="after")
+    def _valid_chunking(self):
+        try:
+            Chunking(self.chunk_seconds, self.overlap_seconds)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from None
+        return self
+
+    @property
+    def chunking(self) -> Chunking:
+        return Chunking(self.chunk_seconds, self.overlap_seconds)
 
     @field_validator("language")
     @classmethod
@@ -480,6 +513,13 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
     clip_path = _resolve_audio(req.file)
     audio = load_audio(str(clip_path))
     duration = audio.size / SAMPLE_RATE
+    chunking = req.chunking
+    if not chunk_offsets(audio.size, chunking):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Clip is {duration:.1f}s — shorter than one "
+            f"{chunking.chunk_seconds:g}s chunk. Pick a longer clip or a smaller chunk length.",
+        )
 
     # One benchmark at a time. This server is reachable from every device on
     # the LAN, so two people could otherwise benchmark at once and contend for
@@ -497,7 +537,7 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
     available_by_model = {m: {e["name"]: e for e in probe(m)} for m in models}
 
     def event_stream():
-        yield f"data: {json.dumps({'type': 'init', 'file': clip_path.name, 'duration': round(duration, 1), 'models': models, 'runtimes': req.runtimes, 'language': req.language})}\n\n"
+        yield f"data: {json.dumps({'type': 'init', 'file': clip_path.name, 'duration': round(duration, 1), 'chunk_seconds': chunking.chunk_seconds, 'overlap_seconds': chunking.overlap_seconds, 'models': models, 'runtimes': req.runtimes, 'language': req.language})}\n\n"
 
         results = []
         for model_key, r_name in ((m, r) for m in models for r in req.runtimes):
@@ -514,10 +554,10 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
             try:
                 runtime = _get_runtime(r_name, model_key)
                 # warmup
-                runtime.transcribe(audio[: CHUNK_SECONDS * SAMPLE_RATE], req.language)
+                runtime.transcribe(audio[: chunking.chunk_samples], req.language)
 
-                offsets = chunk_offsets(audio.size)
-                chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
+                offsets = chunk_offsets(audio.size, chunking)
+                chunk_samples = chunking.chunk_samples
                 latencies = []
                 texts = []
                 skipped = 0
@@ -545,7 +585,7 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                     t0 = time.perf_counter()
                     t_chunk = runtime.transcribe(chunk, req.language)
                     lat = time.perf_counter() - t0
-                    rtf = lat / CHUNK_SECONDS
+                    rtf = lat / chunking.chunk_seconds
                     latencies.append(lat)
                     texts.append(t_chunk)
                     ev = {
@@ -564,7 +604,7 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                     yield f"data: {json.dumps(ev)}\n\n"
 
                 if latencies:
-                    rtfs = [l / CHUNK_SECONDS for l in latencies]
+                    rtfs = [l / chunking.chunk_seconds for l in latencies]
                     stats = {
                         "id": combo,
                         "model": model_key,
@@ -582,6 +622,9 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                         # full-ish transcript has to survive to the client
                         "sample_text": " ".join(t for t in texts if t).strip()[:400],
                         "keeps_up": statistics.mean(rtfs) < 1.0,
+                        # what the speaker sits through: the chunk has to be
+                        # spoken before it can be transcribed
+                        "wait": round(chunking.chunk_seconds + statistics.mean(latencies), 2),
                     }
                     results.append(stats)
                     yield f"data: {json.dumps({'type': 'runtime_done', 'id': combo, 'model': model_key, 'runtime': r_name, 'stats': stats})}\n\n"
@@ -675,6 +718,7 @@ def _run_session(req: StartRequest) -> None:
                 session_id,
                 on_event=on_event,
                 language=req.language,
+                chunking=req.chunking,
             )
         else:
             audio = run_recording_session(
@@ -688,6 +732,7 @@ def _run_session(req: StartRequest) -> None:
                 session_id,
                 on_event=on_event,
                 language=req.language,
+                chunking=req.chunking,
             )
 
         if is_silent(audio, req.silence_threshold):

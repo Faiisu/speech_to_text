@@ -9,7 +9,7 @@ Live incremental transcription of audio as it's being spoken, produced by re-tra
 _Avoid_: Streaming (ambiguous — could imply native model streaming support, which these models don't have)
 
 **Chunk**:
-A fixed-length window of buffered audio (5 seconds, with 1 second of overlap with the previous chunk) that gets independently transcribed during a real-time session. Overlapping regions are not deduplicated or stitched — each chunk's transcript is logged as-is.
+A fixed-length window of buffered audio (5 seconds by default, with 1 second of overlap with the previous chunk) that gets independently transcribed during a real-time session. Overlapping regions are not deduplicated or stitched — each chunk's transcript is logged as-is. The length is a property of the session, chosen per run and capped at 30 seconds because Whisper pads every chunk to a 30-second window and discards anything beyond it; a longer chunk therefore spends the same fixed encoder pass on more audio.
 
 **RTF_chunk**:
 Real-time factor for a single chunk: transcription latency for that chunk divided by the chunk's audio duration. RTF_chunk < 1 means the model kept pace with live speech; RTF_chunk ≥ 1 means it fell behind.

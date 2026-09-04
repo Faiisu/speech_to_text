@@ -633,6 +633,12 @@
       </div>
 
       <div class="field">
+        <label for="chunkSeconds">Chunk length</label>
+        <input id="chunkSeconds" type="number" step="1" min="1" max="30" value="5" oninput="describeChunk()">
+        <span class="hint" id="chunkHint"></span>
+      </div>
+
+      <div class="field">
         <label for="silenceThreshold">Silence threshold</label>
         <input id="silenceThreshold" type="number" step="0.001" value="0.02">
         <span class="hint">Chunks quieter than this are skipped instead of transcribed.</span>
@@ -710,6 +716,12 @@
           <!-- Checkboxes populated dynamically -->
         </div>
         <span class="hint">Compare execution engines on identical audio chunks.</span>
+      </div>
+
+      <div class="field">
+        <label for="benchChunkSeconds">Chunk length</label>
+        <input id="benchChunkSeconds" type="number" step="1" min="1" max="30" value="5">
+        <span class="hint">Applied to every row in the run, so they stay comparable. Whisper pads to 30s regardless — try 5 against 30 to see how much of each run is fixed cost.</span>
       </div>
 
       <div class="field">
@@ -928,6 +940,9 @@
     const threshold = parseFloat(document.getElementById('silenceThreshold').value);
     if (!Number.isNaN(threshold)) body.silence_threshold = threshold;
 
+    const chunk = parseFloat(document.getElementById('chunkSeconds').value);
+    if (!Number.isNaN(chunk)) body.chunk_seconds = chunk;
+
     const backendUrl = document.getElementById('backendUrl').value.trim();
     if (backendUrl) body.backend_url = backendUrl;
 
@@ -1036,6 +1051,27 @@
       document.getElementById('modelHint').textContent =
         `Couldn't load the model list (${err.message}) — falling back to turbo.`;
     }
+  }
+
+  // Whisper pads every chunk to a 30s window whatever you send it, so the
+  // encoder costs the same for 5s as for 30s. Spell out both halves of the
+  // trade — the sentence is the whole reason this field exists.
+  function describeChunk() {
+    const hint = document.getElementById('chunkHint');
+    const value = parseFloat(document.getElementById('chunkSeconds').value);
+    if (Number.isNaN(value) || value <= 0) {
+      hint.textContent = 'Seconds of audio per transcription, 1 to 30.';
+      return;
+    }
+    if (value > 30) {
+      hint.textContent = 'Above 30s Whisper drops the extra audio without an error — the server will refuse this.';
+      return;
+    }
+    const used = Math.round((value / 30) * 100);
+    hint.textContent =
+      `Whisper pads every chunk to 30s, so this uses ${used}% of the work it does either way. `
+      + `Longer is cheaper per second of audio and gives more context — but nothing appears `
+      + `until ${value}s has been spoken.`;
   }
 
   // ---- languages ----
@@ -1507,6 +1543,8 @@
     }
     const silenceVal = parseFloat(document.getElementById('benchSilence').value);
     const silence = Number.isNaN(silenceVal) ? 0.02 : silenceVal;
+    const chunkVal = parseFloat(document.getElementById('benchChunkSeconds').value);
+    const benchChunk = Number.isNaN(chunkVal) ? 5 : chunkVal;
 
     const runBtn = document.getElementById('benchRunBtn');
     runBtn.disabled = true;
@@ -1531,6 +1569,7 @@
           models: checkedModels,
           runtimes: checkedRuntimes,
           silence_threshold: silence,
+          chunk_seconds: benchChunk,
           language: document.getElementById('benchLanguage').value,
         }),
       });
@@ -1557,6 +1596,7 @@
           try {
             const ev = JSON.parse(line.slice(6));
             if (ev.type === 'init') {
+              if (ev.chunk_seconds) benchChunkUsed = ev.chunk_seconds;
               document.getElementById('benchActiveRuntimeText').textContent = `Replaying ${ev.file} (${ev.duration}s)...`;
             } else if (ev.type === 'runtime_start') {
               document.getElementById('benchActiveRuntimeText').textContent = `Testing ${ev.label}…`;
@@ -1589,6 +1629,8 @@
       document.getElementById('benchState').className = 'link-state';
     }
   }
+
+  let benchChunkUsed = 5;
 
   function renderBenchmarkSummary(results, winner) {
     const container = document.getElementById('benchResultsContainer');
@@ -1624,7 +1666,8 @@
         <div>
           <div class="bench-winner-title">Fastest ${manyModels ? 'combination' : 'runtime'}: ${escapeHtml(fastest.label)}</div>
           <div class="bench-winner-desc">
-            Mean latency <strong>${fastest.mean_latency}s</strong> per 5s chunk (RTF <strong>${fastest.mean_rtf}</strong>)${speedupText}.
+            Mean latency <strong>${fastest.mean_latency}s</strong> per ${benchChunkUsed}s chunk (RTF <strong>${fastest.mean_rtf}</strong>)${speedupText}.
+            A speaker waits <strong>${fastest.wait ?? '—'}s</strong> from starting a chunk to seeing its text.
             ${fastest.keeps_up ? '✅ Fast enough to keep up with live real-time speech!' : '⚠️ Slower than real-time on this machine.'}
           </div>
         </div>
@@ -1659,6 +1702,7 @@
             </div>
           </td>
           <td class="mono">${r.worst_rtf}</td>
+          <td class="mono" title="Chunk length plus mean latency — what the speaker sits through">${r.wait ?? '—'}s</td>
           <td>${badge}</td>
           <td style="color:var(--dim); font-size:0.8rem; max-width:${manyModels ? '420px' : '240px'}; ${manyModels ? '' : 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;'}" title="${escapeHtml(r.sample_text)}">
             ${escapeHtml(r.sample_text || '—')}
@@ -1676,6 +1720,7 @@
             <th>Mean Latency</th>
             <th>Mean RTF</th>
             <th>Worst RTF</th>
+            <th>You Wait</th>
             <th>Keeps Up?</th>
             <th>Sample Transcript</th>
           </tr>
@@ -1828,6 +1873,7 @@
   loadLanguages();
   // the runtime probe is per model, so the model list has to land first
   loadModels(false).then(() => { loadRuntimes(); loadBenchRuntimes(); });
+  describeChunk();
   loadDevices(false);
   applySource();
   loadBenchAudioFiles();

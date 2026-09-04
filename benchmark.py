@@ -26,6 +26,9 @@ from model_catalog import discover, resolve_repo
 from runtimes import RUNTIME_NAMES, load_runtime
 from transcribe import (
     CHUNK_SECONDS,
+    DEFAULT_CHUNKING,
+    MAX_CHUNK_SECONDS,
+    Chunking,
     DEFAULT_LANGUAGE,
     DEFAULT_SILENCE_RMS,
     LANGUAGES,
@@ -93,14 +96,12 @@ def record_audio_clip(
     return target
 
 
-def chunk_offsets(total_samples: int) -> list[int]:
-    chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
-    step_samples = chunk_samples - OVERLAP_SECONDS * SAMPLE_RATE
+def chunk_offsets(total_samples: int, chunking: Chunking = DEFAULT_CHUNKING) -> list[int]:
     offsets = []
     start = 0
-    while start + chunk_samples <= total_samples:
+    while start + chunking.chunk_samples <= total_samples:
         offsets.append(start)
-        start += step_samples
+        start += chunking.step_samples
     return offsets
 
 
@@ -111,9 +112,10 @@ def run_pass(
     verbose: bool = False,
     on_chunk: callable = None,
     language: str = DEFAULT_LANGUAGE,
+    chunking: Chunking = DEFAULT_CHUNKING,
 ) -> dict:
-    offsets = chunk_offsets(audio.size)
-    chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
+    offsets = chunk_offsets(audio.size, chunking)
+    chunk_samples = chunking.chunk_samples
 
     latencies: list[float] = []
     texts: list[str] = []
@@ -134,7 +136,7 @@ def run_pass(
         latency = time.perf_counter() - started
         latencies.append(latency)
         texts.append(text)
-        rtf = latency / CHUNK_SECONDS
+        rtf = latency / chunking.chunk_seconds
         if verbose:
             print(f"  [{offset / SAMPLE_RATE:6.1f}s] {latency:5.2f}s  RTF {rtf:4.2f}  {text[:60]}")
         if on_chunk:
@@ -143,7 +145,7 @@ def run_pass(
     if not latencies:
         return {"chunks": 0, "skipped": skipped, "sample_text": ""}
 
-    rtfs = [latency / CHUNK_SECONDS for latency in latencies]
+    rtfs = [latency / chunking.chunk_seconds for latency in latencies]
     return {
         "chunks": len(latencies),
         "skipped": skipped,
@@ -187,6 +189,20 @@ def main() -> None:
         "reloads the model per count, since none of them can be retuned in place. "
         "Defaults to each library's own choice.",
     )
+    parser.add_argument(
+        "--chunk",
+        default=str(int(DEFAULT_CHUNKING.chunk_seconds)),
+        help="Seconds per chunk, or several to compare: 5,10,30. Whisper pads every chunk to "
+        f"30s regardless (the maximum here is {MAX_CHUNK_SECONDS:g}), so a longer chunk spreads "
+        "one fixed encoder cost over more audio — the sweep says how much of that is real on "
+        "this machine, and the 'you wait' column says what it costs the person speaking.",
+    )
+    parser.add_argument(
+        "--overlap",
+        type=float,
+        default=DEFAULT_CHUNKING.overlap_seconds,
+        help=f"Seconds of overlap between chunks (default: {DEFAULT_CHUNKING.overlap_seconds:g}).",
+    )
     parser.add_argument("--silence-threshold", type=float, default=DEFAULT_SILENCE_RMS,
                         help=f"Set above 0 to skip quiet chunks the way a live session does "
                              f"(default: {DEFAULT_SILENCE_RMS})")
@@ -225,9 +241,20 @@ def main() -> None:
             f"Unknown model(s) {', '.join(unknown)}. Available here: {', '.join(known)}"
         )
 
+    try:
+        chunkings = [
+            Chunking(float(c.strip()), args.overlap)
+            for c in args.chunk.split(",")
+            if c.strip()
+        ]
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not chunkings:
+        parser.error("--chunk needs at least one value")
+
     audio = load_audio(args.file)
     duration = audio.size / SAMPLE_RATE
-    offsets = chunk_offsets(audio.size)
+    offsets = chunk_offsets(audio.size, chunkings[0])
 
     print(f"machine  : {platform.system()} {platform.machine()}")
     print(f"torch    : {torch.__version__}")
@@ -237,10 +264,18 @@ def main() -> None:
         except KeyError:
             print(f"model    : {model_key}  (converted weights only, no source repo)")
     print(f"runtime  : {args.runtime}")
-    print(f"clip     : {args.file}  ({duration:.1f}s audio, {len(offsets)} chunks of {CHUNK_SECONDS}s)")
+    print(f"clip     : {args.file}  ({duration:.1f}s audio)")
+    for chunking in chunkings:
+        count = len(chunk_offsets(audio.size, chunking))
+        print(f"chunking : {chunking.label()} — {count} chunk{'' if count == 1 else 's'}")
 
-    if not offsets:
-        raise SystemExit(f"Clip is shorter than one {CHUNK_SECONDS}s chunk — use a longer recording.")
+    too_short = [c for c in chunkings if not chunk_offsets(audio.size, c)]
+    if too_short:
+        raise SystemExit(
+            f"Clip is {duration:.1f}s — shorter than one "
+            f"{max(c.chunk_seconds for c in too_short):g}s chunk. Use a longer recording, or a "
+            "smaller --chunk."
+        )
 
     thread_counts = (
         [int(t.strip()) for t in args.threads.split(",") if t.strip()]
@@ -249,74 +284,112 @@ def main() -> None:
     )
 
     model_column = max(len(m) for m in models) if len(models) > 1 else 0
+    chunk_column = 7 if len(chunkings) > 1 else 0
     header = f"{'model':>{model_column}}  " if model_column else ""
+    header += f"{'chunk':>{chunk_column}}  " if chunk_column else ""
+    # "you wait" is the number the person speaking experiences: they finish a
+    # chunk's worth of audio, then wait for it to be transcribed. RTF alone
+    # hides this — it improves as chunks grow, while the wait gets worse.
     print(f"\n{header}{'threads':>8}  {'chunks':>6}  {'mean RTF':>9}  {'median':>7}  "
-          f"{'worst':>7}  {'mean lat':>9}  keeps up?")
-    print("-" * (72 + model_column + 2 * bool(model_column)))
+          f"{'worst':>7}  {'mean lat':>9}  {'you wait':>9}  keeps up?")
+    print("-" * (83 + model_column + chunk_column + 2 * bool(model_column) + 2 * bool(chunk_column)))
 
     results = []
     for model_key in models:
-        for threads in thread_counts:
-            # Reloaded per count: CTranslate2, whisper.cpp and OpenVINO all fix
-            # their thread pool when the model is built, so setting it
-            # afterwards (which is all this used to do, via
-            # torch.set_num_threads) changed nothing at all for three of the
-            # five runtimes.
-            try:
-                runtime = load_runtime(args.runtime, model_key, threads)
-            except (FileNotFoundError, RuntimeError, ValueError, KeyError) as exc:
-                # One unconvertible or undeployable combination must not take
-                # the whole sweep down with it — say which one and carry on,
-                # the way the panel greys out a runtime rather than failing.
-                reason = str(exc).splitlines()[0]
-                if len(models) * len(thread_counts) == 1:
-                    raise SystemExit(f"{model_key} on {args.runtime}: {reason}") from None
-                print(f"{model_key:>{model_column}}  skipped — {reason}")
-                break
-            if model_key == models[0] and threads == thread_counts[0]:
-                print(f"  {runtime.description}")
-                print(f"  language: {LANGUAGES[args.language]}")
-            # First inference pays for lazy init and cache warm-up; exclude it
-            # so the reported numbers reflect steady-state throughput.
-            runtime.transcribe(audio[: CHUNK_SECONDS * SAMPLE_RATE], args.language)
-            stats = run_pass(
-                runtime, audio, args.silence_threshold, args.verbose, language=args.language
-            )
-            prefix = f"{model_key:>{model_column}}  " if model_column else ""
-            label = "default" if threads is None else str(threads)
-            if not stats["chunks"]:
-                print(f"{prefix}{label:>8}  every chunk was skipped as silence")
-                continue
-            keeps_up = "yes" if stats["mean_rtf"] < 1 else "NO"
-            print(
-                f"{prefix}{label:>8}  {stats['chunks']:>6}  {stats['mean_rtf']:>9.2f}  "
-                f"{stats['median_rtf']:>7.2f}  {stats['worst_rtf']:>7.2f}  "
-                f"{stats['mean_latency']:>8.2f}s  {keeps_up}"
-            )
-            results.append((model_key, threads, stats))
+        for chunking in chunkings:
+            for threads in thread_counts:
+                # Reloaded per count: CTranslate2, whisper.cpp and OpenVINO all
+                # fix their thread pool when the model is built, so setting it
+                # afterwards (which is all this used to do, via
+                # torch.set_num_threads) changed nothing at all for three of
+                # the five runtimes.
+                try:
+                    runtime = load_runtime(args.runtime, model_key, threads)
+                except (FileNotFoundError, RuntimeError, ValueError, KeyError) as exc:
+                    # One unconvertible or undeployable combination must not
+                    # take the whole sweep down with it — say which one and
+                    # carry on, the way the panel greys out a runtime.
+                    reason = str(exc).splitlines()[0]
+                    if len(models) * len(chunkings) * len(thread_counts) == 1:
+                        raise SystemExit(f"{model_key} on {args.runtime}: {reason}") from None
+                    print(f"{model_key:>{model_column}}  skipped — {reason}")
+                    break
+
+                first = (
+                    model_key == models[0]
+                    and chunking is chunkings[0]
+                    and threads == thread_counts[0]
+                )
+                if first:
+                    print(f"  {runtime.description}")
+                    print(f"  language: {LANGUAGES[args.language]}")
+
+                # First inference pays for lazy init and cache warm-up; exclude
+                # it so the reported numbers reflect steady-state throughput.
+                # Warm up at the chunk length actually about to be measured:
+                # OpenVINO recompiles for a new input shape, and paying that
+                # inside the first timed chunk would be charged to the chunk
+                # size rather than to the switch.
+                runtime.transcribe(audio[: chunking.chunk_samples], args.language)
+                stats = run_pass(
+                    runtime,
+                    audio,
+                    args.silence_threshold,
+                    args.verbose,
+                    language=args.language,
+                    chunking=chunking,
+                )
+
+                prefix = f"{model_key:>{model_column}}  " if model_column else ""
+                if chunk_column:
+                    prefix += f"{chunking.chunk_seconds:>{chunk_column}g}  "
+                label = "default" if threads is None else str(threads)
+                if not stats["chunks"]:
+                    print(f"{prefix}{label:>8}  every chunk was skipped as silence")
+                    continue
+                keeps_up = "yes" if stats["mean_rtf"] < 1 else "NO"
+                # What the speaker waits for: the chunk has to be spoken before
+                # it can be transcribed, so both terms count.
+                wait = chunking.chunk_seconds + stats["mean_latency"]
+                print(
+                    f"{prefix}{label:>8}  {stats['chunks']:>6}  {stats['mean_rtf']:>9.2f}  "
+                    f"{stats['median_rtf']:>7.2f}  {stats['worst_rtf']:>7.2f}  "
+                    f"{stats['mean_latency']:>8.2f}s  {wait:>8.2f}s  {keeps_up}"
+                )
+                results.append((model_key, chunking, threads, stats))
 
     if len(results) > 1:
-        best = min(results, key=lambda r: r[2]["mean_rtf"])
-        worst = max(results, key=lambda r: r[2]["mean_rtf"])
-        gain = (worst[2]["mean_rtf"] / best[2]["mean_rtf"] - 1) * 100
+        best = min(results, key=lambda r: r[3]["mean_rtf"])
+        worst = max(results, key=lambda r: r[3]["mean_rtf"])
+        gain = (worst[3]["mean_rtf"] / best[3]["mean_rtf"] - 1) * 100
 
         def describe(entry) -> str:
-            model_key, threads, _ = entry
-            thread_part = "default threads" if threads is None else f"{threads} threads"
-            return f"{model_key} at {thread_part}" if len(models) > 1 else thread_part
+            model_key, chunking, threads, _ = entry
+            parts = []
+            if len(models) > 1:
+                parts.append(model_key)
+            if len(chunkings) > 1:
+                parts.append(f"{chunking.chunk_seconds:g}s chunks")
+            parts.append("default threads" if threads is None else f"{threads} threads")
+            return " at ".join([parts[0], ", ".join(parts[1:])]) if len(parts) > 1 else parts[0]
 
         print(
-            f"\nbest: {describe(best)} (mean RTF {best[2]['mean_rtf']:.2f}) — "
+            f"\nbest: {describe(best)} (mean RTF {best[3]['mean_rtf']:.2f}) — "
             f"{gain:.0f}% faster than {describe(worst)}"
         )
+        if len(chunkings) > 1:
+            print(
+                "Longer chunks lower RTF by spreading one fixed encoder pass over more audio. "
+                "Read 'you wait' before spending that: it is what the speaker sits through."
+            )
 
     if len(models) > 1:
         # Speed is only half of a model comparison: a smaller or more
         # compressed model that mangles the words is not a win. Print what
         # each one actually said, on the same audio, for eyeballing.
         print("\nwhat each model heard:")
-        for model_key, threads, stats in results:
-            if threads == thread_counts[0] and stats.get("sample_text"):
+        for model_key, chunking, threads, stats in results:
+            if chunking is chunkings[0] and threads == thread_counts[0] and stats.get("sample_text"):
                 print(f"  {model_key:>{model_column}}  {stats['sample_text']}")
 
 

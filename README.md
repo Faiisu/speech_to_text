@@ -358,6 +358,24 @@ Reports per-chunk latency and real-time factor, plus mean/median/worst across th
 
 Use a clip of realistic continuous speech, not a short test phrase — a chunk packed with words takes far longer than one with a single utterance, so short clips flatter the result.
 
+### Choosing the chunk length
+
+Whisper pads **every** input to a 30-second mel window and truncates anything longer, so the encoder — the expensive half — costs the same whether you hand it 5 seconds or 30. At the 5s default the model does a 30s pass to transcribe 5s of audio, and the fixed cost is spread over six times less speech than it could be.
+
+`--chunk` takes one value or a sweep:
+
+```bash
+uv run python benchmark.py --model turbo --file clip.wav --runtime ctranslate2 --chunk 5,10,20
+```
+
+Measured on a Mac (`ctranslate2`, 21s clip): 5s chunks gave RTF 1.18 at 5.90s per chunk, 10s gave **0.61** at 6.08s, 20s gave **0.33** at 6.65s. Latency per chunk barely moved — that is the fixed encoder pass, made visible.
+
+Which is why the table has a **`you wait`** column: chunk length plus latency, what the person speaking actually sits through before their words appear. It goes the other way (10.9s → 16.1s → 26.7s in that run), and it is the real price of a low RTF. RTF answers "can this machine keep up"; `you wait` answers "is this usable live".
+
+30 is the ceiling and is enforced — beyond it the audio past the window is dropped silently, so both the CLI and the API refuse it rather than transcribing part of a chunk. In the Web GUI the same control is **Chunk length** in the session panel and in Benchmark Studio.
+
+A longer chunk also tends to transcribe *better*: 5 seconds is far less context than the 30-second windows Whisper was trained on. The trade is responsiveness, not accuracy.
+
 ### Comparing models on one runtime
 
 The runtime is only half the question — the other half is which model, and whether a compressed build is worth what it costs in accuracy. Pass several keys to `--model` and they are replayed through the same clip on the same runtime:

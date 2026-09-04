@@ -659,6 +659,14 @@ uv run python check_hardware.py  # CPU, AVX-VNNI, iGPU, NPU, thread count</pre><
     </div>
 
     <div class="entry">
+      <div class="entry-head"><h3>Chunk length: the lever that isn't the model</h3></div>
+      <p>Whisper pads every input to a 30-second window and truncates anything past it. The encoder therefore costs the same for a 5-second chunk as for a 30-second one — at the 5s default, five sixths of that fixed work is spent on padding.</p>
+      <p>Raising <strong>Chunk length</strong> spreads it over more speech. Measured with <code>ctranslate2</code> on a 21s clip: RTF 1.18 at 5s, <strong>0.61</strong> at 10s, <strong>0.33</strong> at 20s — while the latency of a single chunk barely moved (5.90s → 6.08s → 6.65s). That flat latency <em>is</em> the fixed encoder pass.</p>
+      <p>The <strong>You Wait</strong> column is the other half: chunk length plus latency, what the speaker sits through before seeing their words. It went 10.9s → 16.1s → 26.7s across the same three runs. A low RTF bought with a long chunk is not free, it is deferred. 30s is the hard ceiling; above it the extra audio is dropped without an error, so the server refuses it.</p>
+      <p>A longer chunk usually reads <em>better</em> too — 5 seconds is much less context than the 30-second windows Whisper was trained on. The thing you spend is responsiveness.</p>
+    </div>
+
+    <div class="entry">
       <div class="entry-head"><h3>Comparing models, not just runtimes</h3></div>
       <p><strong>Models to compare</strong> and <strong>Runtimes to compare</strong> are both checkbox lists, and the run is every combination of the two. Tick one model and several runtimes to find the fastest engine; tick one runtime and several models to answer a different question — whether <code>turbo-int8</code> earns its speed against the <code>turbo</code> it was compressed from, on your audio rather than someone's benchmark suite.</p>
       <p>Availability is checked per model, so a pair that can't run (a model never converted for that runtime) is skipped with the reason rather than taking the run down. Read the <strong>Sample Transcript</strong> column as carefully as the RTF one: on this project's own Thai clip, each step down in precision was faster and slightly more garbled, and only the transcript column shows the second half of that trade.</p>
@@ -733,7 +741,7 @@ taskset -c 0-7 uv run python benchmark.py --model turbo --file audio/clip.wav --
     <p class="section-note">The instruments displayed across the top rail of the main interface.</p>
 
     <div class="entry">
-      <div class="entry-head"><h3>Real-time factor (RTF)</h3><span class="tag">latency ÷ 5.0s</span></div>
+      <div class="entry-head"><h3>Real-time factor (RTF)</h3><span class="tag">latency ÷ chunk length</span></div>
       <p>The definitive metric of real-time speech capability. It is the time taken to transcribe a chunk divided by the audio duration of that chunk (5 seconds).</p>
       <div class="demo">
         <div class="demo-row">
