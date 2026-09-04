@@ -21,8 +21,8 @@ import time
 import numpy as np
 import torch
 
-from model_catalog import model_repos, resolve_repo
-from runtimes import load_runtime
+from model_catalog import discover, resolve_repo
+from runtimes import RUNTIME_NAMES, load_runtime
 from transcribe import (
     CHUNK_SECONDS,
     DEFAULT_LANGUAGE,
@@ -157,7 +157,10 @@ def run_pass(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=model_repos().keys(), required=True)
+    # discover() rather than model_repos(): a model that exists only as
+    # converted weights (an int8 OpenVINO build, say) has no repo and would
+    # otherwise be unbenchmarkable, which is exactly backwards.
+    parser.add_argument("--model", choices=discover().keys(), required=True)
     parser.add_argument("--file", help="16kHz mono WAV to replay (or provide --record)")
     parser.add_argument(
         "--record",
@@ -169,8 +172,10 @@ def main() -> None:
     parser.add_argument("--device", help="Microphone device index or name")
     parser.add_argument(
         "--threads",
-        help="Comma-separated torch thread counts to compare, e.g. 4,8,14. "
-        "Defaults to whatever torch picks on its own.",
+        help="Comma-separated thread counts to compare, e.g. 4,8,14. Applies to "
+        "whichever runtime is selected — each gets its own library's knob — and "
+        "reloads the model per count, since none of them can be retuned in place. "
+        "Defaults to each library's own choice.",
     )
     parser.add_argument("--silence-threshold", type=float, default=DEFAULT_SILENCE_RMS,
                         help=f"Set above 0 to skip quiet chunks the way a live session does "
@@ -178,7 +183,7 @@ def main() -> None:
     parser.add_argument(
         "--runtime",
         default="pytorch",
-        choices=["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"],
+        choices=RUNTIME_NAMES,
         help="How to execute the model (default: pytorch)",
     )
     parser.add_argument(
@@ -208,27 +213,20 @@ def main() -> None:
 
     print(f"machine  : {platform.system()} {platform.machine()}")
     print(f"torch    : {torch.__version__}")
-    print(f"model    : {resolve_repo(args.model)}")
+    try:
+        print(f"model    : {resolve_repo(args.model)}")
+    except KeyError:
+        print(f"model    : {args.model}  (converted weights only, no source repo)")
     print(f"runtime  : {args.runtime}")
     print(f"clip     : {args.file}  ({duration:.1f}s audio, {len(offsets)} chunks of {CHUNK_SECONDS}s)")
 
     if not offsets:
         raise SystemExit(f"Clip is shorter than one {CHUNK_SECONDS}s chunk — use a longer recording.")
 
-    print("\nloading model...")
-    runtime = load_runtime(args.runtime, args.model)
-    print(f"  {runtime.description}")
-    print(f"  language: {LANGUAGES[args.language]}")
-
-    # First inference pays for lazy init and cache warm-up; exclude it so the
-    # reported numbers reflect steady-state throughput.
-    print("warming up...")
-    runtime.transcribe(audio[: CHUNK_SECONDS * SAMPLE_RATE], args.language)
-
     thread_counts = (
         [int(t.strip()) for t in args.threads.split(",") if t.strip()]
         if args.threads
-        else [torch.get_num_threads()]
+        else [None]
     )
 
     print(f"\n{'threads':>8}  {'chunks':>6}  {'mean RTF':>9}  {'median':>7}  {'worst':>7}  {'mean lat':>9}  keeps up?")
@@ -236,16 +234,27 @@ def main() -> None:
 
     results = []
     for threads in thread_counts:
-        torch.set_num_threads(threads)
+        # Reloaded per count: CTranslate2, whisper.cpp and OpenVINO all fix
+        # their thread pool when the model is built, so setting it afterwards
+        # (which is all this used to do, via torch.set_num_threads) changed
+        # nothing at all for three of the five runtimes.
+        runtime = load_runtime(args.runtime, args.model, threads)
+        if threads == thread_counts[0]:
+            print(f"  {runtime.description}")
+            print(f"  language: {LANGUAGES[args.language]}")
+        # First inference pays for lazy init and cache warm-up; exclude it so
+        # the reported numbers reflect steady-state throughput.
+        runtime.transcribe(audio[: CHUNK_SECONDS * SAMPLE_RATE], args.language)
         stats = run_pass(
             runtime, audio, args.silence_threshold, args.verbose, language=args.language
         )
+        label = "default" if threads is None else str(threads)
         if not stats["chunks"]:
-            print(f"{threads:>8}  every chunk was skipped as silence")
+            print(f"{label:>8}  every chunk was skipped as silence")
             continue
         keeps_up = "yes" if stats["mean_rtf"] < 1 else "NO"
         print(
-            f"{threads:>8}  {stats['chunks']:>6}  {stats['mean_rtf']:>9.2f}  "
+            f"{label:>8}  {stats['chunks']:>6}  {stats['mean_rtf']:>9.2f}  "
             f"{stats['median_rtf']:>7.2f}  {stats['worst_rtf']:>7.2f}  "
             f"{stats['mean_latency']:>8.2f}s  {keeps_up}"
         )
@@ -259,7 +268,6 @@ def main() -> None:
             f"\nbest: {best[0]} threads (mean RTF {best[1]['mean_rtf']:.2f}) — "
             f"{gain:.0f}% faster than {worst[0]} threads"
         )
-        print("Set it for a run with:  OMP_NUM_THREADS=<n> uv run python ...")
 
 
 if __name__ == "__main__":

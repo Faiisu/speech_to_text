@@ -20,7 +20,7 @@ import statistics
 
 from benchmark import chunk_offsets
 from model_catalog import discover, model_repos
-from runtimes import load_runtime, probe
+from runtimes import RUNTIME_NAMES, load_runtime, probe
 from transcribe import (
     CHUNK_SECONDS,
     DEFAULT_BACKEND_URL,
@@ -65,9 +65,10 @@ class StartRequest(BaseModel):
     # not a Literal: the set of models is discovered per machine, so pinning it
     # here would reject a model the panel legitimately offers
     model: str
-    runtime: Literal[
-        "pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"
-    ] = "pytorch"
+    # also not a Literal: the runtime list lives in runtimes.RUNTIME_NAMES,
+    # and duplicating it here is how openvino-npu was offered by the panel
+    # while being rejected at the door
+    runtime: str = "pytorch"
     source: Literal["mic", "file"] = "mic"
     file: str | None = None  # filename inside audio/, when source is "file"
     keywords: str | None = None
@@ -89,6 +90,15 @@ class StartRequest(BaseModel):
     @classmethod
     def _known_model(cls, value: str) -> str:
         return _validate_model(value)
+
+    @field_validator("runtime")
+    @classmethod
+    def _known_runtime(cls, value: str) -> str:
+        if value not in RUNTIME_NAMES:
+            raise ValueError(
+                f"Unknown runtime {value!r}; expected one of {', '.join(RUNTIME_NAMES)}"
+            )
+        return value
 
 
 def _check_language_supported(model_key: str, language: str) -> None:

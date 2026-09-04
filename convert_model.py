@@ -7,6 +7,11 @@ those runtimes can be selected:
     uv run python convert_model.py --runtime ctranslate2 --model turbo
     uv run python convert_model.py --runtime openvino    --model turbo
 
+The OpenVINO conversion also takes --precision int8 / int4, which compresses
+the weights on the way out. Those land beside the uncompressed build under
+their own key (turbo-int8, turbo-int4), so all three can be benchmarked
+against each other rather than one replacing the other.
+
 Converted models land in models/ and are reused after that. Expect the first
 run to download several GB.
 """
@@ -19,7 +24,26 @@ import sys
 from model_catalog import MODELS_DIR, converted_dir, model_repos, resolve_repo
 
 
-def convert_openvino(model_key: str) -> None:
+# Weight-only compression: the weights are stored narrower and expanded back
+# on the fly, so it always shrinks the model and only sometimes speeds it up —
+# it pays where inference is memory-bound (the decoder), not where it is
+# compute-bound (the encoder). Hence a flag to measure with rather than a
+# default. int4 is asymmetric with a group size, which is the usual accuracy/
+# size compromise; ratio<1 would leave some layers at 8-bit.
+# "source" keeps whatever dtype the checkpoint holds — bf16 for the Typhoon
+# fine-tunes, not fp32, which is why this is not called that.
+PRECISIONS = ("source", "int8", "int4")
+
+
+def _weight_config(precision: str):
+    from optimum.intel import OVWeightQuantizationConfig
+
+    if precision == "int8":
+        return OVWeightQuantizationConfig(bits=8, sym=True)
+    return OVWeightQuantizationConfig(bits=4, sym=False, group_size=128, ratio=1.0)
+
+
+def convert_openvino(model_key: str, precision: str = "source") -> None:
     try:
         from optimum.intel import OVModelForSpeechSeq2Seq
     except ImportError:
@@ -53,10 +77,19 @@ def convert_openvino(model_key: str) -> None:
     # (An earlier version wrote a "GPU copy" and a "CPU copy"; because both
     # names resolve to the same path, it deleted the freshly written IR and
     # then failed copying from the directory it had just removed.)
-    target = converted_dir("openvino-gpu", model_key)
+    #
+    # A compressed build gets its own key — models/openvino-turbo-int8 — which
+    # the catalogue discovers as the model "turbo-int8". That makes it a thing
+    # you can select and benchmark next to the uncompressed build, instead of an
+    # invisible replacement for it.
+    target_key = model_key if precision == "source" else f"{model_key}-{precision}"
+    target = converted_dir("openvino-gpu", target_key)
 
-    print(f"Converting {repo} to OpenVINO IR (this downloads the model and takes a while)...")
-    model = OVModelForSpeechSeq2Seq.from_pretrained(repo, export=True)
+    extra = {} if precision == "source" else {"quantization_config": _weight_config(precision)}
+    weights = "as published" if precision == "source" else precision
+    print(f"Converting {repo} to OpenVINO IR, weights {weights} "
+          "(this downloads the model and takes a while)...")
+    model = OVModelForSpeechSeq2Seq.from_pretrained(repo, export=True, **extra)
     processor = AutoProcessor.from_pretrained(repo)
 
     if target.exists():
@@ -64,7 +97,10 @@ def convert_openvino(model_key: str) -> None:
     target.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(target)
     processor.save_pretrained(target)
-    print(f"  wrote {target}  (used by both openvino-gpu and openvino-cpu)")
+    size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
+    print(f"  wrote {target}  ({size / 1e6:.0f} MB, used by every openvino-* runtime)")
+    if precision != "source":
+        print(f"  benchmark it as:  --model {target_key} --runtime openvino-gpu")
 
 
 def convert_ctranslate2(model_key: str) -> None:
@@ -140,11 +176,23 @@ def main() -> None:
         "--runtime", choices=["openvino", "ctranslate2", "whispercpp"], required=True
     )
     parser.add_argument("--model", choices=model_repos().keys(), required=True)
+    parser.add_argument(
+        "--precision",
+        choices=PRECISIONS,
+        default="source",
+        help="OpenVINO only: compress the weights on the way out. int8/int4 are "
+        "written as a separate model (turbo-int8, turbo-int4) so they can be "
+        "compared against the uncompressed build (default: source, i.e. the "
+        "checkpoint's own dtype).",
+    )
     args = parser.parse_args()
+
+    if args.precision != "source" and args.runtime != "openvino":
+        parser.error(f"--precision is an OpenVINO option; {args.runtime} has a fixed format")
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     if args.runtime == "openvino":
-        convert_openvino(args.model)
+        convert_openvino(args.model, args.precision)
     elif args.runtime == "whispercpp":
         convert_whispercpp(args.model)
     else:

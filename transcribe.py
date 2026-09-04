@@ -418,6 +418,10 @@ def record_with_streaming(
 
 
 def main() -> None:
+    # local, like the load_runtime import below: runtimes.py imports from this
+    # module, so a top-level import would be circular
+    from runtimes import RUNTIME_NAMES
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=model_repos().keys(), required=False)
     parser.add_argument(
@@ -451,7 +455,7 @@ def main() -> None:
     parser.add_argument(
         "--runtime",
         default="pytorch",
-        choices=["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"],
+        choices=RUNTIME_NAMES,
         help="How to execute the model (default: pytorch). Run "
         "'uv run python runtimes.py' to see which are usable on this machine.",
     )

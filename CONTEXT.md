@@ -38,7 +38,7 @@ The loudness floor below which a chunk is skipped entirely rather than transcrib
 ## Execution
 
 **Runtime**:
-The machinery that executes a model, chosen independently of *which* model runs: `pytorch`, `openvino-gpu`, `openvino-cpu`, `ctranslate2`, or `whispercpp`. Swapping runtime changes speed, not the model. See ADR 0005.
+The machinery that executes a model, chosen independently of *which* model runs: `pytorch`, `openvino-gpu`, `openvino-cpu`, `openvino-npu`, `ctranslate2`, or `whispercpp`. Swapping runtime changes speed, not the model. See ADR 0005.
 _Avoid_: Backend (means the TimescaleDB service in this project), engine, device
 
 **Session**:

@@ -430,6 +430,21 @@
       <ul>
         <li>Shares the same converted OpenVINO model directory as <code>openvino-gpu</code>.</li>
         <li>Executes on the CPU if an integrated GPU is busy or unavailable.</li>
+        <li>Measured on the UBX-330M: 2.53 RTF on the weights as published, 1.39 once converted with <code>--precision int8</code> — which puts it level with <code>ctranslate2</code>.</li>
+      </ul>
+    </div>
+
+    <!-- 6. OpenVINO NPU -->
+    <div class="entry">
+      <div class="entry-head">
+        <h3>6. OpenVINO NPU (<code>openvino-npu</code>)</h3>
+        <span class="tag warn">Driver not present on the UBX-330M</span>
+        <span class="tag">Intel AI Boost</span>
+      </div>
+      <p>The same OpenVINO IR, dispatched to the NPU that ships in Core Ultra parts. It is offered whenever OpenVINO reports an <code>NPU</code> device, and greyed out with the reason when it doesn't.</p>
+      <ul>
+        <li>Needs the NPU kernel driver (<code>/dev/accel/accel0</code>, module <code>intel_vpu</code>) <em>and</em> the userspace pieces (<code>intel-driver-compiler-npu</code>, <code>intel-level-zero-npu</code>).</li>
+        <li>On the UBX-330M as shipped, neither the device node nor the module is present, so this path is untested — the iGPU is the accelerator that actually works there today.</li>
       </ul>
     </div>
 
@@ -573,7 +588,12 @@ uv run python convert_model.py --runtime whispercpp --model turbo</pre><button t
       <div class="cmd"><pre>uv sync --extra openvino
 uv run python convert_model.py --runtime openvino --model turbo</pre><button type="button" onclick="copyCmd(this)">Copy</button></div>
       <p>One conversion serves both runtimes: it writes <code>models/openvino-gpu-turbo</code> and <code>models/openvino-cpu-turbo</code> with identical contents, and the device is chosen when the model loads. <code>openvino-gpu</code> additionally requires an Intel render node at <code>/dev/dri/renderD*</code>, which the UBX-330M has and no Mac ever will, <em>plus</em> an OpenCL runtime for that node (<code>sudo apt install intel-opencl-icd</code>) <em>plus</em> membership of the <code>render</code> group (<code>sudo usermod -aG render $USER</code>, then log in again). Miss either and the failure looks identical — the node is still listed, OpenVINO reports <code>CPU</code> only, and the panel greys the GPU out with the reason.</p>
-      <p><strong>Measured on the UBX-330M</strong> (Core Ultra 5 125H), one fixed 21s clip in 5s chunks: <code>openvino-gpu</code> mean RTF <strong>0.60</strong> — the only runtime on that box that keeps up with live speech — against 1.34 for <code>ctranslate2</code> int8 and 2.53 for <code>openvino-cpu</code> running the very same fp32 IR.</p>
+      <p>The conversion also takes <code>--precision int8</code> or <code>--precision int4</code>, which compresses the weights on the way out and writes them as their own model (<code>turbo-int8</code>, <code>turbo-int4</code>) so you can benchmark them against the original instead of losing it. The default, <code>source</code>, keeps the checkpoint's own dtype — bf16 for the Typhoon fine-tunes.</p>
+      <p><strong>Measured on the UBX-330M</strong> (Core Ultra 5 125H), one fixed 21.1s clip in 5s chunks, weights 1.6&nbsp;GB / 776&nbsp;MB / 442&nbsp;MB:</p>
+      <div class="cmd"><pre>              source(bf16)   int8    int4
+openvino-gpu      0.60        0.53    0.56   RTF
+openvino-cpu      2.53        1.39    1.45   RTF</pre><button type="button" onclick="copyCmd(this)">Copy</button></div>
+      <p>So the device is worth far more than the format here, int8 is worth taking on the CPU, and int4 is worth nothing on either — slower than int8 <em>and</em> the first to garble the Thai on the noisiest chunk. Compressed weights are expanded again before they are multiplied, so they buy memory, not arithmetic.</p>
     </div>
 
     <h2>Checking your work</h2>
@@ -640,6 +660,7 @@ uv run python check_hardware.py  # CPU, AVX-VNNI, iGPU, NPU, thread count</pre><
     <div class="entry">
       <div class="entry-head"><h3>CPU Thread Pinning on Hybrid Architectures</h3></div>
       <p>On hybrid Intel CPUs (such as the Core Ultra 5 125H with 4 P-cores, 8 E-cores, and 2 LP E-cores), using all 14 cores can actually be <em>slower</em> than using only the Performance cores, because slower E-cores delay thread synchronization barriers.</p>
+      <p><code>--threads</code> reaches whichever runtime you selected — each library has its own knob, set when the model is built, so the benchmark reloads the model per count. Measured on the UBX-330M, <code>whispercpp</code> ran 5.24 RTF on 4 threads, 4.27 on 8, 4.94 on 14 and 8.36 on 18: the ceiling is real, and it is below the core count.</p>
       <p>Use <code>taskset</code> to isolate inference to Performance cores:</p>
       <pre><code># Pin to P-core threads (CPUs 0-7) with 8 threads:
 taskset -c 0-7 uv run python benchmark.py --model turbo --file audio/clip.wav --threads 8</code></pre>

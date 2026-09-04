@@ -7,12 +7,19 @@ that executes it, because the right choice depends entirely on the hardware:
                    Works everywhere. Slowest option on an Intel box.
   openvino-gpu     OpenVINO on an Intel integrated GPU.
   openvino-cpu     OpenVINO on CPU.
+  openvino-npu     OpenVINO on an Intel NPU (Core Ultra "AI Boost").
   ctranslate2      CTranslate2 int8 on CPU. Wants AVX-VNNI to be worth it.
   whispercpp       whisper.cpp via pywhispercpp, on GGML weights.
 
 Everything except pytorch needs the weights converted first — see
 convert_model.py. Everything reports *why* it is unavailable rather than
 failing at the point of use.
+
+Every runtime takes an optional `threads`. Each library has its own knob and
+none of them read the others': torch.set_num_threads() does nothing to
+CTranslate2, whisper.cpp or OpenVINO, and all three have to be told at
+construction, not per call. Passing None leaves each library's own default
+alone.
 """
 
 from __future__ import annotations
@@ -62,9 +69,13 @@ class Runtime:
 
 
 class PyTorchRuntime(Runtime):
-    def __init__(self, model_key: str):
+    def __init__(self, model_key: str, threads: int | None = None):
+        import torch
+
         from transcribe import load_pipeline, pick_device
 
+        if threads:
+            torch.set_num_threads(threads)
         device = pick_device()
         self._pipeline = load_pipeline(model_key, device)
         super().__init__("pytorch", f"PyTorch on {device}")
@@ -87,7 +98,7 @@ class PyTorchRuntime(Runtime):
 
 
 class OpenVINORuntime(Runtime):
-    def __init__(self, model_key: str, device: str):
+    def __init__(self, model_key: str, device: str, threads: int | None = None):
         from optimum.intel import OVModelForSpeechSeq2Seq
         from transformers import AutoProcessor
 
@@ -98,7 +109,12 @@ class OpenVINORuntime(Runtime):
                 f"    uv run python convert_model.py --runtime openvino --model {model_key}"
             )
 
-        self._model = OVModelForSpeechSeq2Seq.from_pretrained(path, device=device)
+        # INFERENCE_NUM_THREADS is a CPU-plugin property; the GPU and NPU
+        # plugins reject config keys they don't own.
+        ov_config = {"INFERENCE_NUM_THREADS": str(threads)} if threads and device == "CPU" else {}
+        self._model = OVModelForSpeechSeq2Seq.from_pretrained(
+            path, device=device, ov_config=ov_config
+        )
         self._processor = AutoProcessor.from_pretrained(path)
         super().__init__(f"openvino-{device.lower()}", f"OpenVINO on {device}")
 
@@ -120,7 +136,7 @@ class OpenVINORuntime(Runtime):
 
 
 class WhisperCppRuntime(Runtime):
-    def __init__(self, model_key: str):
+    def __init__(self, model_key: str, threads: int | None = None):
         from pywhispercpp.model import Model
 
         path = converted_dir("whispercpp", model_key)
@@ -131,10 +147,15 @@ class WhisperCppRuntime(Runtime):
                 f"    uv run python convert_model.py --runtime whispercpp --model {model_key}"
             )
 
+        # whisper.cpp defaults to min(4, hardware_concurrency) threads and
+        # reads no environment variable, so on a 14-core box it quietly uses
+        # four unless told otherwise.
+        extra = {"n_threads": threads} if threads else {}
         self._model = Model(
             str(weights[0]),
             print_progress=False,
             print_realtime=False,
+            **extra,
         )
         super().__init__("whispercpp", f"whisper.cpp (GGML) — {weights[0].name}")
 
@@ -145,7 +166,7 @@ class WhisperCppRuntime(Runtime):
 
 
 class CTranslate2Runtime(Runtime):
-    def __init__(self, model_key: str):
+    def __init__(self, model_key: str, threads: int | None = None):
         from faster_whisper import WhisperModel
 
         path = converted_dir("ctranslate2", model_key)
@@ -155,7 +176,10 @@ class CTranslate2Runtime(Runtime):
                 f"    uv run python convert_model.py --runtime ctranslate2 --model {model_key}"
             )
 
-        self._model = WhisperModel(str(path), device="cpu", compute_type="int8")
+        # cpu_threads=0 is faster-whisper's "decide for me"
+        self._model = WhisperModel(
+            str(path), device="cpu", compute_type="int8", cpu_threads=threads or 0
+        )
         super().__init__("ctranslate2", "CTranslate2 int8 on CPU")
 
     def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
@@ -207,6 +231,12 @@ def _intel_gpu_present() -> bool:
     return bool(_render_nodes())
 
 
+def _npu_present() -> bool:
+    """The Meteor Lake NPU's kernel driver, which is separate from the
+    userspace pieces OpenVINO's NPU plugin needs."""
+    return Path("/dev/accel/accel0").exists()
+
+
 def _render_node_readable() -> bool:
     """Can this *user* open the render node, not just: does it exist.
 
@@ -235,7 +265,11 @@ def probe(model_key: str = "turbo") -> list[dict]:
     )
 
     has_openvino = _installed("openvino") and _installed("optimum")
-    for device, label in (("GPU", "OpenVINO · Intel GPU"), ("CPU", "OpenVINO · CPU")):
+    for device, label in (
+        ("GPU", "OpenVINO · Intel GPU"),
+        ("CPU", "OpenVINO · CPU"),
+        ("NPU", "OpenVINO · Intel NPU"),
+    ):
         name = f"openvino-{device.lower()}"
         converted = converted_dir(name, model_key).exists()
         if not has_openvino:
@@ -254,6 +288,11 @@ def probe(model_key: str = "turbo") -> list[dict]:
                         "Intel GPU present but this user can't open /dev/dri/renderD* — "
                         "sudo usermod -aG render $USER, then log in again"
                     )
+            elif device == "NPU" and _npu_present():
+                reason = (
+                    "Intel NPU present but OpenVINO can't use it — install the NPU "
+                    "driver (Linux: intel-driver-compiler-npu, intel-level-zero-npu)"
+                )
             else:
                 reason = f"OpenVINO reports no {device} device on this machine"
         elif not converted:
@@ -307,24 +346,31 @@ def probe(model_key: str = "turbo") -> list[dict]:
     return entries
 
 
-RUNTIME_NAMES = ["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"]
+RUNTIME_NAMES = [
+    "pytorch",
+    "openvino-gpu",
+    "openvino-cpu",
+    "openvino-npu",
+    "ctranslate2",
+    "whispercpp",
+]
 
 
-def load_runtime(name: str, model_key: str) -> Runtime:
+def load_runtime(name: str, model_key: str, threads: int | None = None) -> Runtime:
+    """Load one runtime. `threads` is the library-specific thread count, or
+    None to leave that library's own default alone."""
     if name not in RUNTIME_NAMES:
         raise ValueError(f"Unknown runtime {name!r}")
     if model_key not in discover():
         raise ValueError(f"Unknown model {model_key!r}")
 
     if name == "pytorch":
-        return PyTorchRuntime(model_key)
-    if name == "openvino-gpu":
-        return OpenVINORuntime(model_key, "GPU")
-    if name == "openvino-cpu":
-        return OpenVINORuntime(model_key, "CPU")
+        return PyTorchRuntime(model_key, threads)
+    if name.startswith("openvino-"):
+        return OpenVINORuntime(model_key, name.split("-")[1].upper(), threads)
     if name == "whispercpp":
-        return WhisperCppRuntime(model_key)
-    return CTranslate2Runtime(model_key)
+        return WhisperCppRuntime(model_key, threads)
+    return CTranslate2Runtime(model_key, threads)
 
 
 def main() -> None:

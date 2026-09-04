@@ -254,7 +254,8 @@ The model is always a Whisper-family model; what changes per machine is the mach
 |---|---|---|
 | `pytorch` | anywhere | Apple MPS if present, else CPU float32. Always works; the slowest option on an Intel box. |
 | `openvino-gpu` | Intel integrated GPU | The interesting one on a Core Ultra machine, and the fastest measured so far — 2.2x `ctranslate2` int8. Needs an OpenCL runtime and `render` group access, see below. |
-| `openvino-cpu` | CPU | |
+| `openvino-cpu` | CPU | Same weights as the GPU path; the device is picked at load time. |
+| `openvino-npu` | Intel NPU ("AI Boost") | Offered wherever OpenVINO reports an NPU. Not usable on the UBX-330M as shipped — no `/dev/accel/accel0`, so the kernel driver isn't loaded. |
 | `ctranslate2` | CPU, int8 | Wants AVX-VNNI to be worth it — check with `check_hardware.py`. |
 | `whispercpp` | CPU / GPU (GGML) | Uses whisper.cpp via pywhispercpp; benefits from AVX-VNNI / SIMD or GPU acceleration. |
 
@@ -287,13 +288,32 @@ uv run python -c "import openvino; print(openvino.Core().available_devices)"   #
 
 The group step is easy to miss on a headless box: the render node carries an ACL for whoever is logged in at the console, so it works for the desktop user and not for the service account running the app over SSH. `openvino-cpu` is unaffected by both.
 
-`--runtime openvino` converts once into `models/openvino-<model>`, shared by `openvino-gpu` and `openvino-cpu` — the IR is identical and the device is chosen at load time. `--runtime whispercpp` downloads a **community** GGML build (`korakotlee/typhoon-whisper-turbo-ggml`), not one published by typhoon-ai, and only `turbo` has one; for `large-v3` you'd convert it yourself with whisper.cpp's `models/convert-h5-to-ggml.py`.
+`--runtime openvino` also takes `--precision int8` or `--precision int4`, which compresses the weights as they are exported. A compressed build is written as its own model (`models/openvino-turbo-int8`, discovered as the model `turbo-int8`) rather than replacing the uncompressed one, so the two can be benchmarked against each other. Default is `source`: whatever dtype the checkpoint holds, which for the Typhoon fine-tunes is bf16, not fp32.
+
+`--runtime openvino` converts once into `models/openvino-<model>`, shared by every `openvino-*` runtime — the IR is identical and the device is chosen at load time. `--runtime whispercpp` downloads a **community** GGML build (`korakotlee/typhoon-whisper-turbo-ggml`), not one published by typhoon-ai, and only `turbo` has one; for `large-v3` you'd convert it yourself with whisper.cpp's `models/convert-h5-to-ggml.py`.
 
 Converted weights go in `models/` (gitignored) and are reused after that. The panel lists unavailable runtimes greyed out with the reason, and `POST /start` refuses one that isn't ready rather than failing mid-session.
 
 > **Verified:** `pytorch`, `ctranslate2` and `whispercpp` all convert and transcribe Thai correctly on macOS. The CTranslate2 conversion was the step most likely to fail, since Typhoon is a fine-tune rather than stock Whisper.
 >
-> **Verified on the UBX-330M (Core Ultra 5 125H, Ubuntu 24.04):** all five runtimes convert and transcribe Thai. Replaying one fixed 21s clip through 5s chunks, `openvino-gpu` is the only one that keeps up with live speech — mean RTF 0.60 against 1.34 for `ctranslate2` int8, 2.53 for `openvino-cpu`, 4.89 for `pytorch` and 4.98 for `whispercpp` q5_0. The iGPU and the CPU run the *same* fp32 IR, so that 4.2x is the device alone; note also that the two quantized runtimes are not the fast ones here, which is why lower-bit weights are the wrong first lever on this machine.
+> **Measured on the UBX-330M (Core Ultra 5 125H, Ubuntu 24.04),** one fixed 21.1s clip, 5s chunks, Thai:
+>
+> | Runtime | Weights | mean RTF | Keeps up? |
+> |---|---|---|---|
+> | `openvino-gpu` | int8 | **0.53** | yes |
+> | `openvino-gpu` | int4 | 0.56 | yes |
+> | `openvino-gpu` | bf16 (source) | 0.60 | yes |
+> | `ctranslate2` | int8 | 1.34 | no |
+> | `openvino-cpu` | int8 | 1.39 | no |
+> | `openvino-cpu` | bf16 (source) | 2.53 | no |
+> | `pytorch` | fp32 | 4.89 | no |
+> | `whispercpp` | q5_0 | 4.27 (at 8 threads) | no |
+>
+> Two things worth carrying forward. **The device mattered more than the format:** the same weights move from
+> 2.53 to 0.60 just by running on the iGPU. **Fewer bits is not automatically faster:** int8 bought a lot on the
+> CPU (2.53 → 1.39) and little on the GPU (0.60 → 0.53), and int4 was *slower* than int8 on both while visibly
+> degrading the Thai transcript on the noisiest chunk. `whispercpp` remains unexplained — q5_0 weights, the
+> lightest of the lot, and still the slowest after its thread count was fixed.
 
 ## Measuring performance & Benchmark Studio
 
@@ -341,7 +361,11 @@ On hybrid Intel CPUs (P-cores + E-cores + low-power E-cores) using every core is
 uv run python benchmark.py --model turbo --file clip.wav --threads 4,8,14
 ```
 
-It prints a row per setting and names the winner. To pin to performance cores specifically, combine with `taskset` (on a Core Ultra 5 125H the P-core threads are usually CPUs 0–7):
+It prints a row per setting and names the winner, reloading the model for each one: CTranslate2, whisper.cpp and OpenVINO all fix their thread pool when the model is built, so the count has to be chosen before loading, not after. (This flag used to call `torch.set_num_threads()` and nothing else, which meant it silently measured the same thing five times for every runtime except `pytorch`.)
+
+The effect is real and not monotonic — `whispercpp` on the UBX-330M: 5.24 RTF at 4 threads, **4.27 at 8**, 4.94 at 14, 8.36 at 18. `ctranslate2` on the same box barely moves, so measure rather than assume.
+
+To pin to performance cores specifically, combine with `taskset` (on a Core Ultra 5 125H the P-core threads are usually CPUs 0–7):
 
 ```bash
 taskset -c 0-7 uv run python benchmark.py --model turbo --file clip.wav --threads 8
