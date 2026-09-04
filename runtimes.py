@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import platform
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -180,8 +181,43 @@ class CTranslate2Runtime(Runtime):
         return "".join(segment.text for segment in segments).strip()
 
 
+@lru_cache(maxsize=1)
+def _openvino_devices() -> tuple[str, ...]:
+    """Devices OpenVINO can actually compile for, e.g. ("CPU", "GPU").
+
+    A render node under /dev/dri isn't enough: the GPU plugin also needs an
+    OpenCL runtime, and without it compile_model() dies with a bare
+    "libOpenCL.so.1: cannot open shared object file" at load time. OpenVINO
+    only lists a device once its plugin loads, so asking it is the same test
+    the runtime will apply later. Cached because probe() runs per request.
+    """
+    try:
+        import openvino
+
+        return tuple(openvino.Core().available_devices)
+    except Exception:
+        return ()
+
+
+def _render_nodes() -> list[Path]:
+    return sorted(Path("/dev/dri").glob("renderD*")) if Path("/dev/dri").exists() else []
+
+
 def _intel_gpu_present() -> bool:
-    return any(Path("/dev/dri").glob("renderD*")) if Path("/dev/dri").exists() else False
+    return bool(_render_nodes())
+
+
+def _render_node_readable() -> bool:
+    """Can this *user* open the render node, not just: does it exist.
+
+    It is root:render 0660 with an ACL for whoever is logged in at the
+    console, so a service account that runs the app over SSH sees the node
+    listed and still gets no GPU: the OpenCL driver silently fails to open
+    it and OpenVINO lists CPU only.
+    """
+    import os
+
+    return any(os.access(node, os.R_OK | os.W_OK) for node in _render_nodes())
 
 
 def probe(model_key: str = "turbo") -> list[dict]:
@@ -204,8 +240,22 @@ def probe(model_key: str = "turbo") -> list[dict]:
         converted = converted_dir(name, model_key).exists()
         if not has_openvino:
             reason = "openvino + optimum-intel not installed"
-        elif device == "GPU" and not _intel_gpu_present():
-            reason = "no Intel GPU render node (/dev/dri/renderD*) on this machine"
+        elif not any(d.split(".")[0] == device for d in _openvino_devices()):
+            if device == "GPU" and _intel_gpu_present():
+                # The hardware is there; either the userspace driver is
+                # missing or this account can't open the render node.
+                if _render_node_readable():
+                    reason = (
+                        "Intel GPU present but OpenVINO can't use it — install the "
+                        "OpenCL runtime (Linux: sudo apt install intel-opencl-icd)"
+                    )
+                else:
+                    reason = (
+                        "Intel GPU present but this user can't open /dev/dri/renderD* — "
+                        "sudo usermod -aG render $USER, then log in again"
+                    )
+            else:
+                reason = f"OpenVINO reports no {device} device on this machine"
         elif not converted:
             reason = f"model not converted yet — convert_model.py --runtime openvino --model {model_key}"
         else:

@@ -253,7 +253,7 @@ The model is always a Whisper-family model; what changes per machine is the mach
 | Runtime | Runs on | Notes |
 |---|---|---|
 | `pytorch` | anywhere | Apple MPS if present, else CPU float32. Always works; the slowest option on an Intel box. |
-| `openvino-gpu` | Intel integrated GPU | The interesting one on a Core Ultra machine. |
+| `openvino-gpu` | Intel integrated GPU | The interesting one on a Core Ultra machine, and the fastest measured so far — 2.2x `ctranslate2` int8. Needs an OpenCL runtime and `render` group access, see below. |
 | `openvino-cpu` | CPU | |
 | `ctranslate2` | CPU, int8 | Wants AVX-VNNI to be worth it — check with `check_hardware.py`. |
 | `whispercpp` | CPU / GPU (GGML) | Uses whisper.cpp via pywhispercpp; benefits from AVX-VNNI / SIMD or GPU acceleration. |
@@ -270,12 +270,22 @@ Everything except `pytorch` needs the weights converted once per machine. `faste
 
 ```bash
 uv sync                                # installs ctranslate2 + whispercpp libraries
-uv add "optimum-intel[openvino]"       # Intel machines only
+uv sync --extra openvino               # Intel machines only
 
 uv run python convert_model.py --runtime ctranslate2 --model turbo
 uv run python convert_model.py --runtime whispercpp  --model turbo
 uv run python convert_model.py --runtime openvino    --model turbo
 ```
+
+`openvino-gpu` needs two things `uv sync` can't provide, and both fail the same silent way — `/dev/dri/renderD*` still exists, OpenVINO just lists `CPU` and the runtime panel greys the GPU out:
+
+```bash
+sudo apt install intel-opencl-icd        # the OpenCL runtime for the iGPU
+sudo usermod -aG render $USER            # then log in again — the node is root:render 0660
+uv run python -c "import openvino; print(openvino.Core().available_devices)"   # want ['CPU', 'GPU']
+```
+
+The group step is easy to miss on a headless box: the render node carries an ACL for whoever is logged in at the console, so it works for the desktop user and not for the service account running the app over SSH. `openvino-cpu` is unaffected by both.
 
 `--runtime openvino` converts once into `models/openvino-<model>`, shared by `openvino-gpu` and `openvino-cpu` — the IR is identical and the device is chosen at load time. `--runtime whispercpp` downloads a **community** GGML build (`korakotlee/typhoon-whisper-turbo-ggml`), not one published by typhoon-ai, and only `turbo` has one; for `large-v3` you'd convert it yourself with whisper.cpp's `models/convert-h5-to-ggml.py`.
 
@@ -283,7 +293,7 @@ Converted weights go in `models/` (gitignored) and are reused after that. The pa
 
 > **Verified:** `pytorch`, `ctranslate2` and `whispercpp` all convert and transcribe Thai correctly on macOS. The CTranslate2 conversion was the step most likely to fail, since Typhoon is a fine-tune rather than stock Whisper.
 >
-> **Not verified by the author:** both OpenVINO paths, written against hardware that wasn't available for testing (no Intel GPU). Treat the first run on the UBX-330M as the real test — the conversion step in particular may need adjusting.
+> **Verified on the UBX-330M (Core Ultra 5 125H, Ubuntu 24.04):** all five runtimes convert and transcribe Thai. Replaying one fixed 21s clip through 5s chunks, `openvino-gpu` is the only one that keeps up with live speech — mean RTF 0.60 against 1.34 for `ctranslate2` int8, 2.53 for `openvino-cpu`, 4.89 for `pytorch` and 4.98 for `whispercpp` q5_0. The iGPU and the CPU run the *same* fp32 IR, so that 4.2x is the device alone; note also that the two quantized runtimes are not the fast ones here, which is why lower-bit weights are the wrong first lever on this machine.
 
 ## Measuring performance & Benchmark Studio
 

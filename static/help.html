@@ -566,14 +566,14 @@ uv run python convert_model.py --runtime whispercpp --model turbo</pre><button t
     <div class="entry">
       <div class="entry-head">
         <h3><code>openvino-gpu</code> · <code>openvino-cpu</code></h3>
-        <span class="tag warn">Not verified by the author</span>
+        <span class="tag">Fastest on the UBX-330M</span>
         <span class="tag">Intel only</span>
       </div>
-      <p>OpenVINO is deliberately <strong>not</strong> a project dependency — it is only useful on an Intel machine, so install it there:</p>
-      <div class="cmd"><pre>uv add "optimum-intel[openvino]"
+      <p>OpenVINO is deliberately <strong>not</strong> installed by default — it is only useful on an Intel machine, so it lives behind an extra:</p>
+      <div class="cmd"><pre>uv sync --extra openvino
 uv run python convert_model.py --runtime openvino --model turbo</pre><button type="button" onclick="copyCmd(this)">Copy</button></div>
-      <p>One conversion serves both runtimes: it writes <code>models/openvino-gpu-turbo</code> and <code>models/openvino-cpu-turbo</code> with identical contents, and the device is chosen when the model loads. <code>openvino-gpu</code> additionally requires an Intel render node at <code>/dev/dri/renderD*</code>, which the UBX-330M has and no Mac ever will.</p>
-      <p><strong>Neither OpenVINO path has been run on real hardware.</strong> They were written against a machine that wasn't available for testing, so the first run on the UBX-330M is the real test — and conversion is the likeliest place to break, for the same fine-tune reason that made CTranslate2 the risky one.</p>
+      <p>One conversion serves both runtimes: it writes <code>models/openvino-gpu-turbo</code> and <code>models/openvino-cpu-turbo</code> with identical contents, and the device is chosen when the model loads. <code>openvino-gpu</code> additionally requires an Intel render node at <code>/dev/dri/renderD*</code>, which the UBX-330M has and no Mac ever will, <em>plus</em> an OpenCL runtime for that node (<code>sudo apt install intel-opencl-icd</code>) <em>plus</em> membership of the <code>render</code> group (<code>sudo usermod -aG render $USER</code>, then log in again). Miss either and the failure looks identical — the node is still listed, OpenVINO reports <code>CPU</code> only, and the panel greys the GPU out with the reason.</p>
+      <p><strong>Measured on the UBX-330M</strong> (Core Ultra 5 125H), one fixed 21s clip in 5s chunks: <code>openvino-gpu</code> mean RTF <strong>0.60</strong> — the only runtime on that box that keeps up with live speech — against 1.34 for <code>ctranslate2</code> int8 and 2.53 for <code>openvino-cpu</code> running the very same fp32 IR.</p>
     </div>
 
     <h2>Checking your work</h2>

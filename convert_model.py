@@ -25,7 +25,25 @@ def convert_openvino(model_key: str) -> None:
     except ImportError:
         sys.exit(
             "optimum-intel isn't installed. Install it first:\n"
-            '    uv add "optimum-intel[openvino]"'
+            "    uv sync --extra openvino"
+        )
+    # optimum-intel imports fine without a usable OpenVINO backend: it hands
+    # back a dummy class that only raises once from_pretrained() is called,
+    # after the "this takes a while" banner has already printed. Ask openvino
+    # directly instead, so a broken install says so before any download.
+    try:
+        import openvino  # noqa: F401
+    except ImportError:
+        sys.exit(
+            "openvino isn't installed (optimum-intel is, but its OpenVINO backend "
+            "is missing). Install the extra:\n    uv sync --extra openvino"
+        )
+    if OVModelForSpeechSeq2Seq.__module__.startswith("optimum.intel.utils.dummy"):
+        sys.exit(
+            "optimum-intel can't see the installed openvino. This is usually a\n"
+            "version mismatch — optimum-intel < 1.21 probes for openvino.runtime,\n"
+            "which openvino 2026 removed. Upgrade it:\n"
+            "    uv sync --extra openvino --upgrade-package optimum-intel"
         )
     from transformers import AutoProcessor
 
