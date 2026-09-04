@@ -16,8 +16,7 @@ import shutil
 import subprocess
 import sys
 
-from runtimes import MODELS_DIR, converted_dir
-from transcribe import MODEL_REPOS
+from model_catalog import MODELS_DIR, converted_dir, model_repos, resolve_repo
 
 
 def convert_openvino(model_key: str) -> None:
@@ -30,27 +29,24 @@ def convert_openvino(model_key: str) -> None:
         )
     from transformers import AutoProcessor
 
-    repo = MODEL_REPOS[model_key]
-    # both OpenVINO devices load the same converted IR; keep one copy per device
-    # name so probe() can look for exactly what it will load
-    targets = [converted_dir("openvino-gpu", model_key), converted_dir("openvino-cpu", model_key)]
+    repo = resolve_repo(model_key)
+    # Both OpenVINO devices load the same IR and converted_dir() maps them both
+    # to models/openvino-<key>, so there is one directory, not one per device.
+    # (An earlier version wrote a "GPU copy" and a "CPU copy"; because both
+    # names resolve to the same path, it deleted the freshly written IR and
+    # then failed copying from the directory it had just removed.)
+    target = converted_dir("openvino-gpu", model_key)
 
     print(f"Converting {repo} to OpenVINO IR (this downloads the model and takes a while)...")
     model = OVModelForSpeechSeq2Seq.from_pretrained(repo, export=True)
     processor = AutoProcessor.from_pretrained(repo)
 
-    primary = targets[0]
-    primary.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(primary)
-    processor.save_pretrained(primary)
-    print(f"  wrote {primary}")
-
-    # the CPU variant is byte-identical; copy so either can be selected
-    secondary = targets[1]
-    if secondary.exists():
-        shutil.rmtree(secondary)
-    shutil.copytree(primary, secondary)
-    print(f"  wrote {secondary}")
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(target)
+    processor.save_pretrained(target)
+    print(f"  wrote {target}  (used by both openvino-gpu and openvino-cpu)")
 
 
 def convert_ctranslate2(model_key: str) -> None:
@@ -60,7 +56,7 @@ def convert_ctranslate2(model_key: str) -> None:
             "    uv add faster-whisper"
         )
 
-    repo = MODEL_REPOS[model_key]
+    repo = resolve_repo(model_key)
     target = converted_dir("ctranslate2", model_key)
     if target.exists():
         shutil.rmtree(target)
@@ -98,7 +94,7 @@ def convert_whispercpp(model_key: str) -> None:
             f"No published GGML build for {model_key!r}. Only "
             f"{', '.join(GGML_REPOS)} has one. To make your own, use whisper.cpp's\n"
             "    models/convert-h5-to-ggml.py\n"
-            f"against {MODEL_REPOS[model_key]}, then drop the .bin into "
+            f"against {resolve_repo(model_key)}, then drop the .bin into "
             f"{converted_dir('whispercpp', model_key)}."
         )
 
@@ -125,7 +121,7 @@ def main() -> None:
     parser.add_argument(
         "--runtime", choices=["openvino", "ctranslate2", "whispercpp"], required=True
     )
-    parser.add_argument("--model", choices=MODEL_REPOS.keys(), required=True)
+    parser.add_argument("--model", choices=model_repos().keys(), required=True)
     args = parser.parse_args()
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)

@@ -23,3 +23,30 @@ _Avoid_: Keyword detection, wake word (this project's targets aren't limited to 
 
 **Debounce window**:
 The time window during which a repeat alert for the same keyword text is suppressed, to avoid double-alerting when a keyword falls across the overlap between two chunks. Sized to the chunk *step* interval (chunk length minus overlap) plus a small buffer, not the overlap duration itself — an overlap-caused duplicate detection always lands exactly one chunk later, i.e. one step apart, not within the overlap window. See ADR 0002.
+
+**Model**:
+The trained weights that do the transcribing, named by a short **model key** (`turbo`) rather than its Hugging Face repo. Which models exist is a property of the machine, discovered from what is installed, not a fixed list — so "the models" means different things on two machines and is always answered by asking, never assumed.
+_Avoid_: Runtime (that's the machinery that executes a model, not the model)
+
+**Language**:
+Which language a runtime is told to transcribe, chosen per session (default Thai). Every runtime honours the same setting, so it is a property of the session rather than of the runtime. Setting it to **auto-detect** delegates the choice to the model, which then decides per chunk — a different thing from picking a language, and the reason the two are named separately here.
+_Avoid_: Locale (implies formatting/region, not speech content)
+
+**Silence gate**:
+The loudness floor below which a chunk is skipped entirely rather than transcribed, because these models invent text when fed silence. Expressed as an RMS threshold (default `0.02`). Separate from, and not a substitute for, the anti-repetition generation settings — the two address different hallucination failures. See ADR 0004.
+
+## Execution
+
+**Runtime**:
+The machinery that executes a model, chosen independently of *which* model runs: `pytorch`, `openvino-gpu`, `openvino-cpu`, `ctranslate2`, or `whispercpp`. Swapping runtime changes speed, not the model. See ADR 0005.
+_Avoid_: Backend (means the TimescaleDB service in this project), engine, device
+
+**Session**:
+One run that produces transcripts — either a **live session** reading from a microphone, or a **replay session** reading a clip from disk. Both use identical chunking and emit identical events; only the audio source differs.
+
+**Replay**:
+Feeding a stored clip through the live chunking path instead of a microphone. The only way to compare runtimes, models, or machines, since two live sessions are never the same input. See ADR 0006.
+_Avoid_: Playback (implies audio being played aloud; nothing is played)
+
+**Clip**:
+An audio file in `audio/` used as replay input — uploaded through the panel, recorded by the server, or copied in directly. Always stored as 16kHz mono; anything else is converted on the way in.

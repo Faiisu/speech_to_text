@@ -4,8 +4,12 @@ models/
 .venv/
 __pycache__/
 *.pyc
-.scratch/
 .DS_Store
+
+# NOT ignored: .scratch/ is this project's issue tracker (see
+# docs/agents/issue-tracker.md), so it belongs in version control.
 
 # uploaded/test clips
 audio/*.wav
+# per-machine model list (models.local.json is your own additions, not the project's)
+models.local.json

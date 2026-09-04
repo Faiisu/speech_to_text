@@ -13,17 +13,20 @@ import sounddevice as sd
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 import numpy as np
 import statistics
 
 from benchmark import chunk_offsets
+from model_catalog import discover, model_repos
 from runtimes import load_runtime, probe
 from transcribe import (
+    CHUNK_SECONDS,
     DEFAULT_BACKEND_URL,
+    DEFAULT_LANGUAGE,
     DEFAULT_SILENCE_RMS,
-    MODEL_REPOS,
+    LANGUAGES,
     SAMPLE_RATE,
     is_silent,
     load_audio,
@@ -59,7 +62,9 @@ _state: dict = {
 
 
 class StartRequest(BaseModel):
-    model: Literal["turbo", "large-v3"]
+    # not a Literal: the set of models is discovered per machine, so pinning it
+    # here would reject a model the panel legitimately offers
+    model: str
     runtime: Literal[
         "pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"
     ] = "pytorch"
@@ -69,6 +74,55 @@ class StartRequest(BaseModel):
     mic_device: str | None = None
     silence_threshold: float = DEFAULT_SILENCE_RMS
     backend_url: str = DEFAULT_BACKEND_URL
+    # validated against LANGUAGES rather than a Literal so the list of offered
+    # languages lives in exactly one place (transcribe.LANGUAGES)
+    language: str = DEFAULT_LANGUAGE
+
+    @field_validator("language")
+    @classmethod
+    def _known_language(cls, value: str) -> str:
+        if value not in LANGUAGES:
+            raise ValueError(f"Unknown language {value!r}; expected one of {', '.join(LANGUAGES)}")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def _known_model(cls, value: str) -> str:
+        return _validate_model(value)
+
+
+def _check_language_supported(model_key: str, language: str) -> None:
+    """Refuse a pinned language on an English-only model, with the reason.
+
+    Whisper's `.en` builds reject a `language`/`task` argument outright. Now
+    that any cached model can be picked from the panel, that is a reachable
+    combination, and left alone it surfaces as a raw library error partway
+    into a session rather than as a refused request.
+    """
+    entry = discover().get(model_key)
+    if entry and entry.get("multilingual") is False and language != "auto":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{model_key!r} is an English-only model, which cannot be given a language. "
+                f"Set Language to 'Auto-detect', or choose a multilingual model."
+            ),
+        )
+
+
+def _validate_model(value: str) -> str:
+    """Check a model key against what this machine actually offers.
+
+    Discovery runs per call rather than against a snapshot, so a model
+    downloaded or converted while the server is running is accepted straight
+    away — the whole point of the catalogue.
+    """
+    catalogue = discover()
+    if value not in catalogue:
+        raise ValueError(
+            f"Unknown model {value!r}. Available here: {', '.join(catalogue) or 'none'}"
+        )
+    return value
 
 
 # Live event fan-out: every connected browser gets its own queue, so the feed
@@ -125,6 +179,20 @@ def _resolve_audio(name: str | None) -> Path:
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"No such audio file: {name}")
     return path
+
+
+def _safe_audio_target(name: str) -> Path:
+    """Where a *new* clip may be written, refusing anything outside audio/.
+
+    _resolve_audio can't be used for this because it requires the file to
+    already exist. Without this check a caller-supplied filename like
+    "../../x.wav" (or an absolute path) escapes audio/ entirely — and this
+    server listens on the LAN with no authentication.
+    """
+    target = (AUDIO_DIR / name).resolve()
+    if not target.is_relative_to(AUDIO_DIR.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    return target
 
 
 def _to_16k_mono(path: Path) -> None:
@@ -284,6 +352,14 @@ def record_server_start(req: ServerRecordRequest) -> dict:
         filename = req.filename or f"clip_{time.strftime('%Y%m%d_%H%M%S')}.wav"
         if not filename.lower().endswith(".wav"):
             filename = f"{filename}.wav"
+        # validate before recording, so a bad name fails immediately rather
+        # than after the operator has spoken a whole clip
+        try:
+            _safe_audio_target(filename)
+        except HTTPException:
+            stream.stop()
+            stream.close()
+            raise
 
         _recorder["active"] = True
         _recorder["filename"] = filename
@@ -320,7 +396,7 @@ def record_server_stop() -> dict:
         raise HTTPException(status_code=400, detail="No audio captured")
 
     AUDIO_DIR.mkdir(exist_ok=True)
-    target = (AUDIO_DIR / filename).resolve()
+    target = _safe_audio_target(filename)  # re-checked here: this is the write
     audio = np.concatenate(frames, axis=0).flatten()
     sf.write(str(target), audio, SAMPLE_RATE)
     duration = round(len(audio) / SAMPLE_RATE, 1)
@@ -342,9 +418,27 @@ def record_server_status() -> dict:
 
 class BenchmarkRequest(BaseModel):
     file: str
-    model: Literal["turbo", "large-v3"] = "turbo"
+    model: str = "turbo"
     runtimes: list[str]
+
+    @field_validator("model")
+    @classmethod
+    def _known_model(cls, value: str) -> str:
+        return _validate_model(value)
+
     silence_threshold: float = DEFAULT_SILENCE_RMS
+    language: str = DEFAULT_LANGUAGE
+
+    @field_validator("language")
+    @classmethod
+    def _known_language(cls, value: str) -> str:
+        if value not in LANGUAGES:
+            raise ValueError(f"Unknown language {value!r}; expected one of {', '.join(LANGUAGES)}")
+        return value
+
+
+_bench_lock = threading.Lock()
+_benchmark: dict = {"active": False}
 
 
 @app.post("/benchmark")
@@ -356,14 +450,27 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                 status_code=409, detail="Cannot run benchmark while a recording session is active"
             )
 
+    # Validate the clip before claiming the slot below — anything that raises
+    # after the flag is set would leak it, since the generator that clears it
+    # never gets to run.
+    _check_language_supported(req.model, req.language)
     clip_path = _resolve_audio(req.file)
     audio = load_audio(str(clip_path))
     duration = audio.size / SAMPLE_RATE
 
+    # One benchmark at a time. This server is reachable from every device on
+    # the LAN, so two people could otherwise benchmark at once and contend for
+    # the same CPU — which silently corrupts the timings the benchmark exists
+    # to produce.
+    with _bench_lock:
+        if _benchmark["active"]:
+            raise HTTPException(status_code=409, detail="A benchmark is already running")
+        _benchmark["active"] = True
+
     available_entries = {e["name"]: e for e in probe(req.model)}
 
     def event_stream():
-        yield f"data: {json.dumps({'type': 'init', 'file': clip_path.name, 'duration': round(duration, 1), 'runtimes': req.runtimes})}\n\n"
+        yield f"data: {json.dumps({'type': 'init', 'file': clip_path.name, 'duration': round(duration, 1), 'runtimes': req.runtimes, 'language': req.language})}\n\n"
 
         results = []
         for r_name in req.runtimes:
@@ -378,10 +485,10 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
             try:
                 runtime = _get_runtime(r_name, req.model)
                 # warmup
-                runtime.transcribe(audio[: int(5.0 * SAMPLE_RATE)])
+                runtime.transcribe(audio[: CHUNK_SECONDS * SAMPLE_RATE], req.language)
 
                 offsets = chunk_offsets(audio.size)
-                chunk_samples = int(5.0 * SAMPLE_RATE)
+                chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
                 latencies = []
                 texts = []
                 skipped = 0
@@ -405,9 +512,9 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                         continue
 
                     t0 = time.perf_counter()
-                    t_chunk = runtime.transcribe(chunk)
+                    t_chunk = runtime.transcribe(chunk, req.language)
                     lat = time.perf_counter() - t0
-                    rtf = lat / 5.0
+                    rtf = lat / CHUNK_SECONDS
                     latencies.append(lat)
                     texts.append(t_chunk)
                     ev = {
@@ -424,7 +531,7 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                     yield f"data: {json.dumps(ev)}\n\n"
 
                 if latencies:
-                    rtfs = [l / 5.0 for l in latencies]
+                    rtfs = [l / CHUNK_SECONDS for l in latencies]
                     stats = {
                         "runtime": r_name,
                         "label": entry["label"],
@@ -450,8 +557,18 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
         winner = min(valid, key=lambda x: x["mean_rtf"]) if valid else None
         yield f"data: {json.dumps({'type': 'complete', 'results': results, 'winner': winner})}\n\n"
 
+    def guarded_stream():
+        # Must release the flag however this ends — including the client simply
+        # closing the tab mid-run, which raises GeneratorExit. Without this a
+        # single abandoned benchmark would block every later one.
+        try:
+            yield from event_stream()
+        finally:
+            with _bench_lock:
+                _benchmark["active"] = False
+
     return StreamingResponse(
-        event_stream(),
+        guarded_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -519,6 +636,7 @@ def _run_session(req: StartRequest) -> None:
                 _state["stop_event"],
                 session_id,
                 on_event=on_event,
+                language=req.language,
             )
         else:
             audio = run_recording_session(
@@ -531,12 +649,13 @@ def _run_session(req: StartRequest) -> None:
                 _state["stop_event"],
                 session_id,
                 on_event=on_event,
+                language=req.language,
             )
 
         if is_silent(audio, req.silence_threshold):
             reference_transcript = "(silence, skipped)"
         else:
-            reference_transcript = runtime.transcribe(audio)
+            reference_transcript = runtime.transcribe(audio, req.language)
 
         with _lock:
             _state["reference_transcript"] = reference_transcript
@@ -570,6 +689,8 @@ def start(req: StartRequest) -> dict:
             raise HTTPException(
                 status_code=409, detail=f"Runtime {req.runtime!r} unavailable: {entry['reason']}"
             )
+
+    _check_language_supported(req.model, req.language)
 
     # same reasoning for the clip: fail now, not after the session starts
     if req.source == "file":
@@ -611,13 +732,52 @@ def runtimes(model: str = "turbo") -> dict:
     (openvino, faster-whisper), and whether the weights have been converted for
     that runtime — so it's reported per model.
     """
-    if model not in MODEL_REPOS:
+    if model not in discover():
         raise HTTPException(status_code=422, detail=f"Unknown model {model!r}")
     loaded = {name for name, key in _runtimes if key == model}
     entries = probe(model)
     for entry in entries:
         entry["loaded"] = entry["name"] in loaded
     return {"runtimes": entries}
+
+
+@app.get("/models")
+def models() -> dict:
+    """Models this machine can offer, rediscovered on every call.
+
+    Rediscovering rather than caching is what makes a newly downloaded or
+    converted model appear in the panel without a restart.
+    """
+    entries = []
+    for key, entry in discover().items():
+        note = []
+        if not entry["repo"]:
+            note.append("converted weights only — pytorch can't load it")
+        if entry["multilingual"] is False:
+            note.append("English-only: the Language field won't apply")
+        if entry["converted"]:
+            note.append(f"converted for {', '.join(entry['converted'])}")
+        entries.append(
+            {
+                **entry,
+                "label": key if not entry["repo"] else f"{key} ({entry['repo']})",
+                "note": "; ".join(note),
+                # pytorch loads from the Hugging Face repo; without one, only the
+                # runtimes with converted weights on disk can run this model
+                "runnable_on_pytorch": bool(entry["repo"]),
+            }
+        )
+    return {"default": "turbo" if "turbo" in discover() else (entries[0]["key"] if entries else None),
+            "models": entries}
+
+
+@app.get("/languages")
+def languages() -> dict:
+    """Languages the panel offers, so the list lives only in transcribe.py."""
+    return {
+        "default": DEFAULT_LANGUAGE,
+        "languages": [{"code": code, "label": label} for code, label in LANGUAGES.items()],
+    }
 
 
 @app.get("/devices")

@@ -12,12 +12,46 @@ import soundfile as sf
 import torch
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
+from model_catalog import model_repos, resolve_repo
+
 DEFAULT_BACKEND_URL = "http://localhost:8000"
 
-MODEL_REPOS = {
-    "turbo": "typhoon-ai/typhoon-whisper-turbo",
-    "large-v3": "typhoon-ai/typhoon-whisper-large-v3",
+# The set of runnable models is discovered per machine (builtin + models.local.json
+# + the Hugging Face cache + converted weights) rather than listed here — see
+# model_catalog.py. Call model_repos() at use time, never snapshot it at import,
+# or a model installed while the server is running stays invisible.
+
+# Which language the model is told to transcribe. Whisper supports ~99; these
+# are the ones offered in the panel, Thai first because that's what the Typhoon
+# fine-tunes are for. Adding another is one entry here — the panel reads this
+# list over /languages rather than keeping its own copy.
+#
+# "auto" leaves detection to the model. That is genuinely risky here: detection
+# runs per 5-second chunk, and a chunk of noise or a half-word can be read as
+# another language, at which point Whisper *translates* instead of transcribing.
+# Pin the language unless you actually need to handle mixed-language audio.
+LANGUAGES = {
+    "auto": "Auto-detect (per chunk)",
+    "th": "Thai",
+    "en": "English",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "vi": "Vietnamese",
+    "id": "Indonesian",
+    "ms": "Malay",
+    "lo": "Lao",
+    "my": "Burmese",
+    "km": "Khmer",
+    "hi": "Hindi",
+    "ar": "Arabic",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "ru": "Russian",
 }
+DEFAULT_LANGUAGE = "th"
 
 SAMPLE_RATE = 16_000
 CHUNK_SECONDS = 5
@@ -48,7 +82,7 @@ def pick_device() -> str:
 
 
 def load_pipeline(model_key: str, device: str):
-    repo_id = MODEL_REPOS[model_key]
+    repo_id = resolve_repo(model_key)
     dtype = torch.float16 if device == "mps" else torch.float32
 
     model = AutoModelForSpeechSeq2Seq.from_pretrained(repo_id, dtype=dtype)
@@ -144,6 +178,7 @@ def run_replay_session(
     stop_event: threading.Event,
     session_id: str,
     on_event=None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> np.ndarray:
     """Feed a file through the same chunking a live session uses.
 
@@ -175,7 +210,7 @@ def run_replay_session(
             continue
 
         chunk_start = time.perf_counter()
-        text = runtime.transcribe(chunk)
+        text = runtime.transcribe(chunk, language)
         latency = time.perf_counter() - chunk_start
         emit(
             {
@@ -213,6 +248,7 @@ def run_recording_session(
     stop_event: threading.Event,
     session_id: str,
     on_event=None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> np.ndarray:
     """Records from the mic and transcribes chunks until stop_event is set.
 
@@ -259,7 +295,7 @@ def run_recording_session(
                 continue
 
             chunk_start = time.perf_counter()
-            text = runtime.transcribe(chunk)
+            text = runtime.transcribe(chunk, language)
             latency = time.perf_counter() - chunk_start
             rtf = latency / CHUNK_SECONDS
             emit(
@@ -334,6 +370,7 @@ def record_with_streaming(
     mic_device: int | str | None,
     auto_start: bool,
     silence_threshold: float,
+    language: str = DEFAULT_LANGUAGE,
 ) -> np.ndarray:
     """CLI wrapper: prints terminal output, start/stop driven by Enter keypresses."""
     if auto_start:
@@ -376,12 +413,13 @@ def record_with_streaming(
         stop_event,
         session_id,
         on_event=on_event,
+        language=language,
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=MODEL_REPOS.keys(), required=False)
+    parser.add_argument("--model", choices=model_repos().keys(), required=False)
     parser.add_argument(
         "--file", help="Path to a 16kHz mono WAV file. Omit to record live from the microphone."
     )
@@ -418,6 +456,14 @@ def main() -> None:
         "'uv run python runtimes.py' to see which are usable on this machine.",
     )
     parser.add_argument(
+        "--language",
+        default=DEFAULT_LANGUAGE,
+        choices=LANGUAGES.keys(),
+        help=f"Language to transcribe (default: {DEFAULT_LANGUAGE}). 'auto' lets the model "
+        "detect it per chunk, which on 5-second chunks can misfire and make Whisper "
+        "translate instead of transcribe.",
+    )
+    parser.add_argument(
         "--silence-threshold",
         type=float,
         default=DEFAULT_SILENCE_RMS,
@@ -449,9 +495,10 @@ def main() -> None:
     from runtimes import load_runtime
 
     print(f"[platform] {platform.system()} {platform.machine()}")
-    print(f"[model] loading {MODEL_REPOS[args.model]} via {args.runtime}...")
+    print(f"[model] loading {resolve_repo(args.model)} via {args.runtime}...")
     runtime = load_runtime(args.runtime, args.model)
     print(f"[runtime] {runtime.description}")
+    print(f"[language] {LANGUAGES[args.language]}")
 
     audio = (
         load_audio(args.file)
@@ -464,6 +511,7 @@ def main() -> None:
             mic_device,
             args.auto_start,
             args.silence_threshold,
+            args.language,
         )
     )
 
@@ -471,7 +519,7 @@ def main() -> None:
         print("[reference transcript] (silence, skipped)")
     else:
         start = time.perf_counter()
-        text = runtime.transcribe(audio)
+        text = runtime.transcribe(audio, args.language)
         elapsed = time.perf_counter() - start
         print(f"[reference transcript] {text}")
         print(f"[latency] {elapsed:.2f}s")

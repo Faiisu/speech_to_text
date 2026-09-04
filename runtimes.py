@@ -1,6 +1,6 @@
 """Interchangeable ways of running the same Typhoon Whisper model.
 
-The model is always one of MODEL_REPOS; what changes here is the machinery
+The model is whichever model_catalog offers; what changes here is the machinery
 that executes it, because the right choice depends entirely on the hardware:
 
   pytorch          PyTorch — Apple MPS if present, otherwise CPU float32.
@@ -8,8 +8,9 @@ that executes it, because the right choice depends entirely on the hardware:
   openvino-gpu     OpenVINO on an Intel integrated GPU.
   openvino-cpu     OpenVINO on CPU.
   ctranslate2      CTranslate2 int8 on CPU. Wants AVX-VNNI to be worth it.
+  whispercpp       whisper.cpp via pywhispercpp, on GGML weights.
 
-OpenVINO and CTranslate2 need the weights converted first — see
+Everything except pytorch needs the weights converted first — see
 convert_model.py. Everything reports *why* it is unavailable rather than
 failing at the point of use.
 """
@@ -22,9 +23,11 @@ from pathlib import Path
 
 import numpy as np
 
-from transcribe import MODEL_REPOS, SAMPLE_RATE
-
-MODELS_DIR = Path(__file__).parent / "models"
+# converted_dir lives in model_catalog because the catalogue has to read those
+# same directories to discover models. It also validates the key, which matters
+# now that keys come from disk rather than a fixed literal.
+from model_catalog import converted_dir, discover
+from transcribe import DEFAULT_LANGUAGE, SAMPLE_RATE
 
 # Generation settings that stop Whisper looping the same phrase when there's
 # no clear speech to anchor on (see ADR 0004). Applied wherever the runtime
@@ -40,20 +43,20 @@ def _installed(module: str) -> bool:
         return False
 
 
-def converted_dir(runtime: str, model_key: str) -> Path:
-    """Where convert_model.py puts the converted weights for this combination."""
-    family = "openvino" if runtime.startswith("openvino") else runtime
-    return MODELS_DIR / f"{family}-{model_key}"
-
-
 class Runtime:
-    """Wraps one loaded model so callers only need .transcribe(audio)."""
+    """Wraps one loaded model so callers only need .transcribe(audio, language).
+
+    `language` is a code from transcribe.LANGUAGES, or "auto" to let the model
+    detect it. Every runtime must honour it identically: they used to disagree
+    (two pinned Thai, three auto-detected), which quietly made their output —
+    and therefore any benchmark comparing them — incomparable.
+    """
 
     def __init__(self, name: str, description: str):
         self.name = name
         self.description = description
 
-    def transcribe(self, audio: np.ndarray) -> str:
+    def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
         raise NotImplementedError
 
 
@@ -65,13 +68,19 @@ class PyTorchRuntime(Runtime):
         self._pipeline = load_pipeline(model_key, device)
         super().__init__("pytorch", f"PyTorch on {device}")
 
-    def transcribe(self, audio: np.ndarray) -> str:
+    def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
+        generate_kwargs = {
+            "no_repeat_ngram_size": NO_REPEAT_NGRAM_SIZE,
+            "repetition_penalty": REPETITION_PENALTY,
+        }
+        if language != "auto":
+            # "transcribe" rather than "translate": without it a pinned
+            # non-English language can still be turned into English.
+            generate_kwargs["language"] = language
+            generate_kwargs["task"] = "transcribe"
         result = self._pipeline(
             {"array": audio, "sampling_rate": SAMPLE_RATE},
-            generate_kwargs={
-                "no_repeat_ngram_size": NO_REPEAT_NGRAM_SIZE,
-                "repetition_penalty": REPETITION_PENALTY,
-            },
+            generate_kwargs=generate_kwargs,
         )
         return result["text"].strip()
 
@@ -92,14 +101,19 @@ class OpenVINORuntime(Runtime):
         self._processor = AutoProcessor.from_pretrained(path)
         super().__init__(f"openvino-{device.lower()}", f"OpenVINO on {device}")
 
-    def transcribe(self, audio: np.ndarray) -> str:
+    def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
         features = self._processor(
             audio, sampling_rate=SAMPLE_RATE, return_tensors="pt"
         ).input_features
+        extra = {}
+        if language != "auto":
+            extra["language"] = language
+            extra["task"] = "transcribe"
         tokens = self._model.generate(
             features,
             no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
             repetition_penalty=REPETITION_PENALTY,
+            **extra,
         )
         return self._processor.batch_decode(tokens, skip_special_tokens=True)[0].strip()
 
@@ -118,14 +132,14 @@ class WhisperCppRuntime(Runtime):
 
         self._model = Model(
             str(weights[0]),
-            language="th",
             print_progress=False,
             print_realtime=False,
         )
         super().__init__("whispercpp", f"whisper.cpp (GGML) — {weights[0].name}")
 
-    def transcribe(self, audio: np.ndarray) -> str:
-        segments = self._model.transcribe(audio, no_context=True)
+    def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
+        # whisper.cpp spells auto-detection as the literal language "auto"
+        segments = self._model.transcribe(audio, no_context=True, language=language)
         return "".join(segment.text for segment in segments).strip()
 
 
@@ -143,10 +157,11 @@ class CTranslate2Runtime(Runtime):
         self._model = WhisperModel(str(path), device="cpu", compute_type="int8")
         super().__init__("ctranslate2", "CTranslate2 int8 on CPU")
 
-    def transcribe(self, audio: np.ndarray) -> str:
+    def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
         segments, _ = self._model.transcribe(
             audio,
-            language="th",
+            # faster-whisper detects the language when this is None
+            language=None if language == "auto" else language,
             # faster-whisper defaults to beam_size=5; the PyTorch path decodes
             # greedily. Left alone that's ~5x the work AND makes any
             # cross-runtime timing comparison meaningless, so match greedy.
@@ -248,7 +263,7 @@ RUNTIME_NAMES = ["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whis
 def load_runtime(name: str, model_key: str) -> Runtime:
     if name not in RUNTIME_NAMES:
         raise ValueError(f"Unknown runtime {name!r}")
-    if model_key not in MODEL_REPOS:
+    if model_key not in discover():
         raise ValueError(f"Unknown model {model_key!r}")
 
     if name == "pytorch":

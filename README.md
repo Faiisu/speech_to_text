@@ -160,11 +160,19 @@ Typography loads IBM Plex (Mono / Sans Condensed / Sans Thai) from Google Fonts.
 
 ### HTTP API (used by the GUI, or scriptable directly)
 
-- `POST /start` — body: `{"model": "turbo|large-v3", "keywords": "...", "mic_device": "...", "silence_threshold": 0.02, "backend_url": "..."}` (all but `model` optional). Returns immediately; the actual model loading and recording happen in the background. Returns `409` if a session is already active.
+- `POST /start` — body: `{"model": "turbo|large-v3", "keywords": "...", "mic_device": "...", "silence_threshold": 0.02, "language": "th", "backend_url": "..."}` (all but `model` optional). Returns immediately; the actual model loading and recording happen in the background. Returns `409` if a session is already active.
+- `GET /languages` — the languages the panel offers, and the default. The list lives only in `transcribe.py`; the panel reads it from here.
+- `GET /models` — the models this machine can run, rediscovered on every call (see [Models](#models)), with what is known about each: repo, where it was found, which runtimes have converted weights, and whether it is English-only.
 - `POST /stop` — ends the active session. Returns `409` if nothing is recording, or if the model is still loading (wait a moment and retry).
 - `GET /status` — `{"status": "idle|loading|recording|stopping", "session_id": ..., "config": ..., "reference_transcript": ..., "error": ...}`. The GUI polls this every 3 seconds to stay in sync, including from other devices/tabs.
 - `GET /stream` — Server-Sent Events feed of everything happening during a session, as it happens: `chunk` events (text, `time`, `latency`, `rtf`, or `silent: true` for skipped silence), `keyword` events, `warning` events, and `session` lifecycle events (`loading`/`recording`/`stopped`/`error`). Every connected client gets its own queue, so multiple browsers/devices can watch the same session simultaneously.
 - `GET /devices` — the input devices available for recording (index, name, channel count, which one is the system default). Add `?rescan=true` to re-initialise PortAudio and pick up a mic connected *after* the server started; refused with `409` mid-session, since tearing PortAudio down would kill the running stream.
+- `GET /runtimes?model=` — which execution backends are usable for that model, and the reason each unavailable one isn't.
+- `GET /audio-files` — clips in `audio/`, with duration. `POST /audio-files` uploads one (converted to 16kHz mono on the way in); `DELETE /audio-files/{name}` removes one.
+- `POST /record-server/start|stop`, `GET /record-server/status` — record a clip using the server's own microphone and save it to `audio/`, for use as replay/benchmark input. Refused while a live session is active.
+- `POST /benchmark` — replay one clip through several runtimes and stream the comparison over SSE (per-chunk timings, a summary per runtime, and the winner). One benchmark at a time; refused with `409` while another is running or while a live session is active.
+
+Filenames are validated against `audio/` on every endpoint that touches the filesystem — the server listens on the LAN with no authentication, so a caller-supplied name must never be able to escape that directory.
 
 ### Reference page
 
@@ -217,9 +225,30 @@ The `session stopped` line carries the full-clip reference transcript — the on
 
 Only one recording session runs at a time (one microphone). A model, once loaded, stays cached in memory for reuse by later sessions in the same server run — only the first session per model pays the loading cost.
 
+## Models
+
+The Model field is **discovered per machine**, not a fixed list. `GET /models` rebuilds it on every call, so a model installed while the server is running appears on the panel's **Rescan** without a restart. Four sources:
+
+| Source | What it finds |
+|---|---|
+| builtin | `typhoon-ai/typhoon-whisper-turbo` and `-large-v3`, the models this project was built to test. Always offered, downloaded on first use. |
+| `models.local.json` | A `{"key": "org/repo"}` map you write yourself. The way to add a model without editing Python. Gitignored — it's your machine's list, not the project's. |
+| Hugging Face cache | Any Whisper model already downloaded. `hf download openai/whisper-small` and it shows up. |
+| `models/` | Keys whose weights have been converted for openvino / ctranslate2 / whispercpp — including one whose original repo isn't known here (it then runs on that runtime, but not on `pytorch`). |
+
+See what this machine offers:
+
+```bash
+uv run python model_catalog.py
+```
+
+A cached repo that a builtin or local key already points at is merged into that key rather than listed twice. Model keys become directory names under `models/`, so they're validated as path-safe.
+
+**Two things a longer list doesn't change.** `whispercpp` can only run a model that has GGML weights (only `turbo` has a published build). And an English-only Whisper (`whisper-*.en`) rejects a pinned language outright — `/models` reports `multilingual: false` for those, the panel shows it, and `POST /start` refuses the combination with an explanation rather than letting it fail mid-session.
+
 ## Runtimes
 
-The model is always Typhoon Whisper; what changes per machine is the machinery that executes it. Pick one in the panel's **Runtime** field, or with `--runtime` on the CLI and benchmark.
+The model is always a Whisper-family model; what changes per machine is the machinery that executes it. Pick one in the panel's **Runtime** field, or with `--runtime` on the CLI and benchmark.
 
 | Runtime | Runs on | Notes |
 |---|---|---|
@@ -229,27 +258,32 @@ The model is always Typhoon Whisper; what changes per machine is the machinery t
 | `ctranslate2` | CPU, int8 | Wants AVX-VNNI to be worth it — check with `check_hardware.py`. |
 | `whispercpp` | CPU / GPU (GGML) | Uses whisper.cpp via pywhispercpp; benefits from AVX-VNNI / SIMD or GPU acceleration. |
 
+All five are given the same language (panel **Language** field, or `--language`; default `th`). They used to disagree — `ctranslate2` and `whispercpp` pinned Thai while `pytorch` and both OpenVINO paths auto-detected per chunk — which made their output, and any benchmark comparing them, incomparable. Choosing `auto` now opts every runtime into detection together.
+
 See what's usable here and why the rest aren't:
 
 ```bash
 uv run python runtimes.py
 ```
 
-Everything except `pytorch` needs the weights converted once per machine, and the libraries installed:
+Everything except `pytorch` needs the weights converted once per machine. `faster-whisper` and `pywhispercpp` are already project dependencies, so `uv sync` installs them; OpenVINO is not, because it only makes sense on an Intel machine:
 
 ```bash
-uv add faster-whisper                  # for ctranslate2
-uv add "optimum-intel[openvino]"       # for openvino
-uv add pywhispercpp                    # for whispercpp
+uv sync                                # installs ctranslate2 + whispercpp libraries
+uv add "optimum-intel[openvino]"       # Intel machines only
 
 uv run python convert_model.py --runtime ctranslate2 --model turbo
-uv run python convert_model.py --runtime openvino    --model turbo
 uv run python convert_model.py --runtime whispercpp  --model turbo
+uv run python convert_model.py --runtime openvino    --model turbo
 ```
+
+`--runtime openvino` converts once into `models/openvino-<model>`, shared by `openvino-gpu` and `openvino-cpu` — the IR is identical and the device is chosen at load time. `--runtime whispercpp` downloads a **community** GGML build (`korakotlee/typhoon-whisper-turbo-ggml`), not one published by typhoon-ai, and only `turbo` has one; for `large-v3` you'd convert it yourself with whisper.cpp's `models/convert-h5-to-ggml.py`.
 
 Converted weights go in `models/` (gitignored) and are reused after that. The panel lists unavailable runtimes greyed out with the reason, and `POST /start` refuses one that isn't ready rather than failing mid-session.
 
-> **Not verified by the author.** The `pytorch` path is tested. The OpenVINO and CTranslate2 paths were written against hardware that wasn't available for testing (no Intel GPU, no AVX-VNNI), so treat the first run on the target machine as the real test — the conversion step in particular may need adjusting for a fine-tuned model.
+> **Verified:** `pytorch`, `ctranslate2` and `whispercpp` all convert and transcribe Thai correctly on macOS. The CTranslate2 conversion was the step most likely to fail, since Typhoon is a fine-tune rather than stock Whisper.
+>
+> **Not verified by the author:** both OpenVINO paths, written against hardware that wasn't available for testing (no Intel GPU). Treat the first run on the UBX-330M as the real test — the conversion step in particular may need adjusting.
 
 ## Measuring performance & Benchmark Studio
 
@@ -311,7 +345,9 @@ uv run python check_hardware.py
 
 Reports the CPU, core count, the instruction sets that matter for inference (notably **AVX-VNNI**, which makes int8 models much faster), which accelerators are present (Intel NPU, integrated GPU, Hailo module), how many threads torch is using, and which optimised runtimes are installed.
 
-Worth being clear about the current state: the transcription path is plain PyTorch on CPU in float32, which on an Intel Core Ultra box leaves the integrated GPU, the NPU, and int8 acceleration completely unused. That was a deliberate deferral (see ADR 0003's sibling decision in the session notes) — measure a baseline with `benchmark.py` before deciding whether the added complexity of OpenVINO or CTranslate2 is worth it.
+On the deployment target (Advantech UBX-330M, Intel Core Ultra 5 125H) this reports 14 cores, **AVX-VNNI present** (so int8 models get real hardware acceleration), an Arc integrated GPU, and an NPU whose `intel_vpu` driver isn't loaded — so the NPU is unusable until that's installed.
+
+The default `pytorch` runtime uses none of that: CPU, float32, no iGPU, no int8. Switching runtime is what unlocks it — see [Runtimes](#runtimes) above, and ADR 0005. Measure a baseline with `benchmark.py` before and after, on the same clip, or the comparison means nothing (ADR 0006).
 
 ## Project tracking
 

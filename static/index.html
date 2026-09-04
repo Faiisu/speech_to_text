@@ -573,11 +573,18 @@
       <h2>Setup</h2>
 
       <div class="field">
-        <label for="model">Model</label>
-        <select id="model" onchange="loadRuntimes()">
-          <option value="turbo">turbo</option>
-          <option value="large-v3">large-v3</option>
-        </select>
+        <div class="field-head">
+          <label for="model">Model</label>
+          <a class="linkbtn" href="#" onclick="loadModels(true); return false;">Rescan</a>
+        </div>
+        <select id="model" onchange="onModelChange()"></select>
+        <span class="hint" id="modelHint">Discovered on this machine.</span>
+      </div>
+
+      <div class="field">
+        <label for="language">Language</label>
+        <select id="language" onchange="describeLanguage()"></select>
+        <span class="hint" id="languageHint">The language the model is told to transcribe.</span>
       </div>
 
       <div class="field">
@@ -679,10 +686,13 @@
 
       <div class="field">
         <label for="benchModel">Model</label>
-        <select id="benchModel" onchange="loadBenchRuntimes()">
-          <option value="turbo">turbo</option>
-          <option value="large-v3">large-v3</option>
-        </select>
+        <select id="benchModel" onchange="loadBenchRuntimes()"></select>
+      </div>
+
+      <div class="field">
+        <label for="benchLanguage">Language</label>
+        <select id="benchLanguage"></select>
+        <span class="hint">Applied to every runtime in the run, so they stay comparable.</span>
       </div>
 
       <div class="field">
@@ -831,6 +841,7 @@
     document.getElementById('micDevice').disabled = busy;
     document.getElementById('runtime').disabled = busy;
     document.getElementById('model').disabled = busy;
+    document.getElementById('language').disabled = busy;
     document.getElementById('source').disabled = busy;
     document.getElementById('audioFile').disabled = busy;
     document.getElementById('uploadBtn').disabled = busy;
@@ -901,6 +912,7 @@
       file: document.getElementById('audioFile').value || null,
       keywords: document.getElementById('keywords').value.trim() || null,
       mic_device: document.getElementById('micDevice').value.trim() || null,
+      language: document.getElementById('language').value,
     };
 
     // Only send these when actually filled in. A blank number field parses to
@@ -951,6 +963,114 @@
       return;
     }
     refreshStatus();
+  }
+
+  // ---- models ----
+  // Discovered per machine (see model_catalog.py), never hardcoded here: a
+  // model downloaded or converted while this page is open shows up on Rescan.
+  let modelInfo = [];
+
+  function onModelChange() {
+    describeModel();
+    loadRuntimes();
+  }
+
+  function describeModel() {
+    const hint = document.getElementById('modelHint');
+    const entry = modelInfo.find(m => m.key === document.getElementById('model').value);
+    if (!entry) { hint.textContent = ''; return; }
+    hint.textContent = entry.note || `${entry.repo} — from ${entry.sources.join(' + ')}.`;
+  }
+
+  async function loadModels(announce) {
+    const selects = ['model', 'benchModel'].map(id => document.getElementById(id));
+    const previous = selects.map(s => s.value);
+    try {
+      const res = await fetch('/models');
+      if (!res.ok) throw new Error(`server returned ${res.status}`);
+      const data = await res.json();
+      if (!data.models?.length) throw new Error('no models found on this machine');
+      modelInfo = data.models;
+
+      selects.forEach((select, i) => {
+        select.innerHTML = '';
+        for (const entry of modelInfo) {
+          const option = document.createElement('option');
+          option.value = entry.key;
+          option.textContent = entry.label;
+          select.appendChild(option);
+        }
+        // keep the operator's choice across a rescan; fall back to the default
+        const keep = modelInfo.some(m => m.key === previous[i]) ? previous[i] : data.default;
+        if (keep) select.value = keep;
+      });
+      describeModel();
+      if (announce) {
+        document.getElementById('modelHint').textContent =
+          `${modelInfo.length} model${modelInfo.length === 1 ? '' : 's'} found. `
+          + (modelInfo.find(m => m.key === selects[0].value)?.note || '');
+      }
+    } catch (err) {
+      // Same failure mode the language list had: an empty select looks normal
+      // and does nothing. Leave something selectable and say what went wrong.
+      selects.forEach(select => {
+        if (select.options.length) return;
+        const option = document.createElement('option');
+        option.value = 'turbo';
+        option.textContent = 'turbo';
+        select.appendChild(option);
+      });
+      document.getElementById('modelHint').textContent =
+        `Couldn't load the model list (${err.message}) — falling back to turbo.`;
+    }
+  }
+
+  // ---- languages ----
+  function describeLanguage() {
+    const hint = document.getElementById('languageHint');
+    if (document.getElementById('language').value === 'auto') {
+      hint.textContent = 'Detected per 5s chunk — a noisy chunk can be read as another '
+        + 'language, and Whisper then translates instead of transcribing.';
+    } else {
+      hint.textContent = 'Pinned. Every runtime is given the same language, so runs stay comparable.';
+    }
+  }
+
+  async function loadLanguages() {
+    // These two selects are the only ones filled entirely from the server, so a
+    // failed fetch leaves them empty — a control that looks normal, opens onto
+    // nothing, and explains nothing. Always leave a usable default behind, and
+    // say what happened.
+    try {
+      const res = await fetch('/languages');
+      if (!res.ok) throw new Error(`server returned ${res.status}`);
+      const data = await res.json();
+      if (!data.languages?.length) throw new Error('server sent an empty list');
+
+      for (const id of ['language', 'benchLanguage']) {
+        const select = document.getElementById(id);
+        select.innerHTML = '';
+        for (const entry of data.languages) {
+          const option = document.createElement('option');
+          option.value = entry.code;
+          option.textContent = entry.label;
+          option.selected = entry.code === data.default;
+          select.appendChild(option);
+        }
+      }
+      describeLanguage();
+    } catch (err) {
+      for (const id of ['language', 'benchLanguage']) {
+        const select = document.getElementById(id);
+        if (select.options.length) continue;  // keep whatever loaded earlier
+        const option = document.createElement('option');
+        option.value = 'th';
+        option.textContent = 'Thai';
+        select.appendChild(option);
+      }
+      document.getElementById('languageHint').textContent =
+        `Couldn't load the language list (${err.message}) — falling back to Thai. Reload once the server is reachable.`;
+    }
   }
 
   // ---- runtimes ----
@@ -1359,7 +1479,13 @@
       const res = await fetch('/benchmark', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file, model, runtimes: checkedRuntimes, silence_threshold: silence }),
+        body: JSON.stringify({
+          file,
+          model,
+          runtimes: checkedRuntimes,
+          silence_threshold: silence,
+          language: document.getElementById('benchLanguage').value,
+        }),
       });
 
       if (!res.ok) {
@@ -1641,11 +1767,12 @@
   }
 
   connectFeed();
-  loadRuntimes();
+  loadLanguages();
+  // the runtime probe is per model, so the model list has to land first
+  loadModels(false).then(() => { loadRuntimes(); loadBenchRuntimes(); });
   loadDevices(false);
   applySource();
   loadBenchAudioFiles();
-  loadBenchRuntimes();
   refreshStatus();
   setInterval(refreshStatus, 3000);
 </script>

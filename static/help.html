@@ -242,6 +242,81 @@
     thead { display: none; }
     td:first-child { font-family: var(--label); text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.85rem; color: var(--tungsten); }
   }
+
+  /* ---- Setup tab: command blocks ---- */
+  .cmd {
+    position: relative;
+    display: flex; align-items: flex-start; gap: 0.6rem;
+    background: var(--panel-raised);
+    border: 1px solid var(--rule);
+    border-left: 2px solid var(--tungsten);
+    padding: 0.6rem 0.7rem;
+    margin: 0.7rem 0;
+    border-radius: 2px;
+  }
+  .cmd pre {
+    margin: 0; flex: 1; min-width: 0;
+    overflow-x: auto;
+    font-family: var(--mono); font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "calt" 0;
+    font-size: 0.84rem; line-height: 1.6; color: var(--bone);
+    white-space: pre;
+  }
+  .cmd button {
+    flex: none;
+    background: var(--panel-deep); color: var(--dim);
+    border: 1px solid var(--rule);
+    font-family: var(--label); font-weight: 600;
+    font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 0.3rem 0.5rem; cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .cmd button:hover { color: var(--tungsten); border-color: var(--tungsten); }
+  .cmd button:focus-visible { outline: 2px solid var(--tungsten); outline-offset: 2px; }
+  .cmd button.done { color: var(--green); border-color: var(--green); }
+
+  /* ---- Setup tab: live status board ---- */
+  .board { margin: 1rem 0 0.5rem; }
+  .board-head {
+    display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
+    margin-bottom: 0.8rem;
+  }
+  .board-head label {
+    font-family: var(--label); font-weight: 600;
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--dim);
+  }
+  .board-head select, .board-head > button {
+    background: var(--panel-deep); color: var(--bone);
+    border: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 0.82rem;
+    padding: 0.35rem 0.5rem; cursor: pointer;
+  }
+  .board-head > button { font-family: var(--label); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.7rem; color: var(--dim); }
+  .board-head > button:hover { color: var(--tungsten); border-color: var(--tungsten); }
+  .board-head select:focus-visible,
+  .board-head > button:focus-visible { outline: 2px solid var(--tungsten); outline-offset: 2px; }
+
+  .rt { display: flex; gap: 0.8rem; align-items: flex-start; padding: 0.7rem 0; border-bottom: 1px solid var(--rule); }
+  .rt:last-child { border-bottom: none; }
+  .lamp {
+    flex: none; width: 9px; height: 9px; margin-top: 0.45rem; border-radius: 50%;
+    background: var(--dim); box-shadow: 0 0 0 1px var(--panel-deep);
+  }
+  .lamp.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .rt-body { flex: 1; min-width: 0; }
+  .rt-name {
+    font-family: var(--mono); font-variant-ligatures: none;
+    font-size: 0.9rem; color: var(--bone);
+  }
+  .rt-name .state {
+    font-family: var(--label); font-weight: 600;
+    font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase;
+    margin-left: 0.6rem; color: var(--dim);
+  }
+  .rt-name .state.on { color: var(--green); }
+  .rt-why { font-size: 0.86rem; color: var(--dim); margin-top: 0.15rem; }
+  .board-msg { color: var(--dim); font-size: 0.88rem; }
 </style>
 </head>
 <body>
@@ -255,6 +330,7 @@
 <nav class="nav-bar">
   <div class="nav-tabs">
     <button class="nav-tab active" data-tab="runtimes" onclick="switchHelpTab('runtimes')">⚡ Runtimes &amp; Hardware</button>
+    <button class="nav-tab" data-tab="install" onclick="switchHelpTab('install')">🔧 Runtime Setup</button>
     <button class="nav-tab" data-tab="benchmark" onclick="switchHelpTab('benchmark')">⏱️ Benchmark Studio</button>
     <button class="nav-tab" data-tab="session" onclick="switchHelpTab('session')">Session Flow</button>
     <button class="nav-tab" data-tab="readings" onclick="switchHelpTab('readings')">Readings &amp; Gauges</button>
@@ -275,7 +351,7 @@
     <p class="section-note">The model weights are always Typhoon Whisper (Turbo or Large-v3); what changes across runtimes is the execution engine and the hardware processor running it.</p>
 
     <div class="callout">
-      <strong>Why does the runtime matter?</strong> Whisper inference is computationally heavy. On an Intel Core Ultra 5 125H box, plain PyTorch CPU float32 is slow (RTF &gt; 1.0, falls behind live speech). Switching to <strong>whisper.cpp</strong> (GGML Q5_0), <strong>CTranslate2</strong> (int8 with AVX-VNNI), or <strong>OpenVINO</strong> (Intel Arc iGPU) drops latency by 3× to 5×, enabling continuous real-time transcription.
+      <strong>Why does the runtime matter?</strong> Whisper inference is computationally heavy. On an Intel Core Ultra 5 125H box, plain PyTorch CPU float32 is slow (RTF &gt; 1.0, falls behind live speech). It uses none of what the hardware offers: no int8, no iGPU, no vector instructions. <strong>whisper.cpp</strong> (GGML Q5_0), <strong>CTranslate2</strong> (int8 with AVX-VNNI) and <strong>OpenVINO</strong> (Intel Arc iGPU) each use a different part of it, which is why the right choice is machine-specific — and why the answer comes from measuring, not from a table.
     </div>
 
     <!-- 1. PyTorch -->
@@ -365,8 +441,7 @@
         <tr>
           <th>Target Machine</th>
           <th>Processor / Accelerators</th>
-          <th>Recommended Runtime</th>
-          <th>Expected RTF</th>
+          <th>Where to start</th>
         </tr>
       </thead>
       <tbody>
@@ -374,37 +449,151 @@
           <td><strong>Advantech UBX-330M</strong></td>
           <td>Intel Core Ultra 5 125H (14 cores, Arc iGPU, AVX-VNNI)</td>
           <td><code>openvino-gpu</code> (iGPU offload) or <code>ctranslate2</code> / <code>whispercpp</code> (AVX-VNNI)</td>
-          <td>0.20 – 0.45 (Fast Real-time)</td>
         </tr>
         <tr>
           <td><strong>Apple Silicon Mac</strong></td>
           <td>M1 / M2 / M3 / M4 (Apple Metal GPU)</td>
           <td><code>pytorch</code> (native MPS) or <code>whispercpp</code> (Metal)</td>
-          <td>0.15 – 0.35 (Fast Real-time)</td>
         </tr>
         <tr>
           <td><strong>Standard Intel x86 PC</strong></td>
           <td>Intel 11th–14th Gen Core CPUs</td>
           <td><code>ctranslate2</code> or <code>whispercpp</code></td>
-          <td>0.30 – 0.65 (Real-time)</td>
         </tr>
         <tr>
           <td><strong>Generic AMD / Legacy x86</strong></td>
           <td>AMD Ryzen / Older Intel without AVX-VNNI</td>
           <td><code>whispercpp</code> (GGML Q5_0)</td>
-          <td>0.40 – 0.85 (Real-time)</td>
         </tr>
       </tbody>
     </table>
 
+    <p class="muted">These are starting points, not rankings — which runtime actually wins on a given machine is a question only <a href="#benchmark" onclick="switchHelpTab('benchmark'); return false;" style="color: var(--tungsten);">Benchmark Studio</a> can answer, by replaying one fixed clip through each of them. Try the suggestion first, then measure.</p>
+
     <div class="nav-footer">
-      <span>Next: Benchmark Studio</span>
+      <span>Next: Runtime Setup</span>
+      <button onclick="switchHelpTab('install')">Runtime Setup →</button>
+    </div>
+  </section>
+
+  <!-- ========================================== -->
+  <!-- TAB 2: RUNTIME SETUP                       -->
+  <!-- ========================================== -->
+  <section class="help-section" id="sec-install">
+    <h2>What's ready on this machine</h2>
+    <p class="section-note">Live from <code>GET /runtimes</code> — the same probe the panel's Runtime field uses. A runtime that isn't ready says why, and the fix for each reason is below.</p>
+
+    <div class="board">
+      <div class="board-head">
+        <label for="board-model">Model</label>
+        <select id="board-model"></select>
+        <button type="button" id="board-refresh">Refresh</button>
+      </div>
+      <div id="board-list"><p class="board-msg">Checking…</p></div>
+    </div>
+
+    <h2>Models you can run</h2>
+    <p class="section-note">The Model field is discovered on this machine, not a fixed list. It combines the two builtin Typhoon fine-tunes, anything in <code>models.local.json</code>, every Whisper model already in the Hugging Face cache, and any weights converted into <code>models/</code>. Install a model and hit <strong>Rescan</strong> in the panel — no restart.</p>
+
+    <div class="callout">
+      <strong>Adding a model.</strong> Either download it (<code>hf download openai/whisper-small</code>) and it appears by itself, or name it in <code>models.local.json</code> as <code>{"my-key": "org/repo"}</code> to have it downloaded on first use. Two things stay true however long the list gets: <code>whispercpp</code> can only load a model with GGML weights, and an English-only Whisper (<code>whisper-*.en</code>) refuses a pinned language — the panel flags those and the server declines the combination rather than failing partway through a session.
+    </div>
+
+    <div class="entry">
+      <div class="entry-head">
+        <h3><code>turbo</code></h3>
+        <span class="tag active">Default</span>
+        <span class="tag">4 decoder layers</span>
+      </div>
+      <p><code>typhoon-ai/typhoon-whisper-turbo</code> — a fine-tune of <code>whisper-large-v3-turbo</code>. The encoder is full size; the decoder is cut from 32 layers to 4, which is where nearly all the speed comes from.</p>
+      <p>Runs on <strong>every runtime</strong>, and it is the only model with a published GGML build, so it is the only one <code>whispercpp</code> can load without extra work.</p>
+      <p class="muted">Converted sizes measured on this machine: <span class="mono">547 MB</span> as GGML q5_0, <span class="mono">781 MB</span> as CTranslate2 int8.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head">
+        <h3><code>large-v3</code></h3>
+        <span class="tag">32 decoder layers</span>
+        <span class="tag warn">No GGML build</span>
+      </div>
+      <p><code>typhoon-ai/typhoon-whisper-large-v3</code> — a fine-tune of full <code>whisper-large-v3</code>. The full decoder is kept, so it has more to work with on difficult audio: heavy accents, overlapping speakers, unfamiliar vocabulary. It also has roughly eight times the decoder to run per chunk.</p>
+      <p>Works on <code>pytorch</code>, <code>ctranslate2</code> and both OpenVINO runtimes once converted. For <code>whispercpp</code> you would have to build the GGML weights yourself — see the <code>whispercpp</code> card below.</p>
+    </div>
+
+    <div class="callout">
+      <strong>Which one?</strong> Start with <code>turbo</code>. It is the one this project was built around, the one every runtime supports, and the only one with any chance of keeping RTF under 1.0 on modest hardware. Reach for <code>large-v3</code> only when you have <em>evidence</em> that turbo is mis-transcribing the words you care about — replay the same clip through both and compare the transcripts, not just the timings.
+    </div>
+
+    <p class="muted">Any Whisper-architecture repo on Hugging Face should load on <code>pytorch</code>; the other runtimes need their own conversion pass first. A model for another language needs no code change — pick that language in the <strong>Language</strong> field.</p>
+
+    <h2>Preparing each runtime</h2>
+    <p class="section-note">Two things have to be true before a runtime turns green: its library is installed, and the weights are converted into its format. Conversion happens once per machine and lands in <code>models/</code>.</p>
+
+    <div class="entry">
+      <div class="entry-head">
+        <h3><code>pytorch</code></h3>
+        <span class="tag active">Nothing to do</span>
+      </div>
+      <p>Installed with the project and runs the Hugging Face weights directly, so it is always available. The first run downloads the model.</p>
+      <p class="muted">Keep it as the accuracy baseline. On the UBX-330M it is the slowest option — that is expected, not a fault.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head">
+        <h3><code>ctranslate2</code></h3>
+        <span class="tag active">Verified working</span>
+        <span class="tag">int8 · CPU</span>
+      </div>
+      <p><code>faster-whisper</code> is already a project dependency, so only the conversion is needed:</p>
+      <div class="cmd"><pre>uv sync
+uv run python convert_model.py --runtime ctranslate2 --model turbo</pre><button type="button" onclick="copyCmd(this)">Copy</button></div>
+      <p>Conversion downloads the model and re-encodes it to int8, so expect several GB and a few minutes. It was the step most likely to fail — Typhoon is a fine-tune rather than stock Whisper — but it converts cleanly and transcribes Thai correctly.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head">
+        <h3><code>whispercpp</code></h3>
+        <span class="tag active">Verified working</span>
+        <span class="tag">GGML · CPU</span>
+      </div>
+      <p><code>pywhispercpp</code> is already a project dependency. This runtime does not convert anything — it <strong>downloads a GGML build somebody else made</strong>:</p>
+      <div class="cmd"><pre>uv sync
+uv run python convert_model.py --runtime whispercpp --model turbo</pre><button type="button" onclick="copyCmd(this)">Copy</button></div>
+      <p><strong>Two things to know.</strong> The weights come from <code>korakotlee/typhoon-whisper-turbo-ggml</code>, a community conversion, not a build published by typhoon-ai — if its accuracy drifts noticeably from <code>pytorch</code> on the same clip, suspect the conversion before you suspect the engine. And only <code>turbo</code> has a published build.</p>
+      <p class="muted">For <code>large-v3</code>, convert it yourself with whisper.cpp's <code>models/convert-h5-to-ggml.py</code> and drop the resulting <code>.bin</code> into <code>models/whispercpp-large-v3/</code>. The probe picks up any <code>.bin</code> it finds there.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head">
+        <h3><code>openvino-gpu</code> · <code>openvino-cpu</code></h3>
+        <span class="tag warn">Not verified by the author</span>
+        <span class="tag">Intel only</span>
+      </div>
+      <p>OpenVINO is deliberately <strong>not</strong> a project dependency — it is only useful on an Intel machine, so install it there:</p>
+      <div class="cmd"><pre>uv add "optimum-intel[openvino]"
+uv run python convert_model.py --runtime openvino --model turbo</pre><button type="button" onclick="copyCmd(this)">Copy</button></div>
+      <p>One conversion serves both runtimes: it writes <code>models/openvino-gpu-turbo</code> and <code>models/openvino-cpu-turbo</code> with identical contents, and the device is chosen when the model loads. <code>openvino-gpu</code> additionally requires an Intel render node at <code>/dev/dri/renderD*</code>, which the UBX-330M has and no Mac ever will.</p>
+      <p><strong>Neither OpenVINO path has been run on real hardware.</strong> They were written against a machine that wasn't available for testing, so the first run on the UBX-330M is the real test — and conversion is the likeliest place to break, for the same fine-tune reason that made CTranslate2 the risky one.</p>
+    </div>
+
+    <h2>Checking your work</h2>
+    <p class="section-note">Two commands answer "did that work?" without starting a session.</p>
+
+    <div class="cmd"><pre>uv run python runtimes.py      # what's ready, and why the rest aren't
+uv run python check_hardware.py  # CPU, AVX-VNNI, iGPU, NPU, thread count</pre><button type="button" onclick="copyCmd(this)">Copy</button></div>
+
+    <div class="callout">
+      <strong>Then measure, don't guess.</strong> Once two or more runtimes are green, compare them in <a href="#benchmark" onclick="switchHelpTab('benchmark'); return false;" style="color: var(--tungsten);">Benchmark Studio</a> against one fixed clip. Comparing two live microphone sessions tells you nothing: on one machine RTF ranged from 0.48 to 1.90 purely because of how densely the speaker was talking.
+    </div>
+
+    <div class="nav-footer">
+      <button onclick="switchHelpTab('runtimes')">← Runtimes &amp; Hardware</button>
       <button onclick="switchHelpTab('benchmark')">Benchmark Studio →</button>
     </div>
   </section>
 
   <!-- ========================================== -->
-  <!-- TAB 2: BENCHMARK STUDIO                    -->
+  <!-- TAB 3: BENCHMARK STUDIO                    -->
   <!-- ========================================== -->
   <section class="help-section" id="sec-benchmark">
     <h2>Benchmark Studio</h2>
@@ -457,7 +646,7 @@ taskset -c 0-7 uv run python benchmark.py --model turbo --file audio/clip.wav --
     </div>
 
     <div class="nav-footer">
-      <button onclick="switchHelpTab('runtimes')">← Runtimes</button>
+      <button onclick="switchHelpTab('install')">← Runtime Setup</button>
       <button onclick="switchHelpTab('session')">Session Flow →</button>
     </div>
   </section>
@@ -562,8 +751,9 @@ taskset -c 0-7 uv run python benchmark.py --model turbo --file audio/clip.wav --
 
     <div class="entry">
       <div class="entry-head"><h3>Model</h3><span class="tag">turbo</span><span class="tag">large-v3</span></div>
-      <p><strong>turbo:</strong> 4 decoder layers, 574 MB weights. Extremely fast, lightweight, and ideal for edge and low-power hardware.</p>
-      <p><strong>large-v3:</strong> 32 decoder layers. Higher word accuracy on complex or heavily accented Thai speech, but requires significantly higher compute throughput.</p>
+      <p><strong>turbo:</strong> 4 decoder layers. Fast and light; the default, and the only model every runtime can load.</p>
+      <p><strong>large-v3:</strong> 32 decoder layers. More to work with on difficult Thai speech, at roughly eight times the decoder work per chunk.</p>
+      <p class="muted">Full details, including what each model needs per runtime, are under <a href="#install" onclick="switchHelpTab('install'); return false;" style="color: var(--tungsten);">Runtime Setup</a>.</p>
     </div>
 
     <div class="entry">
@@ -571,6 +761,13 @@ taskset -c 0-7 uv run python benchmark.py --model turbo --file audio/clip.wav --
       <p>Audio energy floor calculated via Root Mean Square (RMS). Chunks with audio energy below this threshold are skipped and logged as <span class="mono">silence — skipped</span>.</p>
       <p>Whisper models lack an explicit "silence" token; when presented with low-level background noise or room tone, they tend to hallucinate plausible Thai text or loop repetitive phrases. Energy gating filters this noise out before sending audio to the model.</p>
       <p class="muted"><strong>Raise to 0.03–0.04</strong> if ambient room noise triggers false text. <strong>Lower to 0.01</strong> if quiet or whisper-level speech is being missed.</p>
+    </div>
+
+    <div class="entry">
+      <div class="entry-head"><h3>Language</h3><span class="tag active">default Thai</span></div>
+      <p>The language the model is told to transcribe. It is passed to whichever runtime is selected, so the setting means the same thing across all five.</p>
+      <p><strong>Auto-detect</strong> hands the decision to the model instead — and it decides <em>per 5-second chunk</em>, not once per session. A chunk of noise, a half-finished word, or a run of English loanwords can be read as another language, and Whisper will then <strong>translate</strong> that chunk rather than transcribe it. Keyword spotting matches exact substrings, so a translated chunk silently stops matching.</p>
+      <p class="muted">Pin the language unless you genuinely need mixed-language audio. Auto-detect also adds a detection pass per chunk, which makes benchmark timings noisier.</p>
     </div>
 
     <div class="entry">
@@ -654,7 +851,7 @@ taskset -c 0-7 uv run python benchmark.py --model turbo --file audio/clip.wav --
 
 <script>
   function switchHelpTab(tabId) {
-    const valid = ['runtimes', 'benchmark', 'session', 'readings', 'setup', 'troubleshoot'];
+    const valid = ['runtimes', 'install', 'benchmark', 'session', 'readings', 'setup', 'troubleshoot'];
     if (!valid.includes(tabId)) tabId = 'runtimes';
 
     document.querySelectorAll('.nav-tab').forEach(btn => {
@@ -667,9 +864,104 @@ taskset -c 0-7 uv run python benchmark.py --model turbo --file audio/clip.wav --
 
     history.replaceState(null, '', `#${tabId}`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    if (tabId === 'install') loadBoard();
+  }
+
+  function copyCmd(button) {
+    const text = button.parentElement.querySelector('pre').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      button.textContent = 'Copied';
+      button.classList.add('done');
+      setTimeout(() => { button.textContent = 'Copy'; button.classList.remove('done'); }, 1600);
+    }).catch(() => {
+      // clipboard is blocked outside a secure context, which plain-HTTP LAN
+      // access is — select the text so it can still be copied by hand
+      const range = document.createRange();
+      range.selectNodeContents(button.parentElement.querySelector('pre'));
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      button.textContent = 'Select+C';
+      setTimeout(() => { button.textContent = 'Copy'; }, 2400);
+    });
+  }
+
+  async function loadBoardModels() {
+    const select = document.getElementById('board-model');
+    if (select.options.length) return;  // only needs filling once per page load
+    try {
+      const res = await fetch('/models');
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      for (const entry of data.models) {
+        const option = document.createElement('option');
+        option.value = entry.key;
+        option.textContent = entry.key;
+        option.selected = entry.key === data.default;
+        select.appendChild(option);
+      }
+    } catch {
+      // an empty select would silently break the board below it
+      const option = document.createElement('option');
+      option.value = 'turbo';
+      option.textContent = 'turbo';
+      select.appendChild(option);
+    }
+  }
+
+  async function loadBoard() {
+    const list = document.getElementById('board-list');
+    await loadBoardModels();
+    const model = document.getElementById('board-model').value;
+    list.innerHTML = '<p class="board-msg">Checking…</p>';
+    try {
+      const response = await fetch(`/runtimes?model=${encodeURIComponent(model)}`);
+      if (!response.ok) throw new Error(`server returned ${response.status}`);
+      const data = await response.json();
+      list.innerHTML = '';
+      for (const entry of data.runtimes) {
+        const row = document.createElement('div');
+        row.className = 'rt';
+
+        const lamp = document.createElement('span');
+        lamp.className = entry.available ? 'lamp on' : 'lamp';
+        row.appendChild(lamp);
+
+        const body = document.createElement('div');
+        body.className = 'rt-body';
+
+        const name = document.createElement('div');
+        name.className = 'rt-name';
+        name.textContent = entry.name;
+        const state = document.createElement('span');
+        state.className = entry.available ? 'state on' : 'state';
+        state.textContent = entry.available ? 'ready' : 'not ready';
+        name.appendChild(state);
+        body.appendChild(name);
+
+        // a bare "ready" only repeats the badge; anything else is the reason
+        // it isn't, or a note worth reading
+        if (entry.reason !== 'ready') {
+          const why = document.createElement('div');
+          why.className = 'rt-why';
+          why.textContent = entry.reason;
+          body.appendChild(why);
+        }
+
+        row.appendChild(body);
+        list.appendChild(row);
+      }
+    } catch (error) {
+      list.innerHTML = '<p class="board-msg"></p>';
+      list.firstChild.textContent = `Couldn't reach the server: ${error.message}. Run \`uv run python runtimes.py\` instead.`;
+    }
   }
 
   window.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('board-refresh').addEventListener('click', loadBoard);
+    document.getElementById('board-model').addEventListener('change', loadBoard);
+
     const hash = window.location.hash.replace('#', '');
     if (hash) {
       switchHelpTab(hash);

@@ -21,11 +21,13 @@ import time
 import numpy as np
 import torch
 
+from model_catalog import model_repos, resolve_repo
 from runtimes import load_runtime
 from transcribe import (
     CHUNK_SECONDS,
+    DEFAULT_LANGUAGE,
     DEFAULT_SILENCE_RMS,
-    MODEL_REPOS,
+    LANGUAGES,
     OVERLAP_SECONDS,
     SAMPLE_RATE,
     is_silent,
@@ -107,6 +109,7 @@ def run_pass(
     silence_threshold: float,
     verbose: bool = False,
     on_chunk: callable = None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> dict:
     offsets = chunk_offsets(audio.size)
     chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
@@ -126,7 +129,7 @@ def run_pass(
             continue
 
         started = time.perf_counter()
-        text = runtime.transcribe(chunk)
+        text = runtime.transcribe(chunk, language)
         latency = time.perf_counter() - started
         latencies.append(latency)
         texts.append(text)
@@ -154,7 +157,7 @@ def run_pass(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=MODEL_REPOS.keys(), required=True)
+    parser.add_argument("--model", choices=model_repos().keys(), required=True)
     parser.add_argument("--file", help="16kHz mono WAV to replay (or provide --record)")
     parser.add_argument(
         "--record",
@@ -178,6 +181,14 @@ def main() -> None:
         choices=["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"],
         help="How to execute the model (default: pytorch)",
     )
+    parser.add_argument(
+        "--language",
+        default=DEFAULT_LANGUAGE,
+        choices=LANGUAGES.keys(),
+        help=f"Language to transcribe (default: {DEFAULT_LANGUAGE}). Keep it identical "
+        "across runs being compared — 'auto' adds a detection pass and can pick "
+        "differently per chunk, which makes timings incomparable.",
+    )
     parser.add_argument("--verbose", action="store_true", help="Print every chunk")
     args = parser.parse_args()
 
@@ -197,7 +208,7 @@ def main() -> None:
 
     print(f"machine  : {platform.system()} {platform.machine()}")
     print(f"torch    : {torch.__version__}")
-    print(f"model    : {MODEL_REPOS[args.model]}")
+    print(f"model    : {resolve_repo(args.model)}")
     print(f"runtime  : {args.runtime}")
     print(f"clip     : {args.file}  ({duration:.1f}s audio, {len(offsets)} chunks of {CHUNK_SECONDS}s)")
 
@@ -207,11 +218,12 @@ def main() -> None:
     print("\nloading model...")
     runtime = load_runtime(args.runtime, args.model)
     print(f"  {runtime.description}")
+    print(f"  language: {LANGUAGES[args.language]}")
 
     # First inference pays for lazy init and cache warm-up; exclude it so the
     # reported numbers reflect steady-state throughput.
     print("warming up...")
-    runtime.transcribe(audio[: CHUNK_SECONDS * SAMPLE_RATE])
+    runtime.transcribe(audio[: CHUNK_SECONDS * SAMPLE_RATE], args.language)
 
     thread_counts = (
         [int(t.strip()) for t in args.threads.split(",") if t.strip()]
@@ -225,7 +237,9 @@ def main() -> None:
     results = []
     for threads in thread_counts:
         torch.set_num_threads(threads)
-        stats = run_pass(runtime, audio, args.silence_threshold, args.verbose)
+        stats = run_pass(
+            runtime, audio, args.silence_threshold, args.verbose, language=args.language
+        )
         if not stats["chunks"]:
             print(f"{threads:>8}  every chunk was skipped as silence")
             continue
