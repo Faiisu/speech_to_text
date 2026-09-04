@@ -554,6 +554,28 @@ def main() -> None:
         "duplicated words you sometimes see across lines.",
     )
     parser.add_argument(
+        "--repetition-penalty",
+        type=float,
+        default=None,
+        help="Penalty on tokens the model has already emitted; 1.0 turns it off "
+        "(default: 1.3, from ADR 0004). It exists to stop Whisper looping one phrase on "
+        "noise, but it also punishes the words Thai speech legitimately repeats, so turn "
+        "it off if transcripts look worse than whisper.cpp's, which never gets it.",
+    )
+    parser.add_argument(
+        "--no-repeat-ngram",
+        type=int,
+        default=None,
+        help="Forbid repeating any n-gram of this size within a chunk; 0 turns it off "
+        "(default: 3). Same trade as --repetition-penalty.",
+    )
+    parser.add_argument(
+        "--plain-greedy",
+        action="store_true",
+        help="Shorthand for --repetition-penalty 1.0 --no-repeat-ngram 0, i.e. decode the "
+        "way whisper.cpp does.",
+    )
+    parser.add_argument(
         "--silence-threshold",
         type=float,
         default=DEFAULT_SILENCE_RMS,
@@ -587,12 +609,37 @@ def main() -> None:
 
     # imported here rather than at module scope: runtimes.py imports from this
     # module, so a top-level import would be circular
-    from runtimes import load_runtime
+    from runtimes import DEFAULT_DECODING, Decoding, load_runtime
+
+    if args.plain_greedy and (args.repetition_penalty is not None or args.no_repeat_ngram is not None):
+        parser.error("--plain-greedy already sets both; drop the explicit values or drop it")
+    if args.plain_greedy:
+        decoding = Decoding.off()
+    else:
+        try:
+            decoding = Decoding(
+                no_repeat_ngram_size=(
+                    DEFAULT_DECODING.no_repeat_ngram_size
+                    if args.no_repeat_ngram is None
+                    else args.no_repeat_ngram
+                ),
+                repetition_penalty=(
+                    DEFAULT_DECODING.repetition_penalty
+                    if args.repetition_penalty is None
+                    else args.repetition_penalty
+                ),
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
 
     print(f"[platform] {platform.system()} {platform.machine()}")
     print(f"[model] loading {resolve_repo(args.model)} via {args.runtime}...")
-    runtime = load_runtime(args.runtime, args.model)
+    runtime = load_runtime(args.runtime, args.model, decoding=decoding)
     print(f"[runtime] {runtime.description}")
+    print(
+        f"[decoding] {decoding.label()}"
+        + ("" if runtime.honours_decoding else "  (ignored: this runtime exposes no knobs)")
+    )
     print(f"[language] {LANGUAGES[args.language]}")
     print(f"[chunking] {chunking.label()}")
 

@@ -20,7 +20,7 @@ import statistics
 
 from benchmark import chunk_offsets
 from model_catalog import discover, model_repos
-from runtimes import RUNTIME_NAMES, load_runtime, probe
+from runtimes import DEFAULT_DECODING, RUNTIME_NAMES, Decoding, load_runtime, probe
 from transcribe import (
     DEFAULT_CHUNKING,
     MAX_CHUNK_SECONDS,
@@ -81,6 +81,11 @@ class StartRequest(BaseModel):
     # whole chunk before seeing anything. Chunking validates the pair.
     chunk_seconds: float = DEFAULT_CHUNKING.chunk_seconds
     overlap_seconds: float = DEFAULT_CHUNKING.overlap_seconds
+    # The ADR 0004 repetition guards, which whisper.cpp never gets. Settable
+    # because they are the one runtime difference that is a decision, and the
+    # first thing to turn off when a transcript reads worse than whisper.cpp's.
+    repetition_penalty: float = DEFAULT_DECODING.repetition_penalty
+    no_repeat_ngram_size: int = DEFAULT_DECODING.no_repeat_ngram_size
     backend_url: str = DEFAULT_BACKEND_URL
     # validated against LANGUAGES rather than a Literal so the list of offered
     # languages lives in exactly one place (transcribe.LANGUAGES)
@@ -109,6 +114,18 @@ class StartRequest(BaseModel):
     @property
     def chunking(self) -> Chunking:
         return Chunking(self.chunk_seconds, self.overlap_seconds)
+
+    @model_validator(mode="after")
+    def _valid_decoding(self):
+        try:
+            Decoding(self.no_repeat_ngram_size, self.repetition_penalty)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from None
+        return self
+
+    @property
+    def decoding(self) -> Decoding:
+        return Decoding(self.no_repeat_ngram_size, self.repetition_penalty)
 
     @field_validator("runtime")
     @classmethod
@@ -469,6 +486,8 @@ class BenchmarkRequest(BaseModel):
     silence_threshold: float = DEFAULT_SILENCE_RMS
     chunk_seconds: float = DEFAULT_CHUNKING.chunk_seconds
     overlap_seconds: float = DEFAULT_CHUNKING.overlap_seconds
+    repetition_penalty: float = DEFAULT_DECODING.repetition_penalty
+    no_repeat_ngram_size: int = DEFAULT_DECODING.no_repeat_ngram_size
     language: str = DEFAULT_LANGUAGE
 
     @model_validator(mode="after")
@@ -482,6 +501,18 @@ class BenchmarkRequest(BaseModel):
     @property
     def chunking(self) -> Chunking:
         return Chunking(self.chunk_seconds, self.overlap_seconds)
+
+    @model_validator(mode="after")
+    def _valid_decoding(self):
+        try:
+            Decoding(self.no_repeat_ngram_size, self.repetition_penalty)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from None
+        return self
+
+    @property
+    def decoding(self) -> Decoding:
+        return Decoding(self.no_repeat_ngram_size, self.repetition_penalty)
 
     @field_validator("language")
     @classmethod
@@ -537,7 +568,7 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
     available_by_model = {m: {e["name"]: e for e in probe(m)} for m in models}
 
     def event_stream():
-        yield f"data: {json.dumps({'type': 'init', 'file': clip_path.name, 'duration': round(duration, 1), 'chunk_seconds': chunking.chunk_seconds, 'overlap_seconds': chunking.overlap_seconds, 'models': models, 'runtimes': req.runtimes, 'language': req.language})}\n\n"
+        yield f"data: {json.dumps({'type': 'init', 'file': clip_path.name, 'duration': round(duration, 1), 'chunk_seconds': chunking.chunk_seconds, 'decoding': req.decoding.label(), 'overlap_seconds': chunking.overlap_seconds, 'models': models, 'runtimes': req.runtimes, 'language': req.language})}\n\n"
 
         results = []
         for model_key, r_name in ((m, r) for m in models for r in req.runtimes):
@@ -552,7 +583,7 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
             yield f"data: {json.dumps({'type': 'runtime_start', 'id': combo, 'model': model_key, 'runtime': r_name, 'label': label})}\n\n"
 
             try:
-                runtime = _get_runtime(r_name, model_key)
+                runtime = _get_runtime(r_name, model_key, req.decoding)
                 # warmup
                 runtime.transcribe(audio[: chunking.chunk_samples], req.language)
 
@@ -622,6 +653,7 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                         # full-ish transcript has to survive to the client
                         "sample_text": " ".join(t for t in texts if t).strip()[:400],
                         "keeps_up": statistics.mean(rtfs) < 1.0,
+                        "honours_decoding": runtime.honours_decoding,
                         # what the speaker sits through: the chunk has to be
                         # spoken before it can be transcribed
                         "wait": round(chunking.chunk_seconds + statistics.mean(latencies), 2),
@@ -655,10 +687,14 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
     )
 
 
-def _get_runtime(runtime_name: str, model_key: str):
-    key = (runtime_name, model_key)
+def _get_runtime(runtime_name: str, model_key: str, decoding: Decoding | None = None):
+    # The decoding settings are part of the identity of a loaded runtime:
+    # caching on (runtime, model) alone would hand back the instance built
+    # with the previous settings and quietly answer the wrong question.
+    decoding = decoding or DEFAULT_DECODING
+    key = (runtime_name, model_key, decoding)
     if key not in _runtimes:
-        _runtimes[key] = load_runtime(runtime_name, model_key)
+        _runtimes[key] = load_runtime(runtime_name, model_key, decoding=decoding)
     return _runtimes[key]
 
 
@@ -666,7 +702,7 @@ def _run_session(req: StartRequest) -> None:
     session_id = _state["session_id"]
     try:
         broadcast({"type": "session", "state": "loading", "session_id": session_id})
-        runtime = _get_runtime(req.runtime, req.model)
+        runtime = _get_runtime(req.runtime, req.model, req.decoding)
 
         with _lock:
             if _state["status"] != "loading":

@@ -376,6 +376,19 @@ Which is why the table has a **`you wait`** column: chunk length plus latency, w
 
 A longer chunk also tends to transcribe *better*: 5 seconds is far less context than the 30-second windows Whisper was trained on. The trade is responsiveness, not accuracy.
 
+### Turning the repetition guards off
+
+`runtimes.py` passes `no_repeat_ngram_size=3` and `repetition_penalty=1.3` to every runtime that accepts them (ADR 0004, against a real looping failure on room noise). **whisper.cpp gets neither** — pywhispercpp exposes no generation knobs — so a comparison against it is not like-for-like until they are off:
+
+```bash
+uv run python transcribe.py --model turbo --runtime openvino-gpu --plain-greedy
+uv run python benchmark.py --model turbo --file clip.wav --runtime openvino-gpu --repetition-penalty 1.0,1.3
+```
+
+`--repetition-penalty` sweeps like `--chunk` does, and prints what each setting heard. In the Web GUI it is the **Repetition guards** checkbox, in both the session panel and Benchmark Studio; the results table names the decoding used and calls out any runtime that ignored it.
+
+They are on by default because on this project's own clip, turning them off made things *worse*, not better: `ctranslate2` at 10s chunks produced `ฮัลโหลโหลโหเทส … สวัสดีครับ สวัสดีครับ สวัสดีครับ` with the guards off against `ฮัลโหล ฮาโหร่ เทส หนึ่ง สอง สาม สี่ สวัสดีครับ` with them on. Worth measuring on your own audio before concluding either way — that is what the sweep is for.
+
 ### Comparing models on one runtime
 
 The runtime is only half the question — the other half is which model, and whether a compressed build is worth what it costs in accuracy. Pass several keys to `--model` and they are replayed through the same clip on the same runtime:

@@ -23,7 +23,7 @@ import numpy as np
 import torch
 
 from model_catalog import discover, resolve_repo
-from runtimes import RUNTIME_NAMES, load_runtime
+from runtimes import DEFAULT_DECODING, RUNTIME_NAMES, Decoding, load_runtime
 from transcribe import (
     CHUNK_SECONDS,
     DEFAULT_CHUNKING,
@@ -203,6 +203,20 @@ def main() -> None:
         default=DEFAULT_CHUNKING.overlap_seconds,
         help=f"Seconds of overlap between chunks (default: {DEFAULT_CHUNKING.overlap_seconds:g}).",
     )
+    parser.add_argument(
+        "--repetition-penalty",
+        default=str(DEFAULT_DECODING.repetition_penalty),
+        help="Penalty on already-emitted tokens, or several to compare: 1.0,1.3. "
+        f"1.0 is off (default: {DEFAULT_DECODING.repetition_penalty:g}). whisper.cpp never "
+        "gets this, so turning it off is how you compare like with like.",
+    )
+    parser.add_argument(
+        "--no-repeat-ngram",
+        type=int,
+        default=DEFAULT_DECODING.no_repeat_ngram_size,
+        help=f"Forbid repeating an n-gram of this size; 0 is off (default: "
+        f"{DEFAULT_DECODING.no_repeat_ngram_size}).",
+    )
     parser.add_argument("--silence-threshold", type=float, default=DEFAULT_SILENCE_RMS,
                         help=f"Set above 0 to skip quiet chunks the way a live session does "
                              f"(default: {DEFAULT_SILENCE_RMS})")
@@ -252,6 +266,17 @@ def main() -> None:
     if not chunkings:
         parser.error("--chunk needs at least one value")
 
+    try:
+        decodings = [
+            Decoding(args.no_repeat_ngram, float(v.strip()))
+            for v in args.repetition_penalty.split(",")
+            if v.strip()
+        ]
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not decodings:
+        parser.error("--repetition-penalty needs at least one value")
+
     audio = load_audio(args.file)
     duration = audio.size / SAMPLE_RATE
     offsets = chunk_offsets(audio.size, chunkings[0])
@@ -285,17 +310,21 @@ def main() -> None:
 
     model_column = max(len(m) for m in models) if len(models) > 1 else 0
     chunk_column = 7 if len(chunkings) > 1 else 0
+    penalty_column = 8 if len(decodings) > 1 else 0
     header = f"{'model':>{model_column}}  " if model_column else ""
+    header += f"{'rep pen':>{penalty_column}}  " if penalty_column else ""
     header += f"{'chunk':>{chunk_column}}  " if chunk_column else ""
     # "you wait" is the number the person speaking experiences: they finish a
     # chunk's worth of audio, then wait for it to be transcribed. RTF alone
     # hides this — it improves as chunks grow, while the wait gets worse.
     print(f"\n{header}{'threads':>8}  {'chunks':>6}  {'mean RTF':>9}  {'median':>7}  "
           f"{'worst':>7}  {'mean lat':>9}  {'you wait':>9}  keeps up?")
-    print("-" * (83 + model_column + chunk_column + 2 * bool(model_column) + 2 * bool(chunk_column)))
+    print("-" * (83 + model_column + penalty_column + chunk_column
+                 + 2 * bool(model_column) + 2 * bool(penalty_column) + 2 * bool(chunk_column)))
 
     results = []
     for model_key in models:
+      for decoding in decodings:
         for chunking in chunkings:
             for threads in thread_counts:
                 # Reloaded per count: CTranslate2, whisper.cpp and OpenVINO all
@@ -304,25 +333,33 @@ def main() -> None:
                 # torch.set_num_threads) changed nothing at all for three of
                 # the five runtimes.
                 try:
-                    runtime = load_runtime(args.runtime, model_key, threads)
+                    runtime = load_runtime(args.runtime, model_key, threads, decoding)
                 except (FileNotFoundError, RuntimeError, ValueError, KeyError) as exc:
                     # One unconvertible or undeployable combination must not
                     # take the whole sweep down with it — say which one and
                     # carry on, the way the panel greys out a runtime.
                     reason = str(exc).splitlines()[0]
-                    if len(models) * len(chunkings) * len(thread_counts) == 1:
+                    if len(models) * len(decodings) * len(chunkings) * len(thread_counts) == 1:
                         raise SystemExit(f"{model_key} on {args.runtime}: {reason}") from None
                     print(f"{model_key:>{model_column}}  skipped — {reason}")
                     break
 
                 first = (
                     model_key == models[0]
+                    and decoding is decodings[0]
                     and chunking is chunkings[0]
                     and threads == thread_counts[0]
                 )
                 if first:
                     print(f"  {runtime.description}")
                     print(f"  language: {LANGUAGES[args.language]}")
+                    if not runtime.honours_decoding and (len(decodings) > 1 or decoding.active):
+                        print(
+                            "  note: this runtime exposes no generation knobs, so "
+                            "--repetition-penalty / --no-repeat-ngram do nothing here"
+                        )
+                    elif len(decodings) == 1:
+                        print(f"  decoding: {decoding.label()}")
 
                 # First inference pays for lazy init and cache warm-up; exclude
                 # it so the reported numbers reflect steady-state throughput.
@@ -341,6 +378,8 @@ def main() -> None:
                 )
 
                 prefix = f"{model_key:>{model_column}}  " if model_column else ""
+                if penalty_column:
+                    prefix += f"{decoding.repetition_penalty:>{penalty_column}g}  "
                 if chunk_column:
                     prefix += f"{chunking.chunk_seconds:>{chunk_column}g}  "
                 label = "default" if threads is None else str(threads)
@@ -356,25 +395,27 @@ def main() -> None:
                     f"{stats['median_rtf']:>7.2f}  {stats['worst_rtf']:>7.2f}  "
                     f"{stats['mean_latency']:>8.2f}s  {wait:>8.2f}s  {keeps_up}"
                 )
-                results.append((model_key, chunking, threads, stats))
+                results.append((model_key, decoding, chunking, threads, stats))
 
     if len(results) > 1:
-        best = min(results, key=lambda r: r[3]["mean_rtf"])
-        worst = max(results, key=lambda r: r[3]["mean_rtf"])
-        gain = (worst[3]["mean_rtf"] / best[3]["mean_rtf"] - 1) * 100
+        best = min(results, key=lambda r: r[4]["mean_rtf"])
+        worst = max(results, key=lambda r: r[4]["mean_rtf"])
+        gain = (worst[4]["mean_rtf"] / best[4]["mean_rtf"] - 1) * 100
 
         def describe(entry) -> str:
-            model_key, chunking, threads, _ = entry
+            model_key, decoding, chunking, threads, _ = entry
             parts = []
             if len(models) > 1:
                 parts.append(model_key)
+            if len(decodings) > 1:
+                parts.append(f"penalty {decoding.repetition_penalty:g}")
             if len(chunkings) > 1:
                 parts.append(f"{chunking.chunk_seconds:g}s chunks")
             parts.append("default threads" if threads is None else f"{threads} threads")
             return " at ".join([parts[0], ", ".join(parts[1:])]) if len(parts) > 1 else parts[0]
 
         print(
-            f"\nbest: {describe(best)} (mean RTF {best[3]['mean_rtf']:.2f}) — "
+            f"\nbest: {describe(best)} (mean RTF {best[4]['mean_rtf']:.2f}) — "
             f"{gain:.0f}% faster than {describe(worst)}"
         )
         if len(chunkings) > 1:
@@ -383,14 +424,21 @@ def main() -> None:
                 "Read 'you wait' before spending that: it is what the speaker sits through."
             )
 
-    if len(models) > 1:
-        # Speed is only half of a model comparison: a smaller or more
-        # compressed model that mangles the words is not a win. Print what
-        # each one actually said, on the same audio, for eyeballing.
-        print("\nwhat each model heard:")
-        for model_key, chunking, threads, stats in results:
-            if chunking is chunkings[0] and threads == thread_counts[0] and stats.get("sample_text"):
-                print(f"  {model_key:>{model_column}}  {stats['sample_text']}")
+    if len(models) > 1 or len(decodings) > 1:
+        # Speed is only half of these comparisons: a model or a decoding
+        # setting that is faster and mangles the words is not a win. Print
+        # what each one actually said, on the same audio, for eyeballing.
+        print("\nwhat each setting heard:")
+        width = max(model_column, 12)
+        for model_key, decoding, chunking, threads, stats in results:
+            if chunking is not chunkings[0] or threads != thread_counts[0]:
+                continue
+            if not stats.get("sample_text"):
+                continue
+            tag = model_key if len(models) > 1 else ""
+            if len(decodings) > 1:
+                tag = f"{tag} pen {decoding.repetition_penalty:g}".strip()
+            print(f"  {tag:>{width}}  {stats['sample_text']}")
 
 
 if __name__ == "__main__":

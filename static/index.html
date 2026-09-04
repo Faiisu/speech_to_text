@@ -639,6 +639,14 @@
       </div>
 
       <div class="field">
+        <label class="check-item" for="repetitionGuard" style="cursor:pointer">
+          <input id="repetitionGuard" type="checkbox" checked>
+          <span>Repetition guards</span>
+        </label>
+        <span class="hint">On by default: penalises repeated tokens so noise can't make Whisper loop one phrase (ADR 0004). whisper.cpp never gets them — untick to decode the same way it does, which is the first thing to try when another runtime's words look worse than its.</span>
+      </div>
+
+      <div class="field">
         <label for="silenceThreshold">Silence threshold</label>
         <input id="silenceThreshold" type="number" step="0.001" value="0.02">
         <span class="hint">Chunks quieter than this are skipped instead of transcribed.</span>
@@ -722,6 +730,14 @@
         <label for="benchChunkSeconds">Chunk length</label>
         <input id="benchChunkSeconds" type="number" step="1" min="1" max="30" value="5">
         <span class="hint">Applied to every row in the run, so they stay comparable. Whisper pads to 30s regardless — try 5 against 30 to see how much of each run is fixed cost.</span>
+      </div>
+
+      <div class="field">
+        <label class="check-item" for="benchRepetitionGuard" style="cursor:pointer">
+          <input id="benchRepetitionGuard" type="checkbox" checked>
+          <span>Repetition guards</span>
+        </label>
+        <span class="hint">Applied to every row. Untick to compare the other runtimes on whisper.cpp's terms — it decodes without them either way.</span>
       </div>
 
       <div class="field">
@@ -942,6 +958,11 @@
 
     const chunk = parseFloat(document.getElementById('chunkSeconds').value);
     if (!Number.isNaN(chunk)) body.chunk_seconds = chunk;
+
+    if (!document.getElementById('repetitionGuard').checked) {
+      body.repetition_penalty = 1.0;
+      body.no_repeat_ngram_size = 0;
+    }
 
     const backendUrl = document.getElementById('backendUrl').value.trim();
     if (backendUrl) body.backend_url = backendUrl;
@@ -1570,6 +1591,9 @@
           runtimes: checkedRuntimes,
           silence_threshold: silence,
           chunk_seconds: benchChunk,
+          ...(document.getElementById('benchRepetitionGuard').checked
+            ? {}
+            : { repetition_penalty: 1.0, no_repeat_ngram_size: 0 }),
           language: document.getElementById('benchLanguage').value,
         }),
       });
@@ -1597,6 +1621,7 @@
             const ev = JSON.parse(line.slice(6));
             if (ev.type === 'init') {
               if (ev.chunk_seconds) benchChunkUsed = ev.chunk_seconds;
+              if (ev.decoding) benchDecodingUsed = ev.decoding;
               document.getElementById('benchActiveRuntimeText').textContent = `Replaying ${ev.file} (${ev.duration}s)...`;
             } else if (ev.type === 'runtime_start') {
               document.getElementById('benchActiveRuntimeText').textContent = `Testing ${ev.label}…`;
@@ -1631,6 +1656,7 @@
   }
 
   let benchChunkUsed = 5;
+  let benchDecodingUsed = '';
 
   function renderBenchmarkSummary(results, winner) {
     const container = document.getElementById('benchResultsContainer');
@@ -1678,6 +1704,16 @@
     // Comparative Table
     const tableWrap = document.createElement('div');
     tableWrap.style.overflowX = 'auto';
+    if (benchDecodingUsed) {
+      const caption = document.createElement('div');
+      caption.className = 'hint';
+      caption.style.margin = '0 0 0.5rem';
+      const ignored = results.filter(r => r.honours_decoding === false).map(r => r.runtime);
+      caption.textContent =
+        `${benchChunkUsed}s chunks · decoding: ${benchDecodingUsed}`
+        + (ignored.length ? ` (${ignored.join(', ')} decodes with its own defaults regardless)` : '');
+      tableWrap.appendChild(caption);
+    }
 
     let rowsHtml = '';
     for (const r of sorted) {

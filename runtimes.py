@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import importlib.util
 import platform
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -44,6 +45,51 @@ NO_REPEAT_NGRAM_SIZE = 3
 REPETITION_PENALTY = 1.3
 
 
+@dataclass(frozen=True)
+class Decoding:
+    """The two anti-looping knobs, as something that can be turned off.
+
+    They were added against a real failure — room noise past the silence gate
+    made Whisper regenerate one phrase dozens of times (ADR 0004) — but they
+    are blunt: a repetition penalty punishes every token the model has already
+    emitted, and Thai speech legitimately repeats (ครับ, สวัสดีครับ). On clean
+    speech they can push the decoder off a correct word it has already used.
+
+    whisper.cpp gets neither, because pywhispercpp exposes neither, which is
+    the one difference between the runtimes that is a decision rather than an
+    accident of arithmetic. Making these settable is what turns "openvino
+    sounds worse than whispercpp" into a question with an answer.
+    """
+
+    no_repeat_ngram_size: int = NO_REPEAT_NGRAM_SIZE
+    repetition_penalty: float = REPETITION_PENALTY
+
+    def __post_init__(self) -> None:
+        if self.no_repeat_ngram_size < 0:
+            raise ValueError("no_repeat_ngram_size must be 0 (off) or more")
+        if self.repetition_penalty < 1.0:
+            raise ValueError("repetition_penalty must be at least 1.0 (1.0 = off)")
+
+    @classmethod
+    def off(cls) -> "Decoding":
+        return cls(no_repeat_ngram_size=0, repetition_penalty=1.0)
+
+    @property
+    def active(self) -> bool:
+        return self.no_repeat_ngram_size > 0 or self.repetition_penalty > 1.0
+
+    def label(self) -> str:
+        if not self.active:
+            return "plain greedy (no repetition guards)"
+        return (
+            f"no_repeat_ngram={self.no_repeat_ngram_size}, "
+            f"repetition_penalty={self.repetition_penalty:g}"
+        )
+
+
+DEFAULT_DECODING = Decoding()
+
+
 def _installed(module: str) -> bool:
     try:
         return importlib.util.find_spec(module) is not None
@@ -60,16 +106,22 @@ class Runtime:
     and therefore any benchmark comparing them — incomparable.
     """
 
-    def __init__(self, name: str, description: str):
+    # whisper.cpp is the exception: pywhispercpp exposes no generation knobs,
+    # so it always decodes with whisper.cpp's own defaults. Say so rather than
+    # letting a comparison quietly mean two different things.
+    honours_decoding = True
+
+    def __init__(self, name: str, description: str, decoding=None):
         self.name = name
         self.description = description
+        self.decoding = decoding or DEFAULT_DECODING
 
     def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
         raise NotImplementedError
 
 
 class PyTorchRuntime(Runtime):
-    def __init__(self, model_key: str, threads: int | None = None):
+    def __init__(self, model_key: str, threads: int | None = None, decoding=None):
         import torch
 
         from transcribe import load_pipeline, pick_device
@@ -78,12 +130,12 @@ class PyTorchRuntime(Runtime):
             torch.set_num_threads(threads)
         device = pick_device()
         self._pipeline = load_pipeline(model_key, device)
-        super().__init__("pytorch", f"PyTorch on {device}")
+        super().__init__("pytorch", f"PyTorch on {device}", decoding)
 
     def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
         generate_kwargs = {
-            "no_repeat_ngram_size": NO_REPEAT_NGRAM_SIZE,
-            "repetition_penalty": REPETITION_PENALTY,
+            "no_repeat_ngram_size": self.decoding.no_repeat_ngram_size,
+            "repetition_penalty": self.decoding.repetition_penalty,
         }
         if language != "auto":
             # "transcribe" rather than "translate": without it a pinned
@@ -98,7 +150,7 @@ class PyTorchRuntime(Runtime):
 
 
 class OpenVINORuntime(Runtime):
-    def __init__(self, model_key: str, device: str, threads: int | None = None):
+    def __init__(self, model_key: str, device: str, threads: int | None = None, decoding=None):
         from optimum.intel import OVModelForSpeechSeq2Seq
         from transformers import AutoProcessor
 
@@ -116,7 +168,7 @@ class OpenVINORuntime(Runtime):
             path, device=device, ov_config=ov_config
         )
         self._processor = AutoProcessor.from_pretrained(path)
-        super().__init__(f"openvino-{device.lower()}", f"OpenVINO on {device}")
+        super().__init__(f"openvino-{device.lower()}", f"OpenVINO on {device}", decoding)
 
     def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
         features = self._processor(
@@ -128,15 +180,17 @@ class OpenVINORuntime(Runtime):
             extra["task"] = "transcribe"
         tokens = self._model.generate(
             features,
-            no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
-            repetition_penalty=REPETITION_PENALTY,
+            no_repeat_ngram_size=self.decoding.no_repeat_ngram_size,
+            repetition_penalty=self.decoding.repetition_penalty,
             **extra,
         )
         return self._processor.batch_decode(tokens, skip_special_tokens=True)[0].strip()
 
 
 class WhisperCppRuntime(Runtime):
-    def __init__(self, model_key: str, threads: int | None = None):
+    honours_decoding = False
+
+    def __init__(self, model_key: str, threads: int | None = None, decoding=None):
         from pywhispercpp.model import Model
 
         path = converted_dir("whispercpp", model_key)
@@ -157,7 +211,7 @@ class WhisperCppRuntime(Runtime):
             print_realtime=False,
             **extra,
         )
-        super().__init__("whispercpp", f"whisper.cpp (GGML) — {weights[0].name}")
+        super().__init__("whispercpp", f"whisper.cpp (GGML) — {weights[0].name}", decoding)
 
     def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
         # whisper.cpp spells auto-detection as the literal language "auto"
@@ -166,7 +220,7 @@ class WhisperCppRuntime(Runtime):
 
 
 class CTranslate2Runtime(Runtime):
-    def __init__(self, model_key: str, threads: int | None = None):
+    def __init__(self, model_key: str, threads: int | None = None, decoding=None):
         from faster_whisper import WhisperModel
 
         path = converted_dir("ctranslate2", model_key)
@@ -180,7 +234,7 @@ class CTranslate2Runtime(Runtime):
         self._model = WhisperModel(
             str(path), device="cpu", compute_type="int8", cpu_threads=threads or 0
         )
-        super().__init__("ctranslate2", "CTranslate2 int8 on CPU")
+        super().__init__("ctranslate2", "CTranslate2 int8 on CPU", decoding)
 
     def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
         segments, _ = self._model.transcribe(
@@ -199,8 +253,8 @@ class CTranslate2Runtime(Runtime):
             # each chunk is transcribed independently here, so carrying text
             # across calls would only help a hallucination propagate
             condition_on_previous_text=False,
-            no_repeat_ngram_size=NO_REPEAT_NGRAM_SIZE,
-            repetition_penalty=REPETITION_PENALTY,
+            no_repeat_ngram_size=self.decoding.no_repeat_ngram_size,
+            repetition_penalty=self.decoding.repetition_penalty,
         )
         return "".join(segment.text for segment in segments).strip()
 
@@ -356,21 +410,30 @@ RUNTIME_NAMES = [
 ]
 
 
-def load_runtime(name: str, model_key: str, threads: int | None = None) -> Runtime:
-    """Load one runtime. `threads` is the library-specific thread count, or
-    None to leave that library's own default alone."""
+def load_runtime(
+    name: str,
+    model_key: str,
+    threads: int | None = None,
+    decoding: Decoding | None = None,
+) -> Runtime:
+    """Load one runtime.
+
+    `threads` is the library-specific thread count, or None to leave that
+    library's own default alone. `decoding` is the repetition guard set, or
+    None for the ADR 0004 defaults; Decoding.off() decodes plain greedy.
+    """
     if name not in RUNTIME_NAMES:
         raise ValueError(f"Unknown runtime {name!r}")
     if model_key not in discover():
         raise ValueError(f"Unknown model {model_key!r}")
 
     if name == "pytorch":
-        return PyTorchRuntime(model_key, threads)
+        return PyTorchRuntime(model_key, threads, decoding)
     if name.startswith("openvino-"):
-        return OpenVINORuntime(model_key, name.split("-")[1].upper(), threads)
+        return OpenVINORuntime(model_key, name.split("-")[1].upper(), threads, decoding)
     if name == "whispercpp":
-        return WhisperCppRuntime(model_key, threads)
-    return CTranslate2Runtime(model_key, threads)
+        return WhisperCppRuntime(model_key, threads, decoding)
+    return CTranslate2Runtime(model_key, threads, decoding)
 
 
 def main() -> None:
