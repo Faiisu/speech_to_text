@@ -126,7 +126,7 @@ Omitting `--file` starts a live microphone session:
 
 1. Press Enter to start recording (or pass `--auto-start` to begin immediately once the model finishes loading, no keypress needed)
 2. Speak — every 5 seconds of audio (with 1s overlap between chunks) is transcribed and printed live as `[chunk @ Xs] <text> (latency ..s, RTF ..)`. A chunk with no real audio energy (silence) is skipped and printed as `[chunk @ Xs] (silence, skipped)` instead of being sent to the model — Whisper-family models otherwise hallucinate plausible-sounding text from silence, since they have no "say nothing" output. Tune this with `--silence-threshold` (default `0.02`; lower it if quiet speech gets skipped, raise it if background noise still triggers hallucinated text — some microphones' ambient noise floor sits above the default, so don't assume `0.02` works everywhere without checking).
-   - Separately, generation is configured to avoid Whisper's repetition-loop failure mode (regenerating the same phrase over and over when there's no clear speech) — see ADR 0004. This doesn't eliminate an occasional single hallucinated word from noise that clears the silence threshold; that's what `--silence-threshold` tuning is for.
+   - Separately, Whisper's repetition-loop failure mode (regenerating the same phrase over and over when there's no clear speech) has its own mitigation — see ADR 0004 — which is available per session but **off by default**; raise `--repetition-penalty` if a recording loops. Neither that nor the silence gate eliminates an occasional single hallucinated word from noise that clears the threshold; that's what `--silence-threshold` tuning is for.
 3. Press Enter again to stop — a final full-clip batch transcription then prints as a `[reference transcript]` (or `(silence, skipped)` if the whole recording was silent), for comparing against the live chunked output
 
 ### Keyword spotting, reported to the backend
@@ -376,18 +376,18 @@ Which is why the table has a **`you wait`** column: chunk length plus latency, w
 
 A longer chunk also tends to transcribe *better*: 5 seconds is far less context than the 30-second windows Whisper was trained on. The trade is responsiveness, not accuracy.
 
-### Turning the repetition guards off
+### The repetition guards (off by default)
 
-`runtimes.py` passes `no_repeat_ngram_size=3` and `repetition_penalty=1.3` to every runtime that accepts them (ADR 0004, against a real looping failure on room noise). **whisper.cpp gets neither** — pywhispercpp exposes no generation knobs — so a comparison against it is not like-for-like until they are off:
+Whisper fed noise it cannot resolve will regenerate one phrase over and over. `no_repeat_ngram_size` and `repetition_penalty` are the standard mitigation, added in ADR 0004 against exactly that failure — but they are **off by default** (`0` and `1.0`), because `whispercpp` cannot receive them at all (pywhispercpp exposes no generation knobs) and defaulting them on meant the runtimes were never being compared on the same terms. Plain greedy is the neutral baseline; the guards are something to reach for on audio that actually loops:
 
 ```bash
-uv run python transcribe.py --model turbo --runtime openvino-gpu --plain-greedy
-uv run python benchmark.py --model turbo --file clip.wav --runtime openvino-gpu --repetition-penalty 1.0,1.3
+uv run python transcribe.py --model turbo --runtime openvino-gpu --repetition-penalty 1.3 --no-repeat-ngram 3
+uv run python benchmark.py --model turbo --file clip.wav --runtime openvino-gpu --repetition-penalty 1.0,1.3,1.5
 ```
 
-`--repetition-penalty` sweeps like `--chunk` does, and prints what each setting heard. In the Web GUI they are the **Repetition penalty** and **No-repeat n-gram** fields, in both the session panel and Benchmark Studio — 1.0 and 0 respectively turn them off, and the hint under each says what the value you typed will do. The results table names the decoding used and calls out any runtime that ignored it.
+`--repetition-penalty` sweeps like `--chunk` does, and prints what each setting heard. In the Web GUI they are the **Repetition penalty** and **No-repeat n-gram** fields, in both the session panel and Benchmark Studio, and the hint under each says what the value you typed will do. The results table names the decoding used and calls out any runtime that ignored it.
 
-They are on by default because on this project's own clip, turning them off made things *worse*, not better: `ctranslate2` at 10s chunks produced `ฮัลโหลโหลโหเทส … สวัสดีครับ สวัสดีครับ สวัสดีครับ` with the guards off against `ฮัลโหล ฮาโหร่ เทส หนึ่ง สอง สาม สี่ สวัสดีครับ` with them on. Worth measuring on your own audio before concluding either way — that is what the sweep is for.
+Both directions have a cost, so measure rather than assume. On this project's own clip, `ctranslate2` at 10s chunks produced `ฮัลโหลโหลโหเทส … สวัสดีครับ สวัสดีครับ สวัสดีครับ` at 1.0 against `ฮัลโหล ฮาโหร่ เทส หนึ่ง สอง สาม สี่ สวัสดีครับ` at 1.3 — while at 1.6 the penalty started inventing words in place of the `ครับ` that Thai speech legitimately repeats. That is what the sweep is for.
 
 ### Comparing models on one runtime
 

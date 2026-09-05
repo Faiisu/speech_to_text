@@ -38,16 +38,18 @@ import numpy as np
 from model_catalog import converted_dir, discover
 from transcribe import DEFAULT_LANGUAGE, SAMPLE_RATE
 
-# Generation settings that stop Whisper looping the same phrase when there's
-# no clear speech to anchor on (see ADR 0004). Applied wherever the runtime
-# exposes the knobs.
-NO_REPEAT_NGRAM_SIZE = 3
-REPETITION_PENALTY = 1.3
+# Off by default. These stop Whisper looping one phrase on unclear speech
+# (ADR 0004) but they are blunt, and being on by default made every runtime
+# except whispercpp — which cannot receive them — decode on different terms
+# from it. Plain greedy is the neutral baseline; raise them per session when
+# the audio actually loops. Applied wherever the runtime exposes the knobs.
+NO_REPEAT_NGRAM_SIZE = 0
+REPETITION_PENALTY = 1.0
 
 
 @dataclass(frozen=True)
 class Decoding:
-    """The two anti-looping knobs, as something that can be turned off.
+    """The two anti-looping knobs, off unless a session asks for them.
 
     They were added against a real failure — room noise past the silence gate
     made Whisper regenerate one phrase dozens of times (ADR 0004) — but they
@@ -55,10 +57,10 @@ class Decoding:
     emitted, and Thai speech legitimately repeats (ครับ, สวัสดีครับ). On clean
     speech they can push the decoder off a correct word it has already used.
 
-    whisper.cpp gets neither, because pywhispercpp exposes neither, which is
-    the one difference between the runtimes that is a decision rather than an
-    accident of arithmetic. Making these settable is what turns "openvino
-    sounds worse than whispercpp" into a question with an answer.
+    whisper.cpp gets neither, because pywhispercpp exposes neither. Defaulting
+    them on therefore meant the runtimes were never compared on equal terms;
+    defaulting them off makes the comparison honest and leaves the guards as
+    something to reach for on audio that actually loops.
     """
 
     no_repeat_ngram_size: int = NO_REPEAT_NGRAM_SIZE

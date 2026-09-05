@@ -207,8 +207,9 @@ def main() -> None:
         "--repetition-penalty",
         default=str(DEFAULT_DECODING.repetition_penalty),
         help="Penalty on already-emitted tokens, or several to compare: 1.0,1.3. "
-        f"1.0 is off (default: {DEFAULT_DECODING.repetition_penalty:g}). whisper.cpp never "
-        "gets this, so turning it off is how you compare like with like.",
+        f"1.0 is off and is the default (currently {DEFAULT_DECODING.repetition_penalty:g}). "
+        "whispercpp never receives it, so the default is also the only setting on which it "
+        "can be compared with the other runtimes.",
     )
     parser.add_argument(
         "--no-repeat-ngram",

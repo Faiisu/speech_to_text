@@ -794,10 +794,10 @@ taskset -c 0-7 uv run python benchmark.py --model turbo --file audio/clip.wav --
     </div>
 
     <div class="entry">
-      <div class="entry-head"><h3>Repetition penalty &amp; no-repeat n-gram</h3><span class="tag active">default 1.3 / 3</span></div>
+      <div class="entry-head"><h3>Repetition penalty &amp; no-repeat n-gram</h3><span class="tag active">default 1.0 / 0 — off</span></div>
       <p>Whisper fed noise it can't resolve will regenerate one phrase over and over — a distinct failure from ordinary silence hallucination, and the reason these two exist (see ADR 0004). The penalty discourages tokens the model has already emitted; the n-gram setting forbids any sequence of that many tokens repeating inside one chunk.</p>
-      <p>Set the penalty to <strong>1.0</strong> and the n-gram to <strong>0</strong> to turn them off. That is exactly how <code>whispercpp</code> decodes — pywhispercpp exposes neither knob — so it is the setting to use when comparing another runtime against it like for like.</p>
-      <p>Off is not automatically better. On this project's own Thai clip, turning them off made <code>ctranslate2</code> loop (<span class="mono">ฮัลโหลโหลโห … สวัสดีครับ สวัสดีครับ สวัสดีครับ</span>) where the defaults produced clean text — and <code>whispercpp</code> looped the same way. Going the other way, above about 1.5 the penalty starts punishing the words Thai speech legitimately repeats (<span class="mono">ครับ</span>, <span class="mono">สวัสดีครับ</span>) and invents replacements for them. Sweep it (<code>--repetition-penalty 1.0,1.3,1.5</code>) on your own audio rather than taking either end on faith.</p>
+      <p>They ship <strong>off</strong> (1.0 and 0). <code>whispercpp</code> cannot receive them at all — pywhispercpp exposes neither knob — so leaving them on by default meant every other runtime was being judged on terms it could never be given. Off is the one setting on which all five are comparable.</p>
+      <p>Turn them on for audio that actually loops, and check what you traded. On this project's own Thai clip, <code>ctranslate2</code> looped at 1.0 (<span class="mono">ฮัลโหลโหลโห … สวัสดีครับ สวัสดีครับ สวัสดีครับ</span>) and read cleanly at 1.3 — but by 1.6 the penalty was inventing words in place of the <span class="mono">ครับ</span> that Thai speech legitimately repeats. Sweep it (<code>--repetition-penalty 1.0,1.3,1.5</code>) rather than taking any single value on faith.</p>
     </div>
 
     <div class="entry">

@@ -172,15 +172,12 @@ def load_audio(path: str) -> np.ndarray:
 
 
 def transcribe(asr_pipeline, audio: np.ndarray) -> str:
-    # Whisper-family models can get stuck regenerating the same phrase in a
-    # loop when there's no clear speech to anchor generation (a distinct
-    # failure mode from silence hallucination in ADR 0004 — this happens
-    # even when is_silent() lets the chunk through). These generation
-    # settings are the standard mitigation.
-    result = asr_pipeline(
-        {"array": audio, "sampling_rate": SAMPLE_RATE},
-        generate_kwargs={"no_repeat_ngram_size": 3, "repetition_penalty": 1.3},
-    )
+    # Plain greedy, matching the default in runtimes.Decoding. This held a
+    # hardcoded second copy of the anti-looping settings, which is precisely
+    # how it would have gone on applying them after they were turned off
+    # everywhere else. The runtimes take theirs per session; this helper takes
+    # no setting at all, so it applies none.
+    result = asr_pipeline({"array": audio, "sampling_rate": SAMPLE_RATE})
     return result["text"].strip()
 
 
@@ -557,23 +554,23 @@ def main() -> None:
         "--repetition-penalty",
         type=float,
         default=None,
-        help="Penalty on tokens the model has already emitted; 1.0 turns it off "
-        "(default: 1.3, from ADR 0004). It exists to stop Whisper looping one phrase on "
-        "noise, but it also punishes the words Thai speech legitimately repeats, so turn "
-        "it off if transcripts look worse than whisper.cpp's, which never gets it.",
+        help="Penalty on tokens the model has already emitted; 1.0 is off and is the "
+        "default. Raise it (1.3 was the old default, from ADR 0004) to stop Whisper "
+        "looping one phrase on noise — at the cost of punishing the words Thai speech "
+        "legitimately repeats. whispercpp never receives it at any value.",
     )
     parser.add_argument(
         "--no-repeat-ngram",
         type=int,
         default=None,
-        help="Forbid repeating any n-gram of this size within a chunk; 0 turns it off "
-        "(default: 3). Same trade as --repetition-penalty.",
+        help="Forbid repeating any n-gram of this size within a chunk; 0 is off and is "
+        "the default. Same trade as --repetition-penalty.",
     )
     parser.add_argument(
         "--plain-greedy",
         action="store_true",
-        help="Shorthand for --repetition-penalty 1.0 --no-repeat-ngram 0, i.e. decode the "
-        "way whisper.cpp does.",
+        help="Shorthand for --repetition-penalty 1.0 --no-repeat-ngram 0. Now the "
+        "default, so this only states explicitly what you already get.",
     )
     parser.add_argument(
         "--silence-threshold",
