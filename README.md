@@ -385,7 +385,7 @@ uv run python transcribe.py --model turbo --runtime openvino-gpu --plain-greedy
 uv run python benchmark.py --model turbo --file clip.wav --runtime openvino-gpu --repetition-penalty 1.0,1.3
 ```
 
-`--repetition-penalty` sweeps like `--chunk` does, and prints what each setting heard. In the Web GUI it is the **Repetition guards** checkbox, in both the session panel and Benchmark Studio; the results table names the decoding used and calls out any runtime that ignored it.
+`--repetition-penalty` sweeps like `--chunk` does, and prints what each setting heard. In the Web GUI they are the **Repetition penalty** and **No-repeat n-gram** fields, in both the session panel and Benchmark Studio — 1.0 and 0 respectively turn them off, and the hint under each says what the value you typed will do. The results table names the decoding used and calls out any runtime that ignored it.
 
 They are on by default because on this project's own clip, turning them off made things *worse*, not better: `ctranslate2` at 10s chunks produced `ฮัลโหลโหลโหเทส … สวัสดีครับ สวัสดีครับ สวัสดีครับ` with the guards off against `ฮัลโหล ฮาโหร่ เทส หนึ่ง สอง สาม สี่ สวัสดีครับ` with them on. Worth measuring on your own audio before concluding either way — that is what the sweep is for.
 

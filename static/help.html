@@ -794,6 +794,13 @@ taskset -c 0-7 uv run python benchmark.py --model turbo --file audio/clip.wav --
     </div>
 
     <div class="entry">
+      <div class="entry-head"><h3>Repetition penalty &amp; no-repeat n-gram</h3><span class="tag active">default 1.3 / 3</span></div>
+      <p>Whisper fed noise it can't resolve will regenerate one phrase over and over — a distinct failure from ordinary silence hallucination, and the reason these two exist (see ADR 0004). The penalty discourages tokens the model has already emitted; the n-gram setting forbids any sequence of that many tokens repeating inside one chunk.</p>
+      <p>Set the penalty to <strong>1.0</strong> and the n-gram to <strong>0</strong> to turn them off. That is exactly how <code>whispercpp</code> decodes — pywhispercpp exposes neither knob — so it is the setting to use when comparing another runtime against it like for like.</p>
+      <p>Off is not automatically better. On this project's own Thai clip, turning them off made <code>ctranslate2</code> loop (<span class="mono">ฮัลโหลโหลโห … สวัสดีครับ สวัสดีครับ สวัสดีครับ</span>) where the defaults produced clean text — and <code>whispercpp</code> looped the same way. Going the other way, above about 1.5 the penalty starts punishing the words Thai speech legitimately repeats (<span class="mono">ครับ</span>, <span class="mono">สวัสดีครับ</span>) and invents replacements for them. Sweep it (<code>--repetition-penalty 1.0,1.3,1.5</code>) on your own audio rather than taking either end on faith.</p>
+    </div>
+
+    <div class="entry">
       <div class="entry-head"><h3>Silence threshold</h3><span class="tag active">default 0.02</span></div>
       <p>Audio energy floor calculated via Root Mean Square (RMS). Chunks with audio energy below this threshold are skipped and logged as <span class="mono">silence — skipped</span>.</p>
       <p>Whisper models lack an explicit "silence" token; when presented with low-level background noise or room tone, they tend to hallucinate plausible Thai text or loop repetitive phrases. Energy gating filters this noise out before sending audio to the model.</p>

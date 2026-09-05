@@ -639,11 +639,15 @@
       </div>
 
       <div class="field">
-        <label class="check-item" for="repetitionGuard" style="cursor:pointer">
-          <input id="repetitionGuard" type="checkbox" checked>
-          <span>Repetition guards</span>
-        </label>
-        <span class="hint">On by default: penalises repeated tokens so noise can't make Whisper loop one phrase (ADR 0004). whisper.cpp never gets them — untick to decode the same way it does, which is the first thing to try when another runtime's words look worse than its.</span>
+        <label for="repetitionPenalty">Repetition penalty</label>
+        <input id="repetitionPenalty" type="number" step="0.05" min="1" max="2" value="1.3" oninput="describeRepetition()">
+        <span class="hint" id="repetitionHint"></span>
+      </div>
+
+      <div class="field">
+        <label for="noRepeatNgram">No-repeat n-gram</label>
+        <input id="noRepeatNgram" type="number" step="1" min="0" max="10" value="3" oninput="describeRepetition()">
+        <span class="hint" id="ngramHint"></span>
       </div>
 
       <div class="field">
@@ -733,11 +737,15 @@
       </div>
 
       <div class="field">
-        <label class="check-item" for="benchRepetitionGuard" style="cursor:pointer">
-          <input id="benchRepetitionGuard" type="checkbox" checked>
-          <span>Repetition guards</span>
-        </label>
-        <span class="hint">Applied to every row. Untick to compare the other runtimes on whisper.cpp's terms — it decodes without them either way.</span>
+        <label for="benchRepetitionPenalty">Repetition penalty</label>
+        <input id="benchRepetitionPenalty" type="number" step="0.05" min="1" max="2" value="1.3">
+        <span class="hint">Applied to every row, so they stay comparable. 1.0 is off — that is whisper.cpp's terms, since it never gets this setting either way.</span>
+      </div>
+
+      <div class="field">
+        <label for="benchNoRepeatNgram">No-repeat n-gram</label>
+        <input id="benchNoRepeatNgram" type="number" step="1" min="0" max="10" value="3">
+        <span class="hint">0 is off.</span>
       </div>
 
       <div class="field">
@@ -959,10 +967,11 @@
     const chunk = parseFloat(document.getElementById('chunkSeconds').value);
     if (!Number.isNaN(chunk)) body.chunk_seconds = chunk;
 
-    if (!document.getElementById('repetitionGuard').checked) {
-      body.repetition_penalty = 1.0;
-      body.no_repeat_ngram_size = 0;
-    }
+    const penalty = parseFloat(document.getElementById('repetitionPenalty').value);
+    if (!Number.isNaN(penalty)) body.repetition_penalty = penalty;
+
+    const ngram = parseInt(document.getElementById('noRepeatNgram').value, 10);
+    if (!Number.isNaN(ngram)) body.no_repeat_ngram_size = ngram;
 
     const backendUrl = document.getElementById('backendUrl').value.trim();
     if (backendUrl) body.backend_url = backendUrl;
@@ -1093,6 +1102,34 @@
       `Whisper pads every chunk to 30s, so this uses ${used}% of the work it does either way. `
       + `Longer is cheaper per second of audio and gives more context — but nothing appears `
       + `until ${value}s has been spoken.`;
+  }
+
+  // These two are the ADR 0004 anti-looping guards. They are the one place a
+  // runtime comparison stops being like-for-like — whisper.cpp gets neither —
+  // so the hint has to say what each value means, not just accept a number.
+  function describeRepetition() {
+    const penalty = parseFloat(document.getElementById('repetitionPenalty').value);
+    const ngram = parseInt(document.getElementById('noRepeatNgram').value, 10);
+    const hint = document.getElementById('repetitionHint');
+    const ngramHint = document.getElementById('ngramHint');
+
+    if (Number.isNaN(penalty) || penalty < 1) {
+      hint.textContent = 'Must be at least 1.0 — the server will refuse anything lower.';
+    } else if (penalty === 1) {
+      hint.textContent = 'Off — decoding on whisper.cpp\'s terms. Measured on this project\'s clip, off made other runtimes loop ("สวัสดีครับ สวัสดีครับ สวัสดีครับ"), so compare before keeping it.';
+    } else if (penalty > 1.5) {
+      hint.textContent = `${penalty} is strong: it punishes every token already said, including the ones Thai speech legitimately repeats. Expect invented words in place of correct repeats.`;
+    } else {
+      hint.textContent = `Penalises tokens the model has already emitted, so noise can't make it loop one phrase (ADR 0004). 1.3 is the default; 1.0 turns it off.`;
+    }
+
+    if (Number.isNaN(ngram) || ngram < 0) {
+      ngramHint.textContent = 'Must be 0 or more.';
+    } else if (ngram === 0) {
+      ngramHint.textContent = 'Off — any phrase may repeat within a chunk.';
+    } else {
+      ngramHint.textContent = `No sequence of ${ngram} tokens may repeat inside one chunk. Lower values forbid more, so a genuinely repeated phrase gets rewritten instead.`;
+    }
   }
 
   // ---- languages ----
@@ -1566,6 +1603,10 @@
     const silence = Number.isNaN(silenceVal) ? 0.02 : silenceVal;
     const chunkVal = parseFloat(document.getElementById('benchChunkSeconds').value);
     const benchChunk = Number.isNaN(chunkVal) ? 5 : chunkVal;
+    const penaltyVal = parseFloat(document.getElementById('benchRepetitionPenalty').value);
+    const benchPenalty = Number.isNaN(penaltyVal) ? 1.3 : penaltyVal;
+    const ngramVal = parseInt(document.getElementById('benchNoRepeatNgram').value, 10);
+    const benchNgram = Number.isNaN(ngramVal) ? 3 : ngramVal;
 
     const runBtn = document.getElementById('benchRunBtn');
     runBtn.disabled = true;
@@ -1591,9 +1632,8 @@
           runtimes: checkedRuntimes,
           silence_threshold: silence,
           chunk_seconds: benchChunk,
-          ...(document.getElementById('benchRepetitionGuard').checked
-            ? {}
-            : { repetition_penalty: 1.0, no_repeat_ngram_size: 0 }),
+          repetition_penalty: benchPenalty,
+          no_repeat_ngram_size: benchNgram,
           language: document.getElementById('benchLanguage').value,
         }),
       });
@@ -1910,6 +1950,7 @@
   // the runtime probe is per model, so the model list has to land first
   loadModels(false).then(() => { loadRuntimes(); loadBenchRuntimes(); });
   describeChunk();
+  describeRepetition();
   loadDevices(false);
   applySource();
   loadBenchAudioFiles();
