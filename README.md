@@ -126,7 +126,7 @@ Omitting `--file` starts a live microphone session:
 
 1. Press Enter to start recording (or pass `--auto-start` to begin immediately once the model finishes loading, no keypress needed)
 2. Speak — every 5 seconds of audio (with 1s overlap between chunks) is transcribed and printed live as `[chunk @ Xs] <text> (latency ..s, RTF ..)`. A chunk with no real audio energy (silence) is skipped and printed as `[chunk @ Xs] (silence, skipped)` instead of being sent to the model — Whisper-family models otherwise hallucinate plausible-sounding text from silence, since they have no "say nothing" output. Tune this with `--silence-threshold` (default `0.02`; lower it if quiet speech gets skipped, raise it if background noise still triggers hallucinated text — some microphones' ambient noise floor sits above the default, so don't assume `0.02` works everywhere without checking).
-   - Separately, Whisper's repetition-loop failure mode (regenerating the same phrase over and over when there's no clear speech) has its own mitigation — see ADR 0004 — which is available per session but **off by default**; raise `--repetition-penalty` if a recording loops. Neither that nor the silence gate eliminates an occasional single hallucinated word from noise that clears the threshold; that's what `--silence-threshold` tuning is for.
+   - Separately, Whisper's repetition-loop failure mode (regenerating the same phrase over and over when there's no clear speech) has its own mitigation — see ADR 0004 — which is available per session but **off by default**; raise `--repetition-penalty` if the model genuinely loops on noise — check first that the repeats aren't simply what was said. Neither that nor the silence gate eliminates an occasional single hallucinated word from noise that clears the threshold; that's what `--silence-threshold` tuning is for.
 3. Press Enter again to stop — a final full-clip batch transcription then prints as a `[reference transcript]` (or `(silence, skipped)` if the whole recording was silent), for comparing against the live chunked output
 
 ### Keyword spotting, reported to the backend
@@ -378,7 +378,7 @@ A longer chunk also tends to transcribe *better*: 5 seconds is far less context 
 
 ### The repetition guards (off by default)
 
-Whisper fed noise it cannot resolve will regenerate one phrase over and over. `no_repeat_ngram_size` and `repetition_penalty` are the standard mitigation, added in ADR 0004 against exactly that failure — but they are **off by default** (`0` and `1.0`), because `whispercpp` cannot receive them at all (pywhispercpp exposes no generation knobs) and defaulting them on meant the runtimes were never being compared on the same terms. Plain greedy is the neutral baseline; the guards are something to reach for on audio that actually loops:
+Whisper fed noise it cannot resolve will regenerate one phrase over and over. `no_repeat_ngram_size` and `repetition_penalty` are the standard mitigation, added in ADR 0004 against exactly that failure — but they are **off by default** (`0` and `1.0`), because `whispercpp` cannot receive them at all (pywhispercpp exposes no generation knobs) and defaulting them on meant the runtimes were never being compared on the same terms. Plain greedy is the neutral baseline; the guards are something to reach for when the model genuinely loops on noise — not merely when the transcript contains repeats:
 
 ```bash
 uv run python transcribe.py --model turbo --runtime openvino-gpu --repetition-penalty 1.3 --no-repeat-ngram 3
@@ -387,7 +387,9 @@ uv run python benchmark.py --model turbo --file clip.wav --runtime openvino-gpu 
 
 `--repetition-penalty` sweeps like `--chunk` does, and prints what each setting heard. In the Web GUI they are the **Repetition penalty** and **No-repeat n-gram** fields, in both the session panel and Benchmark Studio, and the hint under each says what the value you typed will do. The results table names the decoding used and calls out any runtime that ignored it.
 
-Both directions have a cost, so measure rather than assume. On this project's own clip, `ctranslate2` at 10s chunks produced `ฮัลโหลโหลโหเทส … สวัสดีครับ สวัสดีครับ สวัสดีครับ` at 1.0 against `ฮัลโหล ฮาโหร่ เทส หนึ่ง สอง สาม สี่ สวัสดีครับ` at 1.3 — while at 1.6 the penalty started inventing words in place of the `ครับ` that Thai speech legitimately repeats. That is what the sweep is for.
+**Repeated output is not automatically a loop, and this is easy to get backwards.** On this project's own clip the speaker says `สวัสดีครับ` three times in a row. At 1.0 `ctranslate2` transcribes it that way — correctly. At 1.3 the penalty, having already emitted those tokens, substitutes invented words for the repeats: `สุขสวนต์ครัป การเซ็กซ์ สวยค่ะ ฤๅจิม`. The setting that looks tidier in a diff is the one destroying real speech. `whispercpp`, which never receives the penalty at any value, reproduces the repeats like 1.0 does.
+
+Thai makes this sharp — `ครับ`, `ค่ะ` and greetings repeat constantly in ordinary speech — so before raising the penalty, confirm the repetition in the transcript is not simply repetition in the audio. Check against the full-clip reference transcript printed when a session stops, and sweep with the transcripts side by side rather than trusting either end.
 
 ### Comparing models on one runtime
 

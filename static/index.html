@@ -1116,11 +1116,11 @@
     if (Number.isNaN(penalty) || penalty < 1) {
       hint.textContent = 'Must be at least 1.0 — the server will refuse anything lower.';
     } else if (penalty === 1) {
-      hint.textContent = 'Off (default) — plain greedy decoding, the same terms whispercpp decodes on. Raise it if a session loops one phrase on background noise.';
+      hint.textContent = 'Off (default) — plain greedy, the same terms whispercpp decodes on. Raise it only if the model loops on noise; repeats in the transcript are often just a speaker repeating themselves, and the penalty replaces those with invented words.';
     } else if (penalty > 1.5) {
       hint.textContent = `${penalty} is strong: it punishes every token already said, including the ones Thai speech legitimately repeats. Expect invented words in place of correct repeats.`;
     } else {
-      hint.textContent = `Penalises tokens the model has already emitted, so noise can't make it loop one phrase (ADR 0004). 1.3 was the old default; 1.0 is off.`;
+      hint.textContent = `Penalises tokens the model has already emitted, so noise can't make it loop one phrase (ADR 0004). It cannot tell a hallucinated loop from a genuine repeat — on Thai it will overwrite ครับ / สวัสดีครับ said twice. 1.3 was the old default; 1.0 is off.`;
     }
 
     if (Number.isNaN(ngram) || ngram < 0) {
