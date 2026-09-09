@@ -22,7 +22,7 @@ from benchmark_parallel import MEDIA_SUFFIXES, Options, Run, collect_clips, summ
 from model_catalog import discover
 from runtimes import probe, requires_single_worker
 from stations import config as station_config
-from stations.capture import DeviceError, input_devices, resolve_device
+from stations.capture import DeviceError, input_devices, measure_noise, resolve_device
 from stations.config import ConfigError, Settings, Station
 from stations.replay import MediaError, media_duration
 from stations.supervisor import Supervisor
@@ -140,6 +140,33 @@ def put_config(body: ConfigBody) -> dict:
     with _lock:
         running = _supervisor is not None
     return {"status": "saved", "restart_required": running}
+
+
+class NoiseBody(BaseModel):
+    device: str
+    seconds: float = 5.0
+
+
+@app.post("/api/measure-noise")
+def measure_room_noise(body: NoiseBody) -> dict:
+    """Listen to a microphone briefly and report its room's noise floor.
+
+    The silence threshold has to sit above whatever this microphone reads when
+    nobody is talking, and that number is a property of the room and the mic —
+    not something anyone can guess. Measuring it beats picking a default and
+    finding out later that half the chunks were skipped, or that room hum was
+    waking the model.
+    """
+    if not 1.0 <= body.seconds <= 15.0:
+        raise HTTPException(status_code=422, detail="Measure for between 1 and 15 seconds")
+    try:
+        return measure_noise(body.device, body.seconds)
+    except DeviceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except Exception as exc:  # noqa: BLE001 - a busy or failing mic, reported as-is
+        raise HTTPException(
+            status_code=503, detail=f"Could not read from {body.device!r}: {exc}"
+        ) from None
 
 
 @app.get("/api/models")

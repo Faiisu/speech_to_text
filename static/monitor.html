@@ -117,6 +117,12 @@
   .verdict.bad { color: var(--bad); }
   .summary { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; margin-top: 12px; }
   .streamrow { font: 11px var(--mono); color: var(--muted); padding-left: 12px; }
+  .measure { display: flex; align-items: end; gap: 8px; }
+  .measure > div { flex: 1; }
+  .noise { font: 11px var(--mono); margin-top: 6px; }
+  .noise.quiet { color: var(--ok); }
+  .noise.loud { color: var(--warn); }
+  .noise.err { color: var(--bad); }
   .out { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
   .out-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   .out-head .k { flex: 1; }
@@ -635,9 +641,68 @@ function stationEditor(station) {
   const row3 = el("div", "row");
   row3.appendChild(mk("Chunk seconds", "chunk_seconds", station.chunk_seconds ?? 5, "number"));
   row3.appendChild(mk("Overlap seconds", "overlap_seconds", station.overlap_seconds ?? 1, "number"));
-  row3.appendChild(mk("Silence threshold", "silence_threshold", station.silence_threshold ?? 0.02, "number"));
+
+  const threshold = el("div", "measure");
+  threshold.appendChild(mk("Silence threshold", "silence_threshold", station.silence_threshold ?? 0.02, "number"));
+  const measure = el("button", null, "Measure room");
+  measure.type = "button";
+  measure.title = "Record a few seconds of this microphone with nobody talking";
+  threshold.appendChild(measure);
+  const wrap = el("div");
+  wrap.appendChild(threshold);
+  const readout = el("div", "noise");
+  wrap.appendChild(readout);
+  measure.addEventListener("click", () => measureRoom(box, measure, readout));
+  row3.appendChild(wrap);
+
   box.appendChild(row3);
   return box;
+}
+
+async function measureRoom(box, button, readout) {
+  const device = box.querySelector('[data-field="device"]').value;
+  const field = box.querySelector('[data-field="silence_threshold"]');
+  if (!device) {
+    readout.className = "noise err";
+    readout.textContent = "pick a microphone first";
+    return;
+  }
+  const label = button.textContent;
+  button.disabled = true;
+  readout.className = "noise";
+  readout.textContent = "listening for 5s — stay quiet…";
+  try {
+    const r = await api("/api/measure-noise", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device, seconds: 5 }),
+    });
+    const current = parseFloat(field.value);
+    // The gate compares a whole chunk's mean against this, so what matters is
+    // how much headroom the threshold has over the floor — not the raw number.
+    const headroom = current > 0 ? (20 * Math.log10(current / r.rms)).toFixed(1) : null;
+    readout.className = "noise " + (r.noisy ? "loud" : "quiet");
+    readout.innerHTML =
+      `floor <b>${r.dbfs} dBFS</b> (RMS ${r.rms}) · loudest frame ${r.loudest_dbfs} dBFS` +
+      `<br>suggested <b>${r.suggested_threshold}</b> (${r.suggested_dbfs} dBFS)` +
+      (headroom === null ? "" : ` · current ${current} sits ${headroom} dB above the floor`) +
+      (r.noisy ? "<br>This room is loud. A threshold high enough to ignore it may also drop quiet speech." : "");
+    const apply = el("button", null, `Use ${r.suggested_threshold}`);
+    apply.type = "button";
+    apply.style.marginTop = "6px";
+    apply.addEventListener("click", () => {
+      field.value = r.suggested_threshold;
+      apply.remove();
+    });
+    readout.appendChild(el("br"));
+    readout.appendChild(apply);
+  } catch (err) {
+    readout.className = "noise err";
+    readout.textContent = err.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
 }
 
 function readStationEditors() {

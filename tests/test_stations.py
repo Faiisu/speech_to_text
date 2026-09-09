@@ -463,3 +463,71 @@ def test_clearing_an_unknown_station_is_not_an_error(client):
 
     production_server._recent.clear()
     assert client.request("DELETE", "/api/recent", params={"station_id": "nope"}).status_code == 200
+
+
+# -- room noise measurement ------------------------------------------------
+
+
+def test_measure_noise_reports_the_floor_and_a_threshold_above_it(monkeypatch):
+    """The threshold has to sit above what the mic reads in a quiet room, and
+    that number is a property of the room — not something to guess at."""
+    import stations.capture as capture
+
+    quiet = np.full(16_000 * 3, 0.01, dtype="float32")
+    monkeypatch.setattr(capture, "resolve_device", lambda name: 0)
+    monkeypatch.setattr(capture.sd, "rec", lambda *a, **k: quiet.reshape(-1, 1))
+    monkeypatch.setattr(capture.sd, "wait", lambda: None)
+
+    result = capture.measure_noise("USB Mic", 3.0)
+
+    assert result["rms"] == pytest.approx(0.01, abs=1e-4)
+    assert result["dbfs"] == pytest.approx(-40.0, abs=0.5)
+    assert result["suggested_threshold"] > result["rms"], "must leave headroom over the floor"
+    assert result["suggested_threshold"] == pytest.approx(0.03, abs=1e-3)
+    assert result["noisy"] is False
+
+
+def test_measure_noise_flags_a_room_too_loud_to_gate(monkeypatch):
+    """A floor this high is not a threshold problem, and saying so beats
+    letting someone raise the gate until real speech is dropped too."""
+    import stations.capture as capture
+
+    loud = np.full(16_000, 0.2, dtype="float32")
+    monkeypatch.setattr(capture, "resolve_device", lambda name: 0)
+    monkeypatch.setattr(capture.sd, "rec", lambda *a, **k: loud.reshape(-1, 1))
+    monkeypatch.setattr(capture.sd, "wait", lambda: None)
+
+    assert capture.measure_noise("USB Mic", 1.0)["noisy"] is True
+
+
+def test_measure_noise_endpoint_rejects_a_silly_duration(client):
+    for seconds in [0.5, 60]:
+        response = client.post("/api/measure-noise", json={"device": "x", "seconds": seconds})
+        assert response.status_code == 422
+        assert "between 1 and 15" in response.json()["detail"]
+
+
+def test_measure_noise_endpoint_reports_a_missing_microphone(client, monkeypatch):
+    import production_server
+
+    def absent(name, seconds):
+        raise DeviceError(f"No input device matching {name!r}")
+
+    monkeypatch.setattr(production_server, "measure_noise", absent)
+    response = client.post("/api/measure-noise", json={"device": "Rode NT-USB", "seconds": 5})
+    assert response.status_code == 422
+    assert "Rode NT-USB" in response.json()["detail"]
+
+
+def test_measure_noise_endpoint_reports_a_busy_microphone(client, monkeypatch):
+    """A mic held exclusively by something else is a 503 with the reason, not
+    a 500 the operator has to go read the logs for."""
+    import production_server
+
+    def busy(name, seconds):
+        raise RuntimeError("Device unavailable")
+
+    monkeypatch.setattr(production_server, "measure_noise", busy)
+    response = client.post("/api/measure-noise", json={"device": "USB Mic", "seconds": 5})
+    assert response.status_code == 503
+    assert "Device unavailable" in response.json()["detail"]

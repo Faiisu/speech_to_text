@@ -63,6 +63,64 @@ def resolve_device(name: str) -> int:
     )
 
 
+def measure_noise(device: str, seconds: float = 5.0) -> dict:
+    """Record a short sample and report how loud this microphone's room is.
+
+    The silence gate compares a whole chunk's mean RMS against a threshold, so
+    the useful question is "what does this microphone read when nobody is
+    talking" — that is the number the threshold has to sit above. Per-frame
+    percentiles come back too, because a steady hum and an occasional door
+    slam need different thresholds and one overall average hides which you
+    have.
+    """
+    index = resolve_device(device)
+    frames = int(seconds * SAMPLE_RATE)
+    recording = sd.rec(frames, samplerate=SAMPLE_RATE, channels=1,
+                       dtype="float32", device=index)
+    sd.wait()
+    audio = recording.reshape(-1)
+
+    def dbfs(value: float) -> float | None:
+        return round(float(20 * np.log10(value)), 1) if value > 0 else None
+
+    overall = float(np.sqrt(np.mean(np.square(audio)))) if audio.size else 0.0
+    # 100ms frames: short enough to separate a hum from a bang, long enough
+    # that one sample of noise doesn't dominate.
+    frame = SAMPLE_RATE // 10
+    usable = audio[: audio.size - audio.size % frame] if audio.size >= frame else audio
+    if usable.size >= frame:
+        blocks = usable.reshape(-1, frame)
+        levels = np.sqrt(np.mean(np.square(blocks), axis=1))
+    else:
+        levels = np.array([overall], dtype="float32")
+
+    median = float(np.median(levels))
+    p90 = float(np.percentile(levels, 90))
+    loudest = float(levels.max())
+
+    # Three times the measured floor is about +10dB of headroom: high enough
+    # that room noise doesn't wake the model, low enough that quiet speech
+    # still gets through.
+    suggested = round(max(overall, median) * 3, 4)
+
+    return {
+        "device": device,
+        "seconds": seconds,
+        "rms": round(overall, 5),
+        "dbfs": dbfs(overall),
+        "median_rms": round(median, 5),
+        "median_dbfs": dbfs(median),
+        "p90_dbfs": dbfs(p90),
+        "loudest_dbfs": dbfs(loudest),
+        "peak_dbfs": dbfs(float(np.abs(audio).max()) if audio.size else 0.0),
+        "suggested_threshold": suggested,
+        "suggested_dbfs": dbfs(suggested),
+        # A floor this high is not a threshold problem, and saying so beats
+        # letting the operator raise the gate until real speech is dropped too.
+        "noisy": overall > 0.05,
+    }
+
+
 class _RingBuffer:
     """Holds just enough recent audio to cut the next chunk.
 
