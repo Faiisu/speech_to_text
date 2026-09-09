@@ -419,3 +419,47 @@ def test_benchmark_rejects_extra_workers_on_the_igpu_before_loading(client):
     )
     assert response.status_code == 422
     assert "1 worker" in response.json()["detail"]
+
+
+# -- clearing the live feed ------------------------------------------------
+
+
+def test_clearing_the_feed_leaves_stored_detections_alone(client, monkeypatch):
+    """Clearing is a display action. The detections in TimescaleDB are the
+    record this system exists to produce, and must survive it."""
+    import production_server
+
+    production_server._recent.clear()
+    production_server._recent["line1"] = [{"type": "chunk", "station_id": "line1"}]
+    production_server._recent["line2"] = [{"type": "chunk", "station_id": "line2"}] * 3
+
+    calls = []
+    monkeypatch.setattr(production_server.requests, "get",
+                        lambda *a, **k: calls.append(a) or pytest.fail("must not touch the DB"))
+
+    response = client.request("DELETE", "/api/recent")
+    assert response.status_code == 200
+    assert response.json()["events"] == 4
+    assert production_server._recent == {}
+    assert not calls
+
+
+def test_clearing_one_station_leaves_the_others(client):
+    import production_server
+
+    production_server._recent.clear()
+    production_server._recent["line1"] = [{"type": "chunk"}, {"type": "chunk"}]
+    production_server._recent["line2"] = [{"type": "chunk"}]
+
+    response = client.request("DELETE", "/api/recent", params={"station_id": "line1"})
+    assert response.json()["events"] == 2
+    assert "line1" not in production_server._recent
+    assert len(production_server._recent["line2"]) == 1, "the other station is untouched"
+
+
+def test_clearing_an_unknown_station_is_not_an_error(client):
+    """Clearing a station that has said nothing yet is a no-op, not a 404."""
+    import production_server
+
+    production_server._recent.clear()
+    assert client.request("DELETE", "/api/recent", params={"station_id": "nope"}).status_code == 200

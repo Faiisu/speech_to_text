@@ -281,6 +281,22 @@ def recent(station_id: str | None = None) -> dict:
     return {"events": merged}
 
 
+@app.delete("/api/recent")
+def clear_recent(station_id: str | None = None) -> dict:
+    """Clear the live feed buffer, for one station or all of them.
+
+    Only the in-memory replay buffer: stored detections in TimescaleDB are
+    untouched, because those are the record this system exists to produce.
+    Clearing the feed is a display action, not a data one.
+    """
+    if station_id:
+        cleared = len(_recent.pop(station_id, []))
+    else:
+        cleared = sum(len(events) for events in _recent.values())
+        _recent.clear()
+    return {"status": "cleared", "events": cleared}
+
+
 @app.get("/api/events")
 def events(station: str | None = None, word: str | None = None, limit: int = 200) -> dict:
     """History from TimescaleDB, proxied so the UI has a single origin."""

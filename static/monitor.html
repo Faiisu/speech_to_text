@@ -147,6 +147,10 @@
 
 <main>
   <section id="tab-monitor">
+    <div class="actions" style="margin-bottom:12px">
+      <button id="btn-clear-all">Clear feeds</button>
+      <span class="note">Clears what is shown here. Stored detections in History are not affected.</span>
+    </div>
     <div id="stations" class="grid"></div>
     <p class="empty" id="no-stations" hidden>No stations configured yet — add one under Configuration.</p>
   </section>
@@ -315,9 +319,13 @@ function stationCard(station) {
   box.appendChild(el("div", "device", station.device));
   head.appendChild(dot);
   head.appendChild(box);
+  const clear = el("button", null, "Clear");
+  clear.title = "Clear this station's feed";
+  clear.addEventListener("click", () => clearFeed(station.id));
   const toggle = el("button", null, "Stop");
   toggle.addEventListener("click", () => toggleStation(station.id, toggle.textContent === "Start"));
   head.appendChild(el("span", "spacer"));
+  head.appendChild(clear);
   head.appendChild(toggle);
   card.appendChild(head);
   card.appendChild(el("div", "stats"));
@@ -425,6 +433,30 @@ async function refreshHealth() {
   $("#btn-stop").disabled = !running;
   renderStations();
 }
+
+function resetFeed(feed) {
+  feed.innerHTML = "";
+  feed.appendChild(el("div", "empty", "waiting for audio…"));
+}
+
+async function clearFeed(stationId) {
+  // The server buffer goes too, or a reload brings everything straight back.
+  const query = stationId ? `?station_id=${encodeURIComponent(stationId)}` : "";
+  try {
+    await api("/api/recent" + query, { method: "DELETE" });
+  } catch (err) {
+    alert(err.message);
+    return;
+  }
+  if (stationId) {
+    const feed = feeds.get(stationId);
+    if (feed) resetFeed(feed);
+  } else {
+    for (const feed of feeds.values()) resetFeed(feed);
+  }
+}
+
+$("#btn-clear-all").addEventListener("click", () => clearFeed(null));
 
 async function toggleStation(id, start) {
   try {
