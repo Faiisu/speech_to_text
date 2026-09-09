@@ -1,0 +1,20 @@
+{
+  "model": "turbo",
+  "runtime": "openvino-gpu",
+  "backend_url": "http://localhost:8000",
+  "queue_size": 6,
+  "workers": 1,
+  "stations": [
+    {
+      "id": "line1",
+      "label": "Line 1",
+      "device": "REPLACE WITH THE FULL DEVICE NAME FROM deploy/preflight.sh",
+      "keywords": ["สวัสดี"],
+      "language": "th",
+      "enabled": true,
+      "silence_threshold": 0.02,
+      "chunk_seconds": 5.0,
+      "overlap_seconds": 1.0
+    }
+  ]
+}

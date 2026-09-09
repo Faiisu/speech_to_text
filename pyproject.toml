@@ -29,3 +29,11 @@ dependencies = [
 [project.optional-dependencies]
 # Intel machines only — see README. Install with: uv sync --extra openvino
 openvino = ["optimum-intel[openvino]>=2.1"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The project's modules live at the repo root rather than in a src/ layout.
+pythonpath = ["."]

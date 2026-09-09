@@ -1,3 +1,8 @@
+# The station service (production_server.py) is deliberately NOT here: the
+# OpenVINO GPU plugin has to match the host's i915 driver, and an image that
+# drifts from the host is the usual way an iGPU deploy breaks. It runs on the
+# host as a systemd unit — see deploy/install.sh. Only the database and its
+# query API are containerised.
 services:
   timescaledb:
     image: timescale/timescaledb:latest-pg16

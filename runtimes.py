@@ -91,6 +91,18 @@ class Decoding:
 
 DEFAULT_DECODING = Decoding()
 
+# Runtimes that execute on a single exclusive accelerator. A second worker
+# thread on one of these does not add throughput — both threads contend for
+# the same execution units — and, because every worker shares one loaded
+# model, it also means concurrent calls into a library that does not promise
+# to be thread-safe. Neither risk buys anything, so these are pinned to one
+# worker rather than left as a knob that can only do harm.
+SINGLE_WORKER_RUNTIMES = frozenset({"openvino-gpu", "openvino-npu"})
+
+
+def requires_single_worker(runtime_name: str) -> bool:
+    return runtime_name in SINGLE_WORKER_RUNTIMES
+
 
 def _installed(module: str) -> bool:
     try:

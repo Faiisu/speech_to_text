@@ -1,0 +1,29 @@
+[Unit]
+Description=Typhoon Whisper station service (multi-microphone STT)
+# The keyword events go straight to TimescaleDB, which docker brings up.
+After=network-online.target docker.service sound.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=@USER@
+WorkingDirectory=@PROJECT_DIR@
+# The render group is what makes /dev/dri/renderD* readable, and therefore
+# what makes the iGPU usable at all. Without it OpenVINO reports no GPU.
+SupplementaryGroups=render audio
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/env uv run uvicorn production_server:app --host 0.0.0.0 --port 8080
+
+# Three microphones running for weeks: assume it will fall over eventually and
+# make coming back automatic rather than a Monday morning discovery.
+Restart=always
+RestartSec=10
+# Long enough for the model to load and the mics to close cleanly.
+TimeoutStopSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stt-stations
+
+[Install]
+WantedBy=multi-user.target
