@@ -14,14 +14,17 @@ SupplementaryGroups=render audio
 Environment=PYTHONUNBUFFERED=1
 # Absolute path, substituted by install.sh: uv lives in the operator's
 # ~/.local/bin, and a systemd unit starts with a bare PATH that excludes it.
-ExecStart=@UV@ run uvicorn production_server:app --host 0.0.0.0 --port 8080
+ExecStart=@UV@ run uvicorn production_server:app --host 0.0.0.0 --port 8080 \
+    --timeout-graceful-shutdown 15
 
 # Three microphones running for weeks: assume it will fall over eventually and
 # make coming back automatic rather than a Monday morning discovery.
 Restart=always
 RestartSec=10
-# Long enough for the model to load and the mics to close cleanly.
-TimeoutStopSec=60
+# The app now ends its own SSE feeds on shutdown, and uvicorn gives up on any
+# straggler after 15s, so a stop takes seconds. This is the backstop, not the
+# expected path — it used to be reached every time, ending in SIGKILL.
+TimeoutStopSec=45
 
 StandardOutput=journal
 StandardError=journal

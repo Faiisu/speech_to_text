@@ -11,10 +11,14 @@ from __future__ import annotations
 import json
 import queue
 import shutil
+import signal
 import threading
+import time
 from pathlib import Path
 
 import requests
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -34,6 +38,14 @@ from stations.config import ConfigError, Settings, Station
 from stations.replay import MediaError, media_duration
 from stations.supervisor import Supervisor
 
+# How often an idle feed emits a comment, to keep proxies from closing it.
+KEEPALIVE_SECONDS = 15
+
+
+def _keepalive_due(last: float) -> bool:
+    return time.monotonic() - last >= KEEPALIVE_SECONDS
+
+
 STATIC_DIR = Path(__file__).parent / "static"
 AUDIO_DIR = Path(__file__).parent / "audio"
 
@@ -43,7 +55,61 @@ AUDIO_DIR = Path(__file__).parent / "audio"
 MIN_DURATION_CHUNKS = 4
 MIN_DURATION_SECONDS = 20.0
 
-app = FastAPI(title="Typhoon Whisper Stations")
+# Set when the process is going down, so the SSE feeds stop looping.
+_shutting_down = threading.Event()
+_previous_handlers: dict = {}
+
+
+def _on_signal(signum, frame) -> None:
+    """End the streaming responses, then let uvicorn handle the signal."""
+    _shutting_down.set()
+    previous = _previous_handlers.get(signum)
+    if callable(previous):
+        previous(signum, frame)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Shut down deliberately rather than being killed.
+
+    Without this, systemd's stop hung until TimeoutStopSec and then SIGKILLed
+    the process: uvicorn waits for open connections to close, and an SSE feed
+    with a browser tab attached never closes on its own. A restart therefore
+    took a full minute and ended in `failed`, with microphones left open by a
+    process that never got to clean up.
+
+    The signal handler is why this is fast rather than merely bounded. Uvicorn
+    waits for connections *before* running lifespan shutdown, so setting the
+    flag here alone still costs the full graceful-shutdown timeout. Catching
+    the signal ourselves ends the feeds first, and then there is nothing left
+    to wait for.
+    """
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        try:
+            _previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, _on_signal)
+        except ValueError:
+            # Not the main thread (a test client, say) — the flag still gets
+            # set by the shutdown below, just less promptly.
+            pass
+
+    yield
+
+    for signum, handler in _previous_handlers.items():
+        try:
+            signal.signal(signum, handler)
+        except ValueError:
+            pass
+    _shutting_down.set()
+    with _lock:
+        supervisor, globals()["_supervisor"] = _supervisor, None
+    if supervisor is not None:
+        # Closes the audio devices and stops the workers, rather than leaving
+        # them to be torn down by a kill.
+        supervisor.stop()
+
+
+app = FastAPI(title="Typhoon Whisper Stations", lifespan=lifespan)
 
 _lock = threading.Lock()
 _supervisor: Supervisor | None = None
@@ -355,16 +421,22 @@ def stream() -> StreamingResponse:
     subscriber: queue.Queue = queue.Queue(maxsize=1000)
     with _subscribers_lock:
         _subscribers.append(subscriber)
+    last_keepalive = time.monotonic()
 
     def event_source():
+        nonlocal last_keepalive
         try:
             yield f"data: {json.dumps({'type': 'connected'})}\n\n"
-            while True:
+            while not _shutting_down.is_set():
                 try:
-                    event = subscriber.get(timeout=15)
+                    event = subscriber.get(timeout=1)
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 except queue.Empty:
-                    yield ": keepalive\n\n"
+                    # Also the shutdown check interval: a longer wait here is
+                    # exactly how long a stop would hang.
+                    if _keepalive_due(last_keepalive):
+                        last_keepalive = time.monotonic()
+                        yield ": keepalive\n\n"
         finally:
             with _subscribers_lock:
                 if subscriber in _subscribers:
