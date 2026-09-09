@@ -76,6 +76,13 @@
     color: var(--text); border: 1px solid var(--line); font: 13px system-ui;
   }
   input:focus, select:focus { outline: none; border-color: var(--accent); }
+  /* A runtime this machine can't run is greyed rather than hidden: knowing it
+     exists and why it is unusable is the useful part. */
+  option:disabled, option.unavailable { color: var(--muted); }
+  select option { color: var(--text); }
+  .why { font: 11px var(--mono); margin-top: 4px; min-height: 15px; }
+  .why.ok { color: var(--ok); }
+  .why.no { color: var(--warn); }
   .row { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 10px; }
   .station-edit { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: var(--panel-2); }
   .station-edit .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
@@ -143,8 +150,12 @@
       <fieldset>
         <legend>Shared</legend>
         <div class="row">
-          <div><label for="cfg-model">Model</label><input id="cfg-model" name="model"></div>
-          <div><label for="cfg-runtime">Runtime</label><input id="cfg-runtime" name="runtime"></div>
+          <div><label for="cfg-model">Model</label><select id="cfg-model" name="model"></select></div>
+          <div>
+            <label for="cfg-runtime">Runtime</label>
+            <select id="cfg-runtime" name="runtime"></select>
+            <div class="why" id="cfg-runtime-why"></div>
+          </div>
           <div><label for="cfg-backend">Backend URL</label><input id="cfg-backend" name="backend_url"></div>
         </div>
         <div class="row">
@@ -194,8 +205,12 @@
       <fieldset>
         <legend>Settings</legend>
         <div class="row">
-          <div><label for="b-model">Model</label><input id="b-model"></div>
-          <div><label for="b-runtime">Runtime</label><input id="b-runtime"></div>
+          <div><label for="b-model">Model</label><select id="b-model"></select></div>
+          <div>
+            <label for="b-runtime">Runtime</label>
+            <select id="b-runtime"></select>
+            <div class="why" id="b-runtime-why"></div>
+          </div>
           <div><label for="b-language">Language</label><input id="b-language" value="th"></div>
         </div>
         <div class="row">
@@ -424,6 +439,92 @@ $("#btn-stop").addEventListener("click", async () => {
   refreshHealth();
 });
 
+// ---- model + runtime pickers -------------------------------------------
+// What can run here is a property of the machine and of the model, so it is
+// asked for rather than hardcoded. A runtime that can't run is shown greyed
+// with the reason instead of being hidden — "why isn't openvino-gpu there?"
+// is a question the demo panel used to leave unanswered.
+let modelList = [];
+const runtimeCache = new Map();
+
+async function loadModels() {
+  if (!modelList.length) {
+    modelList = (await api("/api/models")).models;
+  }
+  return modelList;
+}
+
+function fillModelSelect(select, current) {
+  select.innerHTML = "";
+  for (const model of modelList) {
+    const option = el("option", null, model.key + (model.converted.length ? "" : "  (not converted)"));
+    option.value = model.key;
+    select.appendChild(option);
+  }
+  if (current && !modelList.some((m) => m.key === current)) {
+    const option = el("option", "unavailable", current + "  (not on this machine)");
+    option.value = current;
+    select.appendChild(option);
+  }
+  select.value = current || (modelList[0] && modelList[0].key) || "";
+}
+
+async function runtimesFor(model) {
+  if (!runtimeCache.has(model)) {
+    try {
+      runtimeCache.set(model, (await api(`/api/runtimes?model=${encodeURIComponent(model)}`)).runtimes);
+    } catch (_) {
+      runtimeCache.set(model, []);
+    }
+  }
+  return runtimeCache.get(model);
+}
+
+async function fillRuntimeSelect(select, model, current, whySelector) {
+  const entries = await runtimesFor(model);
+  select.innerHTML = "";
+  for (const entry of entries) {
+    const option = el("option", entry.available ? "" : "unavailable",
+      entry.label + (entry.available ? "" : "  — unavailable"));
+    option.value = entry.name;
+    // Greyed, and unselectable *unless it is the one already configured* —
+    // a disabled option can't be shown as the selection, and a config saved
+    // for a different machine must stay visible rather than silently change.
+    option.disabled = !entry.available && entry.name !== current;
+    option.dataset.reason = entry.reason;
+    select.appendChild(option);
+  }
+  const wanted = entries.find((e) => e.name === current);
+  if (current && !wanted) {
+    const option = el("option", "unavailable", current + "  — unknown here");
+    option.value = current;
+    option.disabled = true;
+    option.dataset.reason = "not a runtime this build knows about";
+    select.appendChild(option);
+  }
+  if (wanted && wanted.available) {
+    select.value = current;
+  } else if (current) {
+    // Keep the configured runtime visible rather than silently switching to
+    // another one: a config saved for a different machine is not a mistake.
+    select.value = current;
+  } else {
+    const first = entries.find((e) => e.available);
+    if (first) select.value = first.name;
+  }
+  const explain = () => {
+    const option = select.selectedOptions[0];
+    const box = whySelector && $(whySelector);
+    if (!box) return;
+    if (!option) { box.textContent = ""; return; }
+    box.textContent = option.dataset.reason || "";
+    box.className = "why " + (option.disabled ? "no" : "ok");
+  };
+  select.onchange = explain;
+  explain();
+}
+
+
 // ---- configuration ------------------------------------------------------
 function stationEditor(station) {
   const box = el("div", "station-edit");
@@ -520,9 +621,16 @@ async function loadConfig() {
   [config, devices] = await Promise.all([
     api("/api/config"),
     api("/api/devices").then((d) => d.devices),
+    loadModels(),
   ]);
-  $("#cfg-model").value = config.model;
-  $("#cfg-runtime").value = config.runtime;
+  fillModelSelect($("#cfg-model"), config.model);
+  await fillRuntimeSelect($("#cfg-runtime"), config.model, config.runtime, "#cfg-runtime-why");
+  // onchange, not addEventListener: loadConfig() runs again after every save
+  // and listeners would stack up.
+  $("#cfg-model").onchange = () => {
+    // Availability is per model, so the runtime list has to follow it.
+    fillRuntimeSelect($("#cfg-runtime"), $("#cfg-model").value, $("#cfg-runtime").value, "#cfg-runtime-why");
+  };
   $("#cfg-backend").value = config.backend_url;
   $("#cfg-queue").value = config.queue_size;
   $("#cfg-workers").value = config.workers;
@@ -539,8 +647,8 @@ $("#btn-add").addEventListener("click", () => {
 $("#config-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const body = {
-    model: $("#cfg-model").value.trim(),
-    runtime: $("#cfg-runtime").value.trim(),
+    model: $("#cfg-model").value,
+    runtime: $("#cfg-runtime").value,
     backend_url: $("#cfg-backend").value.trim(),
     queue_size: parseInt($("#cfg-queue").value, 10),
     workers: parseInt($("#cfg-workers").value, 10),
@@ -636,8 +744,12 @@ async function loadClips() {
     // Default the benchmark to the configured production setup, so the
     // measurement answers a question about what actually gets deployed.
     if (config) {
-      $("#b-model").value = config.model;
-      $("#b-runtime").value = config.runtime;
+      await loadModels();
+      fillModelSelect($("#b-model"), config.model);
+      await fillRuntimeSelect($("#b-runtime"), config.model, config.runtime, "#b-runtime-why");
+      $("#b-model").onchange = () => {
+        fillRuntimeSelect($("#b-runtime"), $("#b-model").value, $("#b-runtime").value, "#b-runtime-why");
+      };
       $("#b-queue").value = config.queue_size;
       $("#b-workers").value = config.workers;
       const first = config.stations[0];
@@ -766,8 +878,8 @@ $("#bench-form").addEventListener("submit", async (event) => {
     clips,
     streams: streamCounts(),
     duration: parseFloat($("#b-duration").value),
-    model: $("#b-model").value.trim(),
-    runtime: $("#b-runtime").value.trim(),
+    model: $("#b-model").value,
+    runtime: $("#b-runtime").value,
     language: $("#b-language").value.trim(),
     chunk_seconds: parseFloat($("#b-chunk").value),
     overlap_seconds: parseFloat($("#b-overlap").value),

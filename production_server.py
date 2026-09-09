@@ -19,6 +19,8 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from benchmark_parallel import MEDIA_SUFFIXES, Options, Run, collect_clips, summarise
+from model_catalog import discover
+from runtimes import probe
 from stations import config as station_config
 from stations.capture import DeviceError, input_devices, resolve_device
 from stations.config import ConfigError, Settings, Station
@@ -138,6 +140,36 @@ def put_config(body: ConfigBody) -> dict:
     with _lock:
         running = _supervisor is not None
     return {"status": "saved", "restart_required": running}
+
+
+@app.get("/api/models")
+def models() -> dict:
+    """Models this machine can offer, rediscovered on every call.
+
+    Rediscovered rather than cached so a model downloaded or converted while
+    the service runs shows up without a restart.
+    """
+    return {
+        "models": [
+            {"key": key, "repo": entry["repo"], "converted": entry["converted"],
+             "multilingual": entry["multilingual"]}
+            for key, entry in sorted(discover().items())
+        ]
+    }
+
+
+@app.get("/api/runtimes")
+def runtimes(model: str = station_config.DEFAULT_MODEL) -> dict:
+    """Which runtimes can actually run here, and why the others can't.
+
+    Availability is per model — a runtime needs that model's weights converted
+    for it — so the answer changes when the model does. The panel offered
+    openvino-npu while the door rejected it precisely because this wasn't
+    asked; the production UI asks.
+    """
+    if model not in discover():
+        raise HTTPException(status_code=422, detail=f"Unknown model {model!r}")
+    return {"runtimes": probe(model)}
 
 
 @app.get("/api/devices")

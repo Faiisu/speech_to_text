@@ -335,3 +335,44 @@ def test_benchmark_summary_reports_the_largest_sustained_count():
     none_kept_up = summarise([{"streams": 1, "sustained": False}], 5.0, "openvino-gpu")
     assert none_kept_up["max_sustained"] == 0
     assert "No stream count kept up" in none_kept_up["text"]
+
+
+# -- runtime auto-detection ------------------------------------------------
+
+
+def test_runtimes_endpoint_reports_availability_and_a_reason(client):
+    """The UI greys out what can't run here, so every entry needs a reason —
+    "why isn't openvino-gpu in the list" is the question this answers."""
+    response = client.get("/api/runtimes", params={"model": "turbo"})
+    assert response.status_code == 200
+
+    entries = response.json()["runtimes"]
+    assert {e["name"] for e in entries} >= {"pytorch", "openvino-gpu", "ctranslate2"}
+    for entry in entries:
+        assert entry["reason"], f"{entry['name']} has no reason"
+        assert isinstance(entry["available"], bool)
+    assert any(e["available"] for e in entries), "pytorch is always available"
+
+
+def test_runtime_availability_depends_on_the_model(client):
+    """A runtime needs *that model's* weights converted for it, so the answer
+    changes with the model. Asking once and reusing it is how the demo panel
+    ended up offering a runtime the door then rejected."""
+    converted = {e["name"]: e for e in client.get("/api/runtimes", params={"model": "turbo"}).json()["runtimes"]}
+    unconverted = {e["name"]: e for e in client.get("/api/runtimes", params={"model": "large-v3"}).json()["runtimes"]}
+
+    assert converted["ctranslate2"]["available"] is True
+    assert unconverted["ctranslate2"]["available"] is False
+    assert "convert_model.py" in unconverted["ctranslate2"]["reason"]
+
+
+def test_runtimes_endpoint_rejects_an_unknown_model(client):
+    assert client.get("/api/runtimes", params={"model": "no-such-model"}).status_code == 422
+
+
+def test_models_endpoint_lists_what_this_machine_offers(client):
+    models = client.get("/api/models").json()["models"]
+    keys = {m["key"] for m in models}
+    assert "turbo" in keys, "the builtin Typhoon models are always offered"
+    turbo = next(m for m in models if m["key"] == "turbo")
+    assert turbo["repo"] == "typhoon-ai/typhoon-whisper-turbo"
