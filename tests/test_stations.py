@@ -232,3 +232,106 @@ def test_report_event_survives_an_unreachable_backend(monkeypatch, capsys):
     transcribe.report_event("http://backend", "x", "turbo", "s", "Line 1")
 
     assert "failed to report event" in capsys.readouterr().out
+
+
+# -- benchmark API ---------------------------------------------------------
+
+
+@pytest.fixture
+def client():
+    from fastapi.testclient import TestClient
+    import production_server
+
+    production_server._supervisor = None
+    production_server._benchmark_running = False
+    return TestClient(production_server.app)
+
+
+def _benchmark_body(**overrides):
+    body = {
+        "clips": ["test_clip.wav"],
+        "streams": [1],
+        "duration": 60,
+        "runtime": "ctranslate2",
+        "chunk_seconds": 5,
+    }
+    return {**body, **overrides}
+
+
+@pytest.mark.parametrize(
+    "overrides, match",
+    [
+        ({"clips": []}, "at least one clip"),
+        ({"clips": ["../server.py"]}, "No such clip"),
+        ({"clips": ["nope.wav"]}, "No such clip"),
+        ({"streams": []}, "at least one stream"),
+        ({"streams": [99]}, "ceiling"),
+        ({"duration": 10}, "at least 20s"),
+        ({"duration": 25, "chunk_seconds": 10}, "at least 40s"),
+    ],
+)
+def test_benchmark_rejects_bad_requests(client, overrides, match):
+    response = client.post("/api/benchmark", json=_benchmark_body(**overrides))
+    assert response.status_code == 422
+    assert match in response.json()["detail"]
+
+
+def test_benchmark_clip_names_cannot_escape_the_audio_directory(client):
+    """The PoC panel shipped exactly this hole once (issue 14)."""
+    for name in ["../server.py", "/etc/passwd", "../../tmp/x.wav"]:
+        response = client.post("/api/benchmark", json=_benchmark_body(clips=[name]))
+        assert response.status_code == 422, f"{name} was not contained"
+
+
+def test_benchmark_refuses_while_stations_are_live(client):
+    """It saturates the machine; running it against live microphones would
+    both corrupt the timings and starve the real work."""
+    import production_server
+
+    production_server._supervisor = object()
+    try:
+        response = client.post("/api/benchmark", json=_benchmark_body())
+        assert response.status_code == 409
+        assert "Stop the station service" in response.json()["detail"]
+    finally:
+        production_server._supervisor = None
+
+
+def test_benchmark_refuses_a_second_concurrent_run(client):
+    """Two runs would contend for the same hardware and silently corrupt the
+    timings the benchmark exists to produce."""
+    import production_server
+
+    production_server._benchmark_running = True
+    try:
+        response = client.post("/api/benchmark", json=_benchmark_body())
+        assert response.status_code == 409
+        assert "already running" in response.json()["detail"]
+    finally:
+        production_server._benchmark_running = False
+
+
+def test_short_runs_are_rejected_because_the_drain_absorbs_the_backlog(client):
+    """A 12s run reported 1 stream as sustained where a 25s run did not: the
+    post-run drain window swallowed the backlog. The floor is what stops the
+    benchmark reporting a capacity the machine does not have."""
+    ok = client.post("/api/benchmark", json=_benchmark_body(duration=19))
+    assert ok.status_code == 422, "19s must be under the floor for a 5s chunk"
+
+
+def test_benchmark_summary_reports_the_largest_sustained_count():
+    from benchmark_parallel import summarise
+
+    results = [
+        {"streams": 1, "sustained": True},
+        {"streams": 2, "sustained": True},
+        {"streams": 3, "sustained": False},
+    ]
+    summary = summarise(results, 5.0, "openvino-gpu")
+    assert summary["max_sustained"] == 2
+    assert summary["first_failure"] == 3
+    assert "Sustained 2" in summary["text"]
+
+    none_kept_up = summarise([{"streams": 1, "sustained": False}], 5.0, "openvino-gpu")
+    assert none_kept_up["max_sustained"] == 0
+    assert "No stream count kept up" in none_kept_up["text"]

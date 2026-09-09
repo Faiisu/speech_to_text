@@ -92,6 +92,24 @@
   th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
   th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
   td.when { font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
+
+  .clips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .clips label { display: flex; align-items: center; gap: 6px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 0; color: var(--text); font-size: 13px; cursor: pointer; }
+  .clips input { width: auto; }
+  .modes { display: flex; gap: 8px; }
+  .modes label { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text); font-size: 13px; cursor: pointer; }
+  .modes input { width: auto; }
+  .bar { height: 6px; background: var(--panel-2); border-radius: 999px; overflow: hidden; margin: 10px 0 4px; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .4s linear; }
+  .run { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; background: var(--panel); }
+  .run h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+  .run .k { font: 11px var(--mono); color: var(--muted); }
+  .run .k b { color: var(--text); }
+  .verdict { font-weight: 600; }
+  .verdict.ok { color: var(--ok); }
+  .verdict.bad { color: var(--bad); }
+  .summary { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; margin-top: 12px; }
+  .streamrow { font: 11px var(--mono); color: var(--muted); padding-left: 12px; }
 </style>
 </head>
 <body>
@@ -110,6 +128,7 @@
   <button data-tab="monitor" aria-selected="true">Monitor</button>
   <button data-tab="config" aria-selected="false">Configuration</button>
   <button data-tab="history" aria-selected="false">History</button>
+  <button data-tab="benchmark" aria-selected="false">Benchmark</button>
 </nav>
 
 <main>
@@ -148,6 +167,57 @@
     </form>
   </section>
 
+  <section id="tab-benchmark" hidden>
+    <div id="bench-msg"></div>
+    <form id="bench-form" class="config">
+      <fieldset>
+        <legend>Material</legend>
+        <div class="clips" id="bench-clips"></div>
+        <p class="note">Audio and video from <code>audio/</code>. Fewer clips than streams is fine — they are reused round-robin.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Load</legend>
+        <div class="modes" style="margin-bottom:10px">
+          <label><input type="radio" name="mode" value="single" checked> Single stream</label>
+          <label><input type="radio" name="mode" value="parallel"> Parallel</label>
+          <label><input type="radio" name="mode" value="sweep"> Sweep</label>
+        </div>
+        <div class="row">
+          <div id="wrap-streams" hidden><label for="b-streams">Concurrent streams</label><input id="b-streams" type="number" min="2" max="16" value="3"></div>
+          <div id="wrap-sweep" hidden><label for="b-sweep">Sweep</label><input id="b-sweep" value="1,2,3,4"></div>
+          <div><label for="b-duration">Duration (s)</label><input id="b-duration" type="number" min="20" value="60"></div>
+        </div>
+        <p class="note" id="bench-mode-note"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Settings</legend>
+        <div class="row">
+          <div><label for="b-model">Model</label><input id="b-model"></div>
+          <div><label for="b-runtime">Runtime</label><input id="b-runtime"></div>
+          <div><label for="b-language">Language</label><input id="b-language" value="th"></div>
+        </div>
+        <div class="row">
+          <div><label for="b-chunk">Chunk seconds</label><input id="b-chunk" type="number" step="any" value="5"></div>
+          <div><label for="b-overlap">Overlap seconds</label><input id="b-overlap" type="number" step="any" value="1"></div>
+          <div><label for="b-queue">Queue size</label><input id="b-queue" type="number" min="1" value="6"></div>
+          <div><label for="b-workers">Workers</label><input id="b-workers" type="number" min="1" value="1"></div>
+        </div>
+        <label class="inline"><input type="checkbox" id="b-realtime" checked> Feed at microphone pace</label>
+        <p class="note">Unticked feeds as fast as the model accepts. That measures raw throughput, but &ldquo;keeping up&rdquo; stops meaning anything.</p>
+      </fieldset>
+
+      <div class="actions">
+        <button type="submit" class="primary" id="b-run">Run benchmark</button>
+        <span class="note" id="bench-status"></span>
+      </div>
+    </form>
+
+    <div class="bar" id="bench-bar" hidden><div></div></div>
+    <div id="bench-results"></div>
+  </section>
+
   <section id="tab-history" hidden>
     <div class="row" style="max-width:640px">
       <div><label for="h-station">Station</label><input id="h-station" placeholder="all stations"></div>
@@ -175,10 +245,11 @@ let health = null;
 document.querySelectorAll("nav button").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll("nav button").forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
-    for (const name of ["monitor", "config", "history"]) {
+    for (const name of ["monitor", "config", "history", "benchmark"]) {
       $("#tab-" + name).hidden = name !== btn.dataset.tab;
     }
     if (btn.dataset.tab === "history") loadHistory();
+    if (btn.dataset.tab === "benchmark") loadClips();
   });
 });
 
@@ -536,6 +607,206 @@ function connect() {
     setTimeout(connect, 3000);
   };
 }
+
+// ---- benchmark ----------------------------------------------------------
+let benchSource = null;
+
+async function loadClips() {
+  const host = $("#bench-clips");
+  if (host.dataset.loaded) return;
+  try {
+    const result = await api("/api/clips");
+    host.innerHTML = "";
+    if (!result.clips.length) {
+      host.appendChild(el("p", "note", "No audio or video in audio/ to benchmark with."));
+      return;
+    }
+    for (const clip of result.clips) {
+      const label = el("label");
+      const box = el("input");
+      box.type = "checkbox";
+      box.value = clip.name;
+      label.appendChild(box);
+      label.append(`${clip.name} (${clip.size_mb} MB)`);
+      host.appendChild(label);
+    }
+    host.querySelector("input").checked = true;
+    host.dataset.loaded = "1";
+    // Default the benchmark to the configured production setup, so the
+    // measurement answers a question about what actually gets deployed.
+    if (config) {
+      $("#b-model").value = config.model;
+      $("#b-runtime").value = config.runtime;
+      $("#b-queue").value = config.queue_size;
+      $("#b-workers").value = config.workers;
+      const first = config.stations[0];
+      if (first) {
+        $("#b-chunk").value = first.chunk_seconds;
+        $("#b-overlap").value = first.overlap_seconds;
+        $("#b-language").value = first.language;
+        $("#b-streams").value = Math.max(2, config.stations.length);
+      }
+    }
+  } catch (err) {
+    message("#bench-msg", err.message, "err");
+  }
+}
+
+function benchMode() {
+  return document.querySelector("input[name=mode]:checked").value;
+}
+
+function syncMode() {
+  const mode = benchMode();
+  $("#wrap-streams").hidden = mode !== "parallel";
+  $("#wrap-sweep").hidden = mode !== "sweep";
+  const notes = {
+    single: "One stream: how fast this model and runtime are on this machine, with nothing competing.",
+    parallel: "All streams at once against one shared model — the production shape. This is the run that tells you whether your microphones fit.",
+    sweep: "Runs each count in turn and reports the largest that kept up. Slowest option, and the one that gives you a capacity number.",
+  };
+  $("#bench-mode-note").textContent = notes[mode];
+}
+document.querySelectorAll("input[name=mode]").forEach((r) => r.addEventListener("change", syncMode));
+
+function streamCounts() {
+  const mode = benchMode();
+  if (mode === "single") return [1];
+  if (mode === "parallel") return [parseInt($("#b-streams").value, 10)];
+  return $("#b-sweep").value.split(",").map((x) => parseInt(x.trim(), 10)).filter((n) => n > 0);
+}
+
+function runCard(streams) {
+  let card = document.getElementById("run-" + streams);
+  if (card) return card;
+  card = el("div", "run");
+  card.id = "run-" + streams;
+  card.appendChild(el("h3", null, streams === 1 ? "1 stream" : streams + " streams"));
+  card.appendChild(el("div", "k", "starting…"));
+  card.appendChild(el("div", "detail"));
+  $("#bench-results").appendChild(card);
+  return card;
+}
+
+function handleBenchEvent(event) {
+  const bar = $("#bench-bar");
+  if (event.type === "init") {
+    $("#bench-results").innerHTML = "";
+    bar.hidden = false;
+    $("#bench-status").textContent =
+      `${event.clips.join(", ")} · ${event.model} on ${event.runtime} · ${event.chunk_seconds}s chunks`;
+  } else if (event.type === "loading") {
+    runCard(event.streams).querySelector(".k").textContent = "loading the shared model…";
+  } else if (event.type === "progress") {
+    const card = runCard(event.streams);
+    card.querySelector(".k").innerHTML =
+      `<b>${event.elapsed}</b>/${event.duration}s · processed <b>${event.processed}</b>` +
+      ` · dropped <b>${event.dropped}</b> · queue <b>${event.queue_depth}</b>` +
+      (event.mean_rtf == null ? "" : ` · RTF <b>${event.mean_rtf}</b>`);
+    bar.firstElementChild.style.width = Math.min(100, event.elapsed / event.duration * 100) + "%";
+  } else if (event.type === "run_done") {
+    renderRun(event.result);
+  } else if (event.type === "complete") {
+    bar.hidden = true;
+    const box = el("div", "summary");
+    box.appendChild(el("strong", null, event.summary.text));
+    $("#bench-results").appendChild(box);
+    finishBench("done");
+  } else if (event.type === "failed") {
+    bar.hidden = true;
+    message("#bench-msg", event.message, "err");
+    finishBench("failed");
+  }
+}
+
+function renderRun(result) {
+  const card = runCard(result.streams);
+  const rtf = result.mean_rtf;
+  card.querySelector(".k").innerHTML =
+    `submitted <b>${result.submitted}</b> · processed <b>${result.processed}</b>` +
+    ` · dropped <b>${result.dropped}</b> · backlog <b>${result.backlog}</b>` +
+    ` · silent <b>${result.silent}</b>`;
+  const detail = card.querySelector(".detail");
+  detail.innerHTML = "";
+  if (rtf != null) {
+    const line = el("div", "k");
+    line.innerHTML = `RTF mean <b>${rtf.toFixed(2)}</b> · p95 <b>${result.p95_rtf.toFixed(2)}</b>` +
+      ` · latency <b>${result.mean_latency.toFixed(2)}s</b> · peak queue <b>${result.max_depth}</b>`;
+    detail.appendChild(line);
+  }
+  for (const [label, value] of Object.entries(result.per_stream).sort()) {
+    detail.appendChild(el("div", "streamrow", `${label}  RTF ${value.toFixed(2)}`));
+  }
+  const verdict = el("div", "verdict " + (result.sustained ? "ok" : "bad"),
+    result.sustained ? "SUSTAINED" : "FELL BEHIND");
+  detail.appendChild(verdict);
+}
+
+function finishBench(state) {
+  $("#b-run").disabled = false;
+  $("#b-run").textContent = "Run benchmark";
+  if (state === "done") $("#bench-status").textContent += " · finished";
+  if (benchSource) { benchSource.close(); benchSource = null; }
+}
+
+$("#bench-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  message("#bench-msg", "", "ok");
+  const clips = [...document.querySelectorAll("#bench-clips input:checked")].map((c) => c.value);
+  const body = {
+    clips,
+    streams: streamCounts(),
+    duration: parseFloat($("#b-duration").value),
+    model: $("#b-model").value.trim(),
+    runtime: $("#b-runtime").value.trim(),
+    language: $("#b-language").value.trim(),
+    chunk_seconds: parseFloat($("#b-chunk").value),
+    overlap_seconds: parseFloat($("#b-overlap").value),
+    queue_size: parseInt($("#b-queue").value, 10),
+    workers: parseInt($("#b-workers").value, 10),
+    realtime: $("#b-realtime").checked,
+  };
+  $("#b-run").disabled = true;
+  $("#b-run").textContent = "Running…";
+
+  // Streamed with fetch rather than EventSource: this is a POST, and the run
+  // configuration is too big to put in a query string.
+  let response;
+  try {
+    response = await fetch("/api/benchmark", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    message("#bench-msg", err.message, "err");
+    return finishBench("failed");
+  }
+  if (!response.ok) {
+    let detail = response.statusText;
+    try { detail = (await response.json()).detail || detail; } catch (_) { /* no body */ }
+    message("#bench-msg", detail, "err");
+    return finishBench("failed");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop();
+    for (const part of parts) {
+      const line = part.split("\n").find((l) => l.startsWith("data: "));
+      if (!line) continue;
+      try { handleBenchEvent(JSON.parse(line.slice(6))); } catch (_) { /* keepalive */ }
+    }
+  }
+  finishBench("done");
+});
+syncMode();
 
 (async function init() {
   try { await loadConfig(); } catch (err) { message("#config-msg", err.message, "err"); }

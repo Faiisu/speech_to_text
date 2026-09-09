@@ -18,6 +18,7 @@ import argparse
 import statistics
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from stations.config import Settings, Station
@@ -46,13 +47,34 @@ def collect_clips(paths: list[str]) -> list[Path]:
     return clips
 
 
+@dataclass
+class Options:
+    """Everything a measurement needs, independent of where it was asked for.
+
+    The CLI fills this from argparse and the web UI from a request body, so
+    both drive exactly the same measurement rather than two that drift.
+    """
+
+    duration: float = 60.0
+    model: str = "turbo"
+    runtime: str = "openvino-gpu"
+    language: str = "th"
+    chunk_seconds: float = 5.0
+    overlap_seconds: float = 1.0
+    silence_threshold: float = 0.02
+    queue_size: int = 6
+    workers: int = 1
+    realtime: bool = True
+
+
 class Run:
     """One measured run at a fixed number of concurrent streams."""
 
-    def __init__(self, streams: int, args, clips: list) -> None:
+    def __init__(self, streams: int, args: Options, clips: list, on_event=None) -> None:
         self.streams = streams
         self.args = args
         self.clips = clips
+        self._on_event = on_event
         self.latencies: dict[str, list[float]] = {}
         self.rtfs: dict[str, list[float]] = {}
         self.silent = 0
@@ -70,6 +92,7 @@ class Run:
             self.rtfs.setdefault(event["label"], []).append(event["rtf"])
 
     def execute(self) -> dict:
+        self._emit({"type": "run_start", "streams": self.streams})
         stations = []
         for n in range(self.streams):
             clip = self.clips[n % len(self.clips)]
@@ -94,6 +117,8 @@ class Run:
             stations=stations,
         )
         engine = Engine(settings, on_event=self.on_event)
+        self._emit({"type": "loading", "streams": self.streams,
+                    "model": self.args.model, "runtime": self.args.runtime})
         engine.load()
         engine.start()
         for station in stations:
@@ -111,14 +136,35 @@ class Run:
             for n, station in enumerate(stations)
         ]
 
+        started = time.perf_counter()
         sampling = threading.Event()
+
         def sample() -> None:
+            last_emit = 0.0
             while not sampling.wait(0.25):
                 self.depths.append(engine.queue.depth)
+                now = time.perf_counter()
+                # Once a second is enough for a progress bar and keeps the SSE
+                # feed from competing with the inference it is measuring.
+                if self._on_event and now - last_emit >= 1.0:
+                    last_emit = now
+                    with self._lock:
+                        rtfs = [x for v in self.rtfs.values() for x in v]
+                        done = len(rtfs) + self.silent
+                    self._on_event({
+                        "type": "progress",
+                        "streams": self.streams,
+                        "elapsed": round(now - started, 1),
+                        "duration": self.args.duration,
+                        "processed": done,
+                        "dropped": sum(engine.queue.dropped.values()),
+                        "queue_depth": engine.queue.depth,
+                        "mean_rtf": round(statistics.mean(rtfs), 2) if rtfs else None,
+                    })
+
         sampler = threading.Thread(target=sample, daemon=True)
         sampler.start()
 
-        started = time.perf_counter()
         for capture in captures:
             capture.start()
         time.sleep(self.args.duration)
@@ -139,7 +185,7 @@ class Run:
         all_latencies = [x for v in self.latencies.values() for x in v]
         all_rtfs = [x for v in self.rtfs.values() for x in v]
 
-        return {
+        result = {
             "streams": self.streams,
             "elapsed": elapsed,
             "submitted": submitted,
@@ -158,6 +204,29 @@ class Run:
             # a run can average under 1 and still have dropped audio in bursts.
             "sustained": dropped == 0 and engine.queue.depth == 0,
         }
+        self._emit({"type": "run_done", "result": result})
+        return result
+
+    def _emit(self, event: dict) -> None:
+        if self._on_event:
+            self._on_event(event)
+
+
+def summarise(results: list[dict], chunk_seconds: float, runtime: str) -> dict:
+    """The finding, as a value — the CLI prints it, the web UI renders it."""
+    sustained = [r["streams"] for r in results if r["sustained"]]
+    failed = [r["streams"] for r in results if not r["sustained"]]
+    best = max(sustained) if sustained else 0
+    if best:
+        text = (f"Sustained {best} concurrent station{'s' if best > 1 else ''} on {runtime} "
+                f"with {chunk_seconds:g}s chunks.")
+        if failed:
+            text += (f" Fell behind at {min(failed)} — raising the chunk length spreads one "
+                     "fixed encoder pass over more audio and is the first thing to try.")
+    else:
+        text = ("No stream count kept up. Try a longer chunk, a lighter model, "
+                "or a faster runtime.")
+    return {"max_sustained": best, "first_failure": min(failed) if failed else None, "text": text}
 
 
 def report(result: dict, chunk_seconds: float) -> None:
@@ -216,11 +285,25 @@ def main() -> None:
     print(f"pacing: {'real time (as microphones)' if args.realtime else 'maximum throughput'}, "
           f"{args.duration:g}s per measurement")
 
+    options = Options(
+        duration=args.duration,
+        model=args.model,
+        runtime=args.runtime,
+        language=args.language,
+        chunk_seconds=args.chunk_seconds,
+        overlap_seconds=args.overlap_seconds,
+        silence_threshold=args.silence_threshold,
+        queue_size=args.queue_size,
+        workers=args.workers,
+        realtime=args.realtime,
+    )
+
     results = []
     for count in counts:
-        results.append(Run(count, args, clips).execute())
+        results.append(Run(count, options, clips).execute())
         report(results[-1], args.chunk_seconds)
 
+    verdict = summarise(results, args.chunk_seconds, args.runtime)
     sustained = [r["streams"] for r in results if r["sustained"]]
     print("\n" + "─" * 62)
     if sustained:

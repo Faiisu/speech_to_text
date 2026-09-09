@@ -18,17 +18,31 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from benchmark_parallel import MEDIA_SUFFIXES, Options, Run, collect_clips, summarise
 from stations import config as station_config
 from stations.capture import DeviceError, input_devices, resolve_device
 from stations.config import ConfigError, Settings, Station
+from stations.replay import MediaError
 from stations.supervisor import Supervisor
 
 STATIC_DIR = Path(__file__).parent / "static"
+AUDIO_DIR = Path(__file__).parent / "audio"
+
+# A measurement shorter than this lets the post-run drain window absorb the
+# backlog, so a run that is actually falling behind reports as sustained.
+# Four chunks is the floor at which the queue has to show its true state.
+MIN_DURATION_CHUNKS = 4
+MIN_DURATION_SECONDS = 20.0
 
 app = FastAPI(title="Typhoon Whisper Stations")
 
 _lock = threading.Lock()
 _supervisor: Supervisor | None = None
+# One benchmark at a time. Two concurrent runs would contend for the same
+# hardware and silently corrupt the very timings the benchmark exists to
+# produce — the same bug the PoC panel hit (issue 14).
+_benchmark_lock = threading.Lock()
+_benchmark_running = False
 _subscribers: list[queue.Queue] = []
 _subscribers_lock = threading.Lock()
 # The operator UI is opened after the fact, so it needs the recent past as well
@@ -273,6 +287,146 @@ def stream() -> StreamingResponse:
             with _subscribers_lock:
                 if subscriber in _subscribers:
                     _subscribers.remove(subscriber)
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# -- benchmark -------------------------------------------------------------
+
+
+class BenchmarkBody(BaseModel):
+    """A capacity measurement, single or parallel."""
+
+    clips: list[str] = Field(default_factory=list)
+    # [1] is a single-stream run; [1,2,3] sweeps to find where it stops.
+    streams: list[int] = Field(default_factory=lambda: [1])
+    duration: float = 60.0
+    model: str = station_config.DEFAULT_MODEL
+    runtime: str = station_config.DEFAULT_RUNTIME
+    language: str = "th"
+    chunk_seconds: float = 5.0
+    overlap_seconds: float = 1.0
+    silence_threshold: float = 0.02
+    queue_size: int = 6
+    workers: int = 1
+    realtime: bool = True
+
+
+@app.get("/api/clips")
+def clips() -> dict:
+    """Audio and video in audio/ that can be used as benchmark material."""
+    if not AUDIO_DIR.exists():
+        return {"clips": []}
+    found = []
+    for path in sorted(AUDIO_DIR.iterdir()):
+        if path.suffix.lower() in MEDIA_SUFFIXES:
+            found.append({"name": path.name, "size_mb": round(path.stat().st_size / 1e6, 1)})
+    return {"clips": found}
+
+
+def _resolve_clip(name: str) -> Path:
+    """Contain clip names to audio/ — the panel had this exact hole (issue 14)."""
+    candidate = (AUDIO_DIR / name).resolve()
+    if not str(candidate).startswith(str(AUDIO_DIR.resolve()) + "/") or not candidate.exists():
+        raise HTTPException(status_code=422, detail=f"No such clip: {name}")
+    return candidate
+
+
+@app.post("/api/benchmark")
+def benchmark(body: BenchmarkBody) -> StreamingResponse:
+    """Stream a capacity measurement as it runs.
+
+    Refuses while stations are live: the benchmark deliberately saturates the
+    machine, and running it against microphones that are recording would both
+    corrupt the timings and starve the real work.
+    """
+    global _benchmark_running
+
+    with _lock:
+        if _supervisor is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Stop the station service first — a benchmark saturates the "
+                       "machine and would starve the live microphones.",
+            )
+    if not body.clips:
+        raise HTTPException(status_code=422, detail="Pick at least one clip")
+    counts = sorted({n for n in body.streams if n > 0})
+    if not counts:
+        raise HTTPException(status_code=422, detail="Give at least one stream count")
+    if max(counts) > 16:
+        raise HTTPException(status_code=422, detail="16 streams is the ceiling here")
+
+    floor = max(MIN_DURATION_SECONDS, body.chunk_seconds * MIN_DURATION_CHUNKS)
+    if body.duration < floor:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Duration must be at least {floor:g}s for a {body.chunk_seconds:g}s chunk. "
+                   "A shorter run lets the drain window absorb the backlog, so a run that is "
+                   "actually falling behind reports as sustained.",
+        )
+
+    paths = [str(_resolve_clip(name)) for name in body.clips]
+    try:
+        resolved = collect_clips(paths)
+    except (SystemExit, MediaError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    with _benchmark_lock:
+        if _benchmark_running:
+            raise HTTPException(status_code=409, detail="A benchmark is already running")
+        _benchmark_running = True
+
+    options = Options(
+        duration=body.duration,
+        model=body.model,
+        runtime=body.runtime,
+        language=body.language,
+        chunk_seconds=body.chunk_seconds,
+        overlap_seconds=body.overlap_seconds,
+        silence_threshold=body.silence_threshold,
+        queue_size=body.queue_size,
+        workers=body.workers,
+        realtime=body.realtime,
+    )
+
+    def event_source():
+        global _benchmark_running
+        feed: queue.Queue = queue.Queue()
+        results: list[dict] = []
+
+        def run() -> None:
+            try:
+                for count in counts:
+                    results.append(Run(count, options, resolved, on_event=feed.put).execute())
+                feed.put({
+                    "type": "complete",
+                    "results": results,
+                    "summary": summarise(results, body.chunk_seconds, body.runtime),
+                })
+            except Exception as exc:  # noqa: BLE001 - surface it in the stream
+                feed.put({"type": "failed", "message": str(exc)})
+            finally:
+                feed.put(None)
+
+        worker = threading.Thread(target=run, name="benchmark", daemon=True)
+        worker.start()
+        try:
+            yield f"data: {json.dumps({'type': 'init', 'streams': counts, 'clips': [c.name for c in resolved], 'model': body.model, 'runtime': body.runtime, 'duration': body.duration, 'chunk_seconds': body.chunk_seconds, 'realtime': body.realtime}, ensure_ascii=False)}\n\n"
+            while True:
+                event = feed.get()
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            # Released however this ends, including the operator closing the
+            # tab mid-run — otherwise an abandoned run blocks every later one.
+            with _benchmark_lock:
+                _benchmark_running = False
 
     return StreamingResponse(
         event_source(),
