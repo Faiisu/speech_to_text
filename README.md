@@ -466,6 +466,17 @@ logs      journalctl -u stt-stations -f
 restart   systemctl restart stt-stations
 ```
 
+### Taking it down
+
+```bash
+sudo ./deploy/uninstall.sh --dry-run    # what would happen, changing nothing
+sudo ./deploy/uninstall.sh              # stop the service, remove the unit, stop the containers
+```
+
+By default it keeps the database volume, the converted models, and `stations.json` — coming back up is `sudo ./deploy/install.sh` with every stored detection still there.
+
+Deleting the data is opt-in and separate, because those detections are the record the system exists to produce and no reinstall brings them back. `--remove-data` prints how many rows are about to be destroyed and requires typing `delete the data` in full; a reflexive `y` does not do it. `--remove-models`, `--remove-config`, `--remove-venv` and `--all` are there too, all recoverable except the data. Nothing touches the source tree or git history.
+
 ### Configuring
 
 A station's source is either a local microphone or a network stream. For a camera, choose *Network stream (RTSP / CCTV)* in the source dropdown and enter the URL:
