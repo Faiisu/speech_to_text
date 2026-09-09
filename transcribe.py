@@ -239,6 +239,7 @@ def run_replay_session(
     on_event=None,
     language: str = DEFAULT_LANGUAGE,
     chunking: Chunking = DEFAULT_CHUNKING,
+    decoding=None,
 ) -> np.ndarray:
     """Feed a file through the same chunking a live session uses.
 
@@ -247,6 +248,11 @@ def run_replay_session(
     run is repeatable and needs no microphone. Chunks are processed as fast as
     the model manages rather than paced to real time; the reported latency and
     RTF are still the real per-chunk figures.
+
+    `decoding` overrides the runtime's own repetition guards for this session;
+    None leaves the runtime's default in place. It is passed per call rather
+    than baked into the runtime so that changing the guards does not mean
+    loading a second copy of the same model.
     """
     chunk_samples = chunking.chunk_samples
     step_samples = chunking.step_samples
@@ -270,7 +276,7 @@ def run_replay_session(
             continue
 
         chunk_start = time.perf_counter()
-        text = runtime.transcribe(chunk, language)
+        text = runtime.transcribe(chunk, language, decoding)
         latency = time.perf_counter() - chunk_start
         emit(
             {
@@ -311,6 +317,7 @@ def run_recording_session(
     on_event=None,
     language: str = DEFAULT_LANGUAGE,
     chunking: Chunking = DEFAULT_CHUNKING,
+    decoding=None,
 ) -> np.ndarray:
     """Records from the mic and transcribes chunks until stop_event is set.
 
@@ -319,6 +326,11 @@ def run_recording_session(
     passes a callback that just prints, to keep its existing output).
 
     Returns the full recording for a final full-clip reference pass.
+
+    `decoding` overrides the runtime's own repetition guards for this session;
+    None leaves the runtime's default in place. It is passed per call rather
+    than baked into the runtime so that changing the guards does not mean
+    loading a second copy of the same model.
     """
     frames: list[np.ndarray] = []
     lock = threading.Lock()
@@ -357,7 +369,7 @@ def run_recording_session(
                 continue
 
             chunk_start = time.perf_counter()
-            text = runtime.transcribe(chunk, language)
+            text = runtime.transcribe(chunk, language, decoding)
             latency = time.perf_counter() - chunk_start
             rtf = latency / chunking.chunk_seconds
             emit(

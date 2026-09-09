@@ -116,9 +116,15 @@ class Runtime:
     def __init__(self, name: str, description: str, decoding=None):
         self.name = name
         self.description = description
+        # The default for calls that don't name one. Decoding is not baked into
+        # the loaded model — it is a generate() kwarg — so a caller that varies
+        # it per call (the server, whose panel exposes both knobs) must not be
+        # forced to load a second copy of the weights to change it.
         self.decoding = decoding or DEFAULT_DECODING
 
-    def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
+    def transcribe(
+        self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE, decoding=None
+    ) -> str:
         raise NotImplementedError
 
 
@@ -134,10 +140,13 @@ class PyTorchRuntime(Runtime):
         self._pipeline = load_pipeline(model_key, device)
         super().__init__("pytorch", f"PyTorch on {device}", decoding)
 
-    def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
+    def transcribe(
+        self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE, decoding=None
+    ) -> str:
+        decoding = decoding or self.decoding
         generate_kwargs = {
-            "no_repeat_ngram_size": self.decoding.no_repeat_ngram_size,
-            "repetition_penalty": self.decoding.repetition_penalty,
+            "no_repeat_ngram_size": decoding.no_repeat_ngram_size,
+            "repetition_penalty": decoding.repetition_penalty,
         }
         if language != "auto":
             # "transcribe" rather than "translate": without it a pinned
@@ -172,7 +181,10 @@ class OpenVINORuntime(Runtime):
         self._processor = AutoProcessor.from_pretrained(path)
         super().__init__(f"openvino-{device.lower()}", f"OpenVINO on {device}", decoding)
 
-    def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
+    def transcribe(
+        self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE, decoding=None
+    ) -> str:
+        decoding = decoding or self.decoding
         features = self._processor(
             audio, sampling_rate=SAMPLE_RATE, return_tensors="pt"
         ).input_features
@@ -182,8 +194,8 @@ class OpenVINORuntime(Runtime):
             extra["task"] = "transcribe"
         tokens = self._model.generate(
             features,
-            no_repeat_ngram_size=self.decoding.no_repeat_ngram_size,
-            repetition_penalty=self.decoding.repetition_penalty,
+            no_repeat_ngram_size=decoding.no_repeat_ngram_size,
+            repetition_penalty=decoding.repetition_penalty,
             **extra,
         )
         return self._processor.batch_decode(tokens, skip_special_tokens=True)[0].strip()
@@ -215,7 +227,11 @@ class WhisperCppRuntime(Runtime):
         )
         super().__init__("whispercpp", f"whisper.cpp (GGML) — {weights[0].name}", decoding)
 
-    def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
+    def transcribe(
+        self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE, decoding=None
+    ) -> str:
+        # `decoding` is accepted and ignored: pywhispercpp exposes no
+        # generation knobs, which is what honours_decoding = False announces.
         # whisper.cpp spells auto-detection as the literal language "auto"
         segments = self._model.transcribe(audio, no_context=True, language=language)
         return "".join(segment.text for segment in segments).strip()
@@ -238,7 +254,10 @@ class CTranslate2Runtime(Runtime):
         )
         super().__init__("ctranslate2", "CTranslate2 int8 on CPU", decoding)
 
-    def transcribe(self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE) -> str:
+    def transcribe(
+        self, audio: np.ndarray, language: str = DEFAULT_LANGUAGE, decoding=None
+    ) -> str:
+        decoding = decoding or self.decoding
         segments, _ = self._model.transcribe(
             audio,
             # faster-whisper detects the language when this is None
@@ -255,8 +274,8 @@ class CTranslate2Runtime(Runtime):
             # each chunk is transcribed independently here, so carrying text
             # across calls would only help a hallucination propagate
             condition_on_previous_text=False,
-            no_repeat_ngram_size=self.decoding.no_repeat_ngram_size,
-            repetition_penalty=self.decoding.repetition_penalty,
+            no_repeat_ngram_size=decoding.no_repeat_ngram_size,
+            repetition_penalty=decoding.repetition_penalty,
         )
         return "".join(segment.text for segment in segments).strip()
 

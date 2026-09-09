@@ -53,6 +53,11 @@ def help_page() -> str:
 
 _lock = threading.Lock()
 _runtimes: dict[tuple[str, str], object] = {}  # (runtime, model) -> loaded runtime; loading is slow
+# Nothing evicts from this: a loaded model stays resident for the life of the
+# process so the next session starts instantly. /stop ends the recording, not
+# the residency. Decoding settings are deliberately not part of the key —
+# they are generate() kwargs passed per call, and keying on them meant every
+# repetition-penalty change loaded a second full copy of the same weights.
 _state: dict = {
     "status": "idle",  # idle | loading | recording | stopping
     "config": None,
@@ -583,9 +588,12 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
             yield f"data: {json.dumps({'type': 'runtime_start', 'id': combo, 'model': model_key, 'runtime': r_name, 'label': label})}\n\n"
 
             try:
-                runtime = _get_runtime(r_name, model_key, req.decoding)
-                # warmup
-                runtime.transcribe(audio[: chunking.chunk_samples], req.language)
+                runtime = _get_runtime(r_name, model_key)
+                # warmup — under the run's own decoding settings, so the first
+                # measured chunk isn't the one paying for a different setup
+                runtime.transcribe(
+                    audio[: chunking.chunk_samples], req.language, req.decoding
+                )
 
                 offsets = chunk_offsets(audio.size, chunking)
                 chunk_samples = chunking.chunk_samples
@@ -614,7 +622,7 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
                         continue
 
                     t0 = time.perf_counter()
-                    t_chunk = runtime.transcribe(chunk, req.language)
+                    t_chunk = runtime.transcribe(chunk, req.language, req.decoding)
                     lat = time.perf_counter() - t0
                     rtf = lat / chunking.chunk_seconds
                     latencies.append(lat)
@@ -687,14 +695,10 @@ def run_benchmark(req: BenchmarkRequest) -> StreamingResponse:
     )
 
 
-def _get_runtime(runtime_name: str, model_key: str, decoding: Decoding | None = None):
-    # The decoding settings are part of the identity of a loaded runtime:
-    # caching on (runtime, model) alone would hand back the instance built
-    # with the previous settings and quietly answer the wrong question.
-    decoding = decoding or DEFAULT_DECODING
-    key = (runtime_name, model_key, decoding)
+def _get_runtime(runtime_name: str, model_key: str):
+    key = (runtime_name, model_key)
     if key not in _runtimes:
-        _runtimes[key] = load_runtime(runtime_name, model_key, decoding=decoding)
+        _runtimes[key] = load_runtime(runtime_name, model_key)
     return _runtimes[key]
 
 
@@ -702,7 +706,7 @@ def _run_session(req: StartRequest) -> None:
     session_id = _state["session_id"]
     try:
         broadcast({"type": "session", "state": "loading", "session_id": session_id})
-        runtime = _get_runtime(req.runtime, req.model, req.decoding)
+        runtime = _get_runtime(req.runtime, req.model)
 
         with _lock:
             if _state["status"] != "loading":
@@ -755,6 +759,7 @@ def _run_session(req: StartRequest) -> None:
                 on_event=on_event,
                 language=req.language,
                 chunking=req.chunking,
+                decoding=req.decoding,
             )
         else:
             audio = run_recording_session(
@@ -769,12 +774,13 @@ def _run_session(req: StartRequest) -> None:
                 on_event=on_event,
                 language=req.language,
                 chunking=req.chunking,
+                decoding=req.decoding,
             )
 
         if is_silent(audio, req.silence_threshold):
             reference_transcript = "(silence, skipped)"
         else:
-            reference_transcript = runtime.transcribe(audio, req.language)
+            reference_transcript = runtime.transcribe(audio, req.language, req.decoding)
 
         with _lock:
             _state["reference_transcript"] = reference_transcript
