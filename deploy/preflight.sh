@@ -114,10 +114,27 @@ fi
 
 echo
 echo "Database"
-if docker compose ps timescaledb 2>/dev/null | grep -q "Up\|running"; then
-  ok "TimescaleDB container is up"
+# Reachability over HTTP, not `docker compose ps`. The station service talks to
+# the backend over the network and never touches docker, and this script runs
+# as the service user — who is typically not in the docker group, which made
+# the container check report a perfectly healthy database as down.
+BACKEND_URL="$("$UV" run python -c "
+from stations.config import load
+print(load().backend_url)
+" 2>/dev/null || echo "http://localhost:8000")"
+if curl -fsS --max-time 5 "$BACKEND_URL/health" > /dev/null 2>&1; then
+  ok "backend reachable at $BACKEND_URL, database answering"
 else
-  warn "TimescaleDB is not running — deploy/install.sh will start it"
+  warn "no answer from $BACKEND_URL — deploy/install.sh starts it (docker compose up -d)"
+fi
+
+if docker_out="$(docker compose ps --format '{{.Service}}' 2>&1)"; then
+  note_services="$(printf '%s' "$docker_out" | tr '\n' ' ')"
+  [ -n "$note_services" ] && ok "containers: $note_services"
+elif printf '%s' "$docker_out" | grep -i "permission denied" > /dev/null; then
+  # Not a problem for the service, which never uses docker — but it means the
+  # operator cannot read container logs without sudo.
+  warn "this user cannot talk to docker (needs the 'docker' group) — container logs need sudo"
 fi
 
 echo
