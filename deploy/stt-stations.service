@@ -12,7 +12,9 @@ WorkingDirectory=@PROJECT_DIR@
 # what makes the iGPU usable at all. Without it OpenVINO reports no GPU.
 SupplementaryGroups=render audio
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/env uv run uvicorn production_server:app --host 0.0.0.0 --port 8080
+# Absolute path, substituted by install.sh: uv lives in the operator's
+# ~/.local/bin, and a systemd unit starts with a bare PATH that excludes it.
+ExecStart=@UV@ run uvicorn production_server:app --host 0.0.0.0 --port 8080
 
 # Three microphones running for weeks: assume it will fall over eventually and
 # make coming back automatic rather than a Monday morning discovery.

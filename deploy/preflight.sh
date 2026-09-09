@@ -14,6 +14,8 @@ bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; FAIL=1; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 
 cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=deploy/find-uv.sh
+. "$(dirname "$0")/find-uv.sh"
 
 echo
 echo "Render node"
@@ -44,13 +46,13 @@ fi
 
 echo
 echo "OpenVINO"
-if ! uv run python -c "import openvino" > /dev/null 2>&1; then
+if ! "$UV" run python -c "import openvino" > /dev/null 2>&1; then
   bad "openvino not importable. Fix: uv sync --extra openvino"
 else
-  DEVICES="$(uv run python -c "import openvino; print(','.join(openvino.Core().available_devices))" 2>/dev/null)"
+  DEVICES="$("$UV" run python -c "import openvino; print(','.join(openvino.Core().available_devices))" 2>/dev/null)"
   if echo "$DEVICES" | tr ',' '\n' | grep -q "^GPU"; then
     ok "OpenVINO devices: $DEVICES"
-    NAME="$(uv run python -c "import openvino; c=openvino.Core(); print(c.get_property('GPU','FULL_DEVICE_NAME'))" 2>/dev/null)"
+    NAME="$("$UV" run python -c "import openvino; c=openvino.Core(); print(c.get_property('GPU','FULL_DEVICE_NAME'))" 2>/dev/null)"
     [ -n "$NAME" ] && ok "GPU is: $NAME"
   else
     bad "OpenVINO sees no GPU (devices: ${DEVICES:-none}). The runtime is installed but the driver isn't usable."
@@ -62,12 +64,12 @@ echo "Model"
 if [ -d "models/openvino-turbo" ]; then
   ok "typhoon-whisper-turbo converted at models/openvino-turbo ($(du -sh models/openvino-turbo | cut -f1))"
 else
-  bad "models/openvino-turbo missing. Fix: uv run python convert_model.py --runtime openvino --model turbo"
+  bad "models/openvino-turbo missing. Fix: "$UV" run python convert_model.py --runtime openvino --model turbo"
 fi
 
 echo
 echo "Microphones"
-MICS="$(uv run python -c "
+MICS="$("$UV" run python -c "
 from stations.capture import input_devices
 for d in input_devices(): print(f\"    [{d['index']}] {d['name']}\")
 " 2>/dev/null)"
@@ -80,7 +82,7 @@ fi
 if [ -f stations.json ]; then
   echo
   echo "Configured stations"
-  uv run python -c "
+  "$UV" run python -c "
 import sys
 from stations.config import load, ConfigError
 from stations.capture import resolve_device, DeviceError

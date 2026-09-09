@@ -18,11 +18,19 @@ step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 cd "$PROJECT_DIR"
 
 step "Dependencies"
-if ! command -v uv > /dev/null; then
-  echo "uv is not installed. See https://docs.astral.sh/uv/ and re-run." >&2
-  exit 1
-fi
-uv sync --extra openvino
+# shellcheck source=deploy/find-uv.sh
+. "$PROJECT_DIR/deploy/find-uv.sh"
+echo "using uv at $UV"
+# Run as the invoking user, not root: uv writes .venv/ and its cache, and
+# doing that as root leaves a tree the operator can no longer update.
+as_user() {
+  if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    sudo -u "$SUDO_USER" -H "$@"
+  else
+    "$@"
+  fi
+}
+as_user "$UV" sync --extra openvino
 
 step "Model: typhoon-whisper-turbo -> OpenVINO IR"
 if [ -d "models/openvino-turbo" ] && [ "$SKIP_CONVERT" != "1" ]; then
@@ -31,7 +39,7 @@ elif [ "$SKIP_CONVERT" = "1" ]; then
   echo "skipped"
 else
   # One IR serves every openvino-* runtime; the device is chosen at load time.
-  uv run python convert_model.py --runtime openvino --model turbo
+  as_user "$UV" run python convert_model.py --runtime openvino --model turbo
 fi
 
 step "Database"
@@ -61,9 +69,12 @@ step "Service"
 if [ "$(id -u)" -ne 0 ]; then
   echo "not root: skipping systemd install."
   echo "Re-run with sudo to install the unit, or start manually:"
-  echo "  uv run uvicorn production_server:app --host 0.0.0.0 --port 8080"
+  echo "  $UV run uvicorn production_server:app --host 0.0.0.0 --port 8080"
 else
+  # The unit gets uv's absolute path: systemd starts with a bare PATH and
+  # would not find it either.
   sed -e "s|@PROJECT_DIR@|${PROJECT_DIR}|g" -e "s|@USER@|${RUN_USER}|g" \
+      -e "s|@UV@|${UV}|g" \
     deploy/stt-stations.service > "$UNIT_PATH"
   systemctl daemon-reload
   systemctl enable "$SERVICE_NAME"
@@ -73,7 +84,7 @@ else
 fi
 
 step "Preflight"
-./deploy/preflight.sh || echo "(preflight reported problems — see above)"
+as_user env UV="$UV" ./deploy/preflight.sh || echo "(preflight reported problems — see above)"
 
 cat <<EOF
 
