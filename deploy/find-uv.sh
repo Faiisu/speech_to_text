@@ -31,6 +31,15 @@ find_uv() {
     return 1
 }
 
+# An explicit UV wins, which is the documented escape hatch below and also how
+# install.sh hands its own resolved path to preflight.sh. Without this the
+# nested sudo re-resolves from root's environment, finds nothing, and reports
+# uv missing immediately after having just used it.
+if [ -n "${UV:-}" ] && [ -x "${UV:-}" ]; then
+    export UV
+    return 0 2>/dev/null || true
+fi
+
 UV="$(find_uv)" || {
     echo "uv is not installed, or not where this script can find it." >&2
     echo "Install it with:  curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
