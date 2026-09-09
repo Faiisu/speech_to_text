@@ -173,7 +173,7 @@
       <fieldset>
         <legend>Material</legend>
         <div class="clips" id="bench-clips"></div>
-        <p class="note">Audio and video from <code>audio/</code>. Fewer clips than streams is fine — they are reused round-robin.</p>
+        <p class="note">Audio and video from <code>audio/</code>. Fewer clips than streams is fine — they are reused round-robin, and looped if shorter than the run.</p>
       </fieldset>
 
       <fieldset>
@@ -627,7 +627,8 @@ async function loadClips() {
       box.type = "checkbox";
       box.value = clip.name;
       label.appendChild(box);
-      label.append(`${clip.name} (${clip.size_mb} MB)`);
+      label.append(clip.name + " ");
+      label.appendChild(el("span", "k", fmtClipLength(clip.duration)));
       host.appendChild(label);
     }
     host.querySelector("input").checked = true;
@@ -650,6 +651,14 @@ async function loadClips() {
   } catch (err) {
     message("#bench-msg", err.message, "err");
   }
+}
+
+function fmtClipLength(seconds) {
+  if (seconds == null) return "(length unknown)";
+  if (seconds < 60) return seconds.toFixed(1) + "s";
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 function benchMode() {

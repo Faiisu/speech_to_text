@@ -22,7 +22,7 @@ from benchmark_parallel import MEDIA_SUFFIXES, Options, Run, collect_clips, summ
 from stations import config as station_config
 from stations.capture import DeviceError, input_devices, resolve_device
 from stations.config import ConfigError, Settings, Station
-from stations.replay import MediaError
+from stations.replay import MediaError, media_duration
 from stations.supervisor import Supervisor
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -324,7 +324,13 @@ def clips() -> dict:
     found = []
     for path in sorted(AUDIO_DIR.iterdir()):
         if path.suffix.lower() in MEDIA_SUFFIXES:
-            found.append({"name": path.name, "size_mb": round(path.stat().st_size / 1e6, 1)})
+            duration = media_duration(path)
+            found.append({
+                "name": path.name,
+                # Length is what tells the operator whether a clip is long
+                # enough for the run; file size tells them nothing useful.
+                "duration": round(duration, 1) if duration is not None else None,
+            })
     return {"clips": found}
 
 

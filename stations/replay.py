@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 
 from stations.config import Station
 from transcribe import SAMPLE_RATE, load_audio
@@ -52,6 +53,36 @@ def load_media(path: str | Path) -> np.ndarray:
         except ValueError:
             pass  # wrong sample rate — fall through to ffmpeg
     return _extract_with_ffmpeg(path)
+
+
+def media_duration(path: str | Path) -> float | None:
+    """Length in seconds, without decoding the whole file.
+
+    Returns None rather than raising when the length can't be determined: a
+    clip listing must not fail because one file is odd or ffprobe is missing.
+    """
+    path = Path(path)
+    if not path.exists():
+        return None
+    if path.suffix.lower() not in FFMPEG_EXTENSIONS:
+        try:
+            info = sf.info(str(path))
+            if info.samplerate:
+                return info.frames / info.samplerate
+        except Exception:  # noqa: BLE001 - fall through to ffprobe
+            pass
+    if not shutil.which("ffprobe"):
+        return None
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
 
 
 def _extract_with_ffmpeg(path: Path) -> np.ndarray:
