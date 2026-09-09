@@ -38,7 +38,11 @@ fi
 
 echo
 echo "Intel compute runtime"
-if command -v clinfo > /dev/null 2>&1 && clinfo 2>/dev/null | grep -qi "Intel"; then
+# Captured rather than piped into grep -q: clinfo's output is long enough that
+# grep exiting early can SIGPIPE it, and `set -o pipefail` would read that as
+# "no Intel runtime".
+CLINFO="$(clinfo 2>/dev/null || true)"
+if command -v clinfo > /dev/null 2>&1 && printf '%s' "$CLINFO" | grep -i "Intel" > /dev/null; then
   ok "Intel OpenCL runtime present"
 else
   warn "clinfo shows no Intel runtime — install intel-opencl-icd if OpenVINO can't see the GPU below"

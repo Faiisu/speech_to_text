@@ -59,6 +59,17 @@ done
 
 cd "$PROJECT_DIR"
 
+# Never `systemctl list-unit-files | grep -q`: grep exits at the first match,
+# systemctl dies of SIGPIPE partway through its several hundred lines, and
+# `set -o pipefail` turns that into a failed test. The script then reports no
+# unit installed and leaves the service running — which is exactly what it
+# did on the UBX-330M.
+unit_installed() {
+  [ -f "$UNIT_PATH" ] && return 0
+  listed="$(systemctl list-unit-files --no-legend "${SERVICE_NAME}.service" 2>/dev/null || true)"
+  [ -n "$listed" ]
+}
+
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 note() { printf '    %s\n' "$1"; }
 run()  {
@@ -72,8 +83,8 @@ run()  {
 # -- what is actually here -------------------------------------------------
 
 step "Plan"
-if systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}.service"; then
-  note "stop and remove the ${SERVICE_NAME} systemd unit"
+if unit_installed; then
+  note "stop and remove the ${SERVICE_NAME} systemd unit ($(systemctl is-active "$SERVICE_NAME" 2>/dev/null || echo unknown))"
 else
   note "systemd unit not installed — nothing to remove"
 fi
@@ -118,7 +129,7 @@ step "Service"
 if [ "$(id -u)" -ne 0 ] && [ "$DRY_RUN" -eq 0 ]; then
   note "not root: skipping systemd. Re-run with sudo to remove the unit."
 else
-  if systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}.service"; then
+  if unit_installed; then
     run systemctl stop "$SERVICE_NAME" || true
     run systemctl disable "$SERVICE_NAME" || true
     run rm -f "$UNIT_PATH"
