@@ -117,6 +117,13 @@
   .verdict.bad { color: var(--bad); }
   .summary { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; margin-top: 12px; }
   .streamrow { font: 11px var(--mono); color: var(--muted); padding-left: 12px; }
+  .out { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .out-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .out-head .k { flex: 1; }
+  .out-feed { max-height: 220px; overflow-y: auto; font-size: 13px; }
+  .out-feed .line { padding: 4px 0; }
+  .out-feed .who { font: 10px var(--mono); color: var(--accent); flex: none; width: 74px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .out-feed .line time { width: 46px; }
 </style>
 </head>
 <body>
@@ -830,6 +837,22 @@ function runCard(streams) {
   card.appendChild(el("h3", null, streams === 1 ? "1 stream" : streams + " streams"));
   card.appendChild(el("div", "k", "starting…"));
   card.appendChild(el("div", "detail"));
+
+  const out = el("div", "out");
+  const head = el("div", "out-head");
+  head.appendChild(el("span", "k", "output"));
+  const toggle = el("button", null, "hide");
+  toggle.type = "button";
+  const feed = el("div", "out-feed");
+  toggle.addEventListener("click", () => {
+    feed.hidden = !feed.hidden;
+    toggle.textContent = feed.hidden ? "show" : "hide";
+  });
+  head.appendChild(toggle);
+  out.appendChild(head);
+  out.appendChild(feed);
+  card.appendChild(out);
+
   $("#bench-results").appendChild(card);
   return card;
 }
@@ -850,6 +873,8 @@ function handleBenchEvent(event) {
       ` · dropped <b>${event.dropped}</b> · queue <b>${event.queue_depth}</b>` +
       (event.mean_rtf == null ? "" : ` · RTF <b>${event.mean_rtf}</b>`);
     bar.firstElementChild.style.width = Math.min(100, event.elapsed / event.duration * 100) + "%";
+  } else if (event.type === "transcript") {
+    appendTranscript(event);
   } else if (event.type === "run_done") {
     renderRun(event.result);
   } else if (event.type === "complete") {
@@ -863,6 +888,22 @@ function handleBenchEvent(event) {
     message("#bench-msg", event.message, "err");
     finishBench("failed");
   }
+}
+
+function appendTranscript(event) {
+  const feed = runCard(event.streams).querySelector(".out-feed");
+  const line = el("div", "line" + (event.silent ? " silent" : ""));
+  line.appendChild(el("time", null, event.time.toFixed(0) + "s"));
+  // Which stream said it: with several clips in flight the text is only
+  // meaningful next to its source.
+  const who = el("span", "who", event.label.replace(/^stream /, "#"));
+  who.title = event.label;
+  line.appendChild(who);
+  line.appendChild(el("div", "text", event.silent ? "(silence, skipped)" : event.text));
+  feed.appendChild(line);
+  while (feed.children.length > 200) feed.firstChild.remove();
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
+  if (atBottom) feed.scrollTop = feed.scrollHeight;
 }
 
 function renderRun(result) {

@@ -25,6 +25,10 @@ from stations.config import Settings, Station
 from stations.engine import Engine
 from stations.replay import MediaError, ReplayCapture, load_media
 
+# Transcripts kept per stream for the finished result. The live feed shows
+# every chunk; this is the tail that survives into the summary.
+SAMPLE_TEXTS = 5
+
 MEDIA_SUFFIXES = {
     ".wav", ".flac", ".mp3", ".ogg", ".m4a", ".aac",
     ".mp4", ".mkv", ".mov", ".avi", ".webm",
@@ -77,6 +81,7 @@ class Run:
         self._on_event = on_event
         self.latencies: dict[str, list[float]] = {}
         self.rtfs: dict[str, list[float]] = {}
+        self.texts: dict[str, list[str]] = {}
         self.silent = 0
         self.depths: list[int] = []
         self._lock = threading.Lock()
@@ -87,9 +92,28 @@ class Run:
         with self._lock:
             if event["silent"]:
                 self.silent += 1
-                return
-            self.latencies.setdefault(event["label"], []).append(event["latency"])
-            self.rtfs.setdefault(event["label"], []).append(event["rtf"])
+            else:
+                self.latencies.setdefault(event["label"], []).append(event["latency"])
+                self.rtfs.setdefault(event["label"], []).append(event["rtf"])
+                # Keep a bounded tail for the summary. The whole point of
+                # showing text is judging whether the output is usable at this
+                # load, and the last few chunks answer that as well as all of
+                # them would.
+                texts = self.texts.setdefault(event["label"], [])
+                texts.append(event["text"])
+                del texts[:-SAMPLE_TEXTS]
+        # Forwarded rather than only tallied: numbers say whether it kept up,
+        # the text says whether what it produced is worth keeping.
+        self._emit({
+            "type": "transcript",
+            "streams": self.streams,
+            "label": event["label"],
+            "time": event["time"],
+            "text": event["text"],
+            "silent": event["silent"],
+            "latency": event.get("latency"),
+            "rtf": event.get("rtf"),
+        })
 
     def execute(self) -> dict:
         self._emit({"type": "run_start", "streams": self.streams})
@@ -199,6 +223,7 @@ class Run:
             "mean_latency": statistics.mean(all_latencies) if all_latencies else None,
             "max_depth": max(self.depths) if self.depths else 0,
             "per_stream": {k: statistics.mean(v) for k, v in self.rtfs.items()},
+            "transcripts": dict(self.texts),
             # Keeping up means every chunk that a microphone produced actually
             # got transcribed. Mean RTF below 1 is not sufficient on its own:
             # a run can average under 1 and still have dropped audio in bursts.
@@ -240,6 +265,12 @@ def report(result: dict, chunk_seconds: float) -> None:
     print(f"    queue depth     max {result['max_depth']}")
     for label, rtf in sorted(result["per_stream"].items()):
         print(f"      {label:34} {rtf:.2f}")
+    transcripts = result.get("transcripts") or {}
+    if transcripts:
+        print("    output")
+        for label in sorted(transcripts):
+            for text in transcripts[label][-2:]:
+                print(f"      {label[:22]:22} {text[:70]}")
     verdict = "\033[32mSUSTAINED\033[0m" if result["sustained"] else "\033[31mFELL BEHIND\033[0m"
     print(f"    verdict: {verdict}")
 
