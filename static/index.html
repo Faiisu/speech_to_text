@@ -633,6 +633,24 @@
       </div>
 
       <div class="field">
+        <label for="chunkSeconds">Chunk length</label>
+        <input id="chunkSeconds" type="number" step="1" min="1" max="30" value="5" oninput="describeChunk()">
+        <span class="hint" id="chunkHint"></span>
+      </div>
+
+      <div class="field">
+        <label for="repetitionPenalty">Repetition penalty</label>
+        <input id="repetitionPenalty" type="number" step="0.05" min="1" max="2" value="1.0" oninput="describeRepetition()">
+        <span class="hint" id="repetitionHint"></span>
+      </div>
+
+      <div class="field">
+        <label for="noRepeatNgram">No-repeat n-gram</label>
+        <input id="noRepeatNgram" type="number" step="1" min="0" max="10" value="0" oninput="describeRepetition()">
+        <span class="hint" id="ngramHint"></span>
+      </div>
+
+      <div class="field">
         <label for="silenceThreshold">Silence threshold</label>
         <input id="silenceThreshold" type="number" step="0.001" value="0.02">
         <span class="hint">Chunks quieter than this are skipped instead of transcribed.</span>
@@ -685,8 +703,14 @@
       </div>
 
       <div class="field">
-        <label for="benchModel">Model</label>
-        <select id="benchModel" onchange="loadBenchRuntimes()"></select>
+        <div class="field-head">
+          <label>Models to compare</label>
+          <a class="linkbtn" href="/help#models" target="_blank" style="text-decoration:none">Model details ↗</a>
+        </div>
+        <div id="benchModelsList" style="display:flex; flex-direction:column; gap:0.45rem; margin-top:0.4rem">
+          <!-- Checkboxes populated dynamically -->
+        </div>
+        <span class="hint">Tick more than one to compare models on the same runtime and the same audio — an int8 build against the one it came from, say. Every model is run on every runtime ticked below.</span>
       </div>
 
       <div class="field">
@@ -704,6 +728,24 @@
           <!-- Checkboxes populated dynamically -->
         </div>
         <span class="hint">Compare execution engines on identical audio chunks.</span>
+      </div>
+
+      <div class="field">
+        <label for="benchChunkSeconds">Chunk length</label>
+        <input id="benchChunkSeconds" type="number" step="1" min="1" max="30" value="5">
+        <span class="hint">Applied to every row in the run, so they stay comparable. Whisper pads to 30s regardless — try 5 against 30 to see how much of each run is fixed cost.</span>
+      </div>
+
+      <div class="field">
+        <label for="benchRepetitionPenalty">Repetition penalty</label>
+        <input id="benchRepetitionPenalty" type="number" step="0.05" min="1" max="2" value="1.0">
+        <span class="hint">Applied to every row, so they stay comparable. 1.0 (the default) is off, which is the only setting on which <code>whispercpp</code> can be compared with the rest — it never receives this either way.</span>
+      </div>
+
+      <div class="field">
+        <label for="benchNoRepeatNgram">No-repeat n-gram</label>
+        <input id="benchNoRepeatNgram" type="number" step="1" min="0" max="10" value="0">
+        <span class="hint">0 (the default) is off.</span>
       </div>
 
       <div class="field">
@@ -728,7 +770,7 @@
       <div id="benchContent" style="padding: 1.25rem; overflow-y: auto; height: calc(100% - 45px);">
         <div class="empty" id="benchEmpty">
           <strong>Compare execution engines with a fixed clip.</strong>
-          Choose a clip and select the runtimes to test. Each runtime processes the audio through the exact same 5s/1s-overlap chunking pipeline. The fastest backend and real-time capability (RTF &lt; 1.0) will be revealed.
+          Choose a clip, then tick the models and the runtimes to test. Every ticked model is run on every ticked runtime, through the exact same 5s/1s-overlap chunking pipeline — so you can compare engines on one model, models on one engine, or the whole grid at once. Watch both columns: the fastest row is not always the one that got the words right.
         </div>
         <div id="benchRunningProgress" hidden style="margin-bottom: 1.5rem;">
           <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem">
@@ -922,6 +964,15 @@
     const threshold = parseFloat(document.getElementById('silenceThreshold').value);
     if (!Number.isNaN(threshold)) body.silence_threshold = threshold;
 
+    const chunk = parseFloat(document.getElementById('chunkSeconds').value);
+    if (!Number.isNaN(chunk)) body.chunk_seconds = chunk;
+
+    const penalty = parseFloat(document.getElementById('repetitionPenalty').value);
+    if (!Number.isNaN(penalty)) body.repetition_penalty = penalty;
+
+    const ngram = parseInt(document.getElementById('noRepeatNgram').value, 10);
+    if (!Number.isNaN(ngram)) body.no_repeat_ngram_size = ngram;
+
     const backendUrl = document.getElementById('backendUrl').value.trim();
     if (backendUrl) body.backend_url = backendUrl;
 
@@ -983,7 +1034,7 @@
   }
 
   async function loadModels(announce) {
-    const selects = ['model', 'benchModel'].map(id => document.getElementById(id));
+    const selects = ['model'].map(id => document.getElementById(id));
     const previous = selects.map(s => s.value);
     try {
       const res = await fetch('/models');
@@ -1004,6 +1055,7 @@
         const keep = modelInfo.some(m => m.key === previous[i]) ? previous[i] : data.default;
         if (keep) select.value = keep;
       });
+      renderBenchModels(data.default);
       describeModel();
       if (announce) {
         document.getElementById('modelHint').textContent =
@@ -1020,8 +1072,63 @@
         option.textContent = 'turbo';
         select.appendChild(option);
       });
+      // the benchmark's model list is checkboxes, so it needs the same
+      // fallback the select gets — an empty list silently refuses to run
+      if (!document.querySelector('input[name="benchModel"]')) {
+        modelInfo = modelInfo.length ? modelInfo : [{ key: 'turbo', label: 'turbo' }];
+        renderBenchModels('turbo');
+      }
       document.getElementById('modelHint').textContent =
         `Couldn't load the model list (${err.message}) — falling back to turbo.`;
+    }
+  }
+
+  // Whisper pads every chunk to a 30s window whatever you send it, so the
+  // encoder costs the same for 5s as for 30s. Spell out both halves of the
+  // trade — the sentence is the whole reason this field exists.
+  function describeChunk() {
+    const hint = document.getElementById('chunkHint');
+    const value = parseFloat(document.getElementById('chunkSeconds').value);
+    if (Number.isNaN(value) || value <= 0) {
+      hint.textContent = 'Seconds of audio per transcription, 1 to 30.';
+      return;
+    }
+    if (value > 30) {
+      hint.textContent = 'Above 30s Whisper drops the extra audio without an error — the server will refuse this.';
+      return;
+    }
+    const used = Math.round((value / 30) * 100);
+    hint.textContent =
+      `Whisper pads every chunk to 30s, so this uses ${used}% of the work it does either way. `
+      + `Longer is cheaper per second of audio and gives more context — but nothing appears `
+      + `until ${value}s has been spoken.`;
+  }
+
+  // These two are the ADR 0004 anti-looping guards. They are the one place a
+  // runtime comparison stops being like-for-like — whisper.cpp gets neither —
+  // so the hint has to say what each value means, not just accept a number.
+  function describeRepetition() {
+    const penalty = parseFloat(document.getElementById('repetitionPenalty').value);
+    const ngram = parseInt(document.getElementById('noRepeatNgram').value, 10);
+    const hint = document.getElementById('repetitionHint');
+    const ngramHint = document.getElementById('ngramHint');
+
+    if (Number.isNaN(penalty) || penalty < 1) {
+      hint.textContent = 'Must be at least 1.0 — the server will refuse anything lower.';
+    } else if (penalty === 1) {
+      hint.textContent = 'Off (default) — plain greedy, the same terms whispercpp decodes on. Raise it only if the model loops on noise; repeats in the transcript are often just a speaker repeating themselves, and the penalty replaces those with invented words.';
+    } else if (penalty > 1.5) {
+      hint.textContent = `${penalty} is strong: it punishes every token already said, including the ones Thai speech legitimately repeats. Expect invented words in place of correct repeats.`;
+    } else {
+      hint.textContent = `Penalises tokens the model has already emitted, so noise can't make it loop one phrase (ADR 0004). It cannot tell a hallucinated loop from a genuine repeat — on Thai it will overwrite ครับ / สวัสดีครับ said twice. 1.3 was the old default; 1.0 is off.`;
+    }
+
+    if (Number.isNaN(ngram) || ngram < 0) {
+      ngramHint.textContent = 'Must be 0 or more.';
+    } else if (ngram === 0) {
+      ngramHint.textContent = 'Off (default) — any phrase may repeat within a chunk.';
+    } else {
+      ngramHint.textContent = `No sequence of ${ngram} tokens may repeat inside one chunk. Lower values forbid more, so a genuinely repeated phrase gets rewritten instead.`;
     }
   }
 
@@ -1223,9 +1330,39 @@
     }
   }
 
+  // The benchmark's models are checkboxes, not a select: comparing models is
+  // the point of the studio, and a select can only ask about one.
+  function renderBenchModels(defaultKey) {
+    const container = document.getElementById('benchModelsList');
+    const previous = benchSelectedModels();
+    container.innerHTML = '';
+    for (const entry of modelInfo) {
+      const label = document.createElement('label');
+      label.className = 'check-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.name = 'benchModel';
+      cb.value = entry.key;
+      cb.checked = previous.length ? previous.includes(entry.key) : entry.key === defaultKey;
+      cb.onchange = loadBenchRuntimes;
+      const text = document.createElement('span');
+      text.textContent = entry.label;
+      label.appendChild(cb);
+      label.appendChild(text);
+      container.appendChild(label);
+    }
+  }
+
+  function benchSelectedModels() {
+    return Array.from(document.querySelectorAll('input[name="benchModel"]:checked')).map(c => c.value);
+  }
+
   async function loadBenchRuntimes() {
     const container = document.getElementById('benchRuntimesList');
-    const model = document.getElementById('benchModel').value;
+    // Availability is per model. With several ticked, the first one decides
+    // what is offered and the server skips (and reports) any combination the
+    // others can't run, rather than this list lying about one of them.
+    const model = benchSelectedModels()[0] || document.getElementById('model').value;
     try {
       const res = await fetch(`/runtimes?model=${encodeURIComponent(model)}`);
       if (!res.ok) return;
@@ -1452,7 +1589,11 @@
       alert('Please select an audio clip to benchmark.');
       return;
     }
-    const model = document.getElementById('benchModel').value;
+    const checkedModels = benchSelectedModels();
+    if (!checkedModels.length) {
+      alert('Please select at least one model.');
+      return;
+    }
     const checkedRuntimes = Array.from(document.querySelectorAll('input[name="benchRuntime"]:checked')).map(c => c.value);
     if (!checkedRuntimes.length) {
       alert('Please select at least one runtime.');
@@ -1460,6 +1601,12 @@
     }
     const silenceVal = parseFloat(document.getElementById('benchSilence').value);
     const silence = Number.isNaN(silenceVal) ? 0.02 : silenceVal;
+    const chunkVal = parseFloat(document.getElementById('benchChunkSeconds').value);
+    const benchChunk = Number.isNaN(chunkVal) ? 5 : chunkVal;
+    const penaltyVal = parseFloat(document.getElementById('benchRepetitionPenalty').value);
+    const benchPenalty = Number.isNaN(penaltyVal) ? 1.0 : penaltyVal;
+    const ngramVal = parseInt(document.getElementById('benchNoRepeatNgram').value, 10);
+    const benchNgram = Number.isNaN(ngramVal) ? 0 : ngramVal;
 
     const runBtn = document.getElementById('benchRunBtn');
     runBtn.disabled = true;
@@ -1481,9 +1628,12 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           file,
-          model,
+          models: checkedModels,
           runtimes: checkedRuntimes,
           silence_threshold: silence,
+          chunk_seconds: benchChunk,
+          repetition_penalty: benchPenalty,
+          no_repeat_ngram_size: benchNgram,
           language: document.getElementById('benchLanguage').value,
         }),
       });
@@ -1510,6 +1660,8 @@
           try {
             const ev = JSON.parse(line.slice(6));
             if (ev.type === 'init') {
+              if (ev.chunk_seconds) benchChunkUsed = ev.chunk_seconds;
+              if (ev.decoding) benchDecodingUsed = ev.decoding;
               document.getElementById('benchActiveRuntimeText').textContent = `Replaying ${ev.file} (${ev.duration}s)...`;
             } else if (ev.type === 'runtime_start') {
               document.getElementById('benchActiveRuntimeText').textContent = `Testing ${ev.label}…`;
@@ -1520,9 +1672,13 @@
               const statusText = ev.silent
                 ? `[${ev.offset}s] silence (skipped)`
                 : `[${ev.offset}s] lat: ${ev.latency}s · RTF: ${ev.rtf} · "${escapeHtml(ev.text.slice(0, 50))}"`;
-              document.getElementById('benchLiveChunkLog').textContent = `${ev.runtime} — ${statusText}`;
+              const who = ev.model && checkedModels.length > 1 ? `${ev.model} · ${ev.runtime}` : ev.runtime;
+              document.getElementById('benchLiveChunkLog').textContent = `${who} — ${statusText}`;
             } else if (ev.type === 'runtime_done') {
               if (ev.stats) benchResults.push(ev.stats);
+            } else if (ev.type === 'runtime_skip') {
+              const who = ev.model && checkedModels.length > 1 ? `${ev.model} · ${ev.runtime}` : ev.runtime;
+              document.getElementById('benchLiveChunkLog').textContent = `${who} — skipped: ${ev.reason}`;
             } else if (ev.type === 'complete') {
               renderBenchmarkSummary(ev.results, ev.winner);
             }
@@ -1539,6 +1695,9 @@
     }
   }
 
+  let benchChunkUsed = 5;
+  let benchDecodingUsed = '';
+
   function renderBenchmarkSummary(results, winner) {
     const container = document.getElementById('benchResultsContainer');
     container.hidden = false;
@@ -1552,12 +1711,17 @@
     // Sort results by RTF ascending (fastest first)
     const sorted = [...results].sort((a, b) => (a.mean_rtf || 999) - (b.mean_rtf || 999));
     const fastest = sorted[0];
+    const models = [...new Set(results.map(r => r.model).filter(Boolean))];
+    const manyModels = models.length > 1;
 
     // Winner Banner
     if (fastest) {
       const banner = document.createElement('div');
       banner.className = 'bench-winner';
-      const baseline = sorted.find(r => r.runtime === 'pytorch');
+      // Compare like with like: the speed-up is against pytorch running the
+      // same model, not against whichever model happened to be run on it.
+      const baseline = sorted.find(r => r.runtime === 'pytorch' && r.model === fastest.model)
+        || sorted.find(r => r.runtime === 'pytorch');
       let speedupText = '';
       if (baseline && baseline !== fastest && fastest.mean_rtf > 0) {
         const factor = (baseline.mean_latency / fastest.mean_latency).toFixed(1);
@@ -1566,9 +1730,10 @@
       banner.innerHTML = `
         <div class="bench-winner-icon">🏆</div>
         <div>
-          <div class="bench-winner-title">Fastest Runtime: ${escapeHtml(fastest.label)}</div>
+          <div class="bench-winner-title">Fastest ${manyModels ? 'combination' : 'runtime'}: ${escapeHtml(fastest.label)}</div>
           <div class="bench-winner-desc">
-            Mean latency <strong>${fastest.mean_latency}s</strong> per 5s chunk (RTF <strong>${fastest.mean_rtf}</strong>)${speedupText}.
+            Mean latency <strong>${fastest.mean_latency}s</strong> per ${benchChunkUsed}s chunk (RTF <strong>${fastest.mean_rtf}</strong>)${speedupText}.
+            A speaker waits <strong>${fastest.wait ?? '—'}s</strong> from starting a chunk to seeing its text.
             ${fastest.keeps_up ? '✅ Fast enough to keep up with live real-time speech!' : '⚠️ Slower than real-time on this machine.'}
           </div>
         </div>
@@ -1579,6 +1744,16 @@
     // Comparative Table
     const tableWrap = document.createElement('div');
     tableWrap.style.overflowX = 'auto';
+    if (benchDecodingUsed) {
+      const caption = document.createElement('div');
+      caption.className = 'hint';
+      caption.style.margin = '0 0 0.5rem';
+      const ignored = results.filter(r => r.honours_decoding === false).map(r => r.runtime);
+      caption.textContent =
+        `${benchChunkUsed}s chunks · decoding: ${benchDecodingUsed}`
+        + (ignored.length ? ` (${ignored.join(', ')} decodes with its own defaults regardless)` : '');
+      tableWrap.appendChild(caption);
+    }
 
     let rowsHtml = '';
     for (const r of sorted) {
@@ -1590,7 +1765,8 @@
 
       rowsHtml += `
         <tr>
-          <td><strong>${escapeHtml(r.label)}</strong><br><span class="stat">${r.runtime}</span></td>
+          ${manyModels ? `<td><strong>${escapeHtml(r.model || '—')}</strong></td>` : ''}
+          <td><strong>${escapeHtml(manyModels ? (r.label || '').split(' · ').pop() : r.label)}</strong><br><span class="stat">${r.runtime}</span></td>
           <td class="mono">${r.mean_latency}s</td>
           <td class="mono">
             <div style="display:flex; align-items:center; gap:0.6rem">
@@ -1602,8 +1778,9 @@
             </div>
           </td>
           <td class="mono">${r.worst_rtf}</td>
+          <td class="mono" title="Chunk length plus mean latency — what the speaker sits through">${r.wait ?? '—'}s</td>
           <td>${badge}</td>
-          <td style="color:var(--dim); font-size:0.8rem; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(r.sample_text)}">
+          <td style="color:var(--dim); font-size:0.8rem; max-width:${manyModels ? '420px' : '240px'}; ${manyModels ? '' : 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;'}" title="${escapeHtml(r.sample_text)}">
             ${escapeHtml(r.sample_text || '—')}
           </td>
         </tr>
@@ -1614,10 +1791,12 @@
       <table class="bench-table">
         <thead>
           <tr>
+            ${manyModels ? '<th>Model</th>' : ''}
             <th>Runtime</th>
             <th>Mean Latency</th>
             <th>Mean RTF</th>
             <th>Worst RTF</th>
+            <th>You Wait</th>
             <th>Keeps Up?</th>
             <th>Sample Transcript</th>
           </tr>
@@ -1770,6 +1949,8 @@
   loadLanguages();
   // the runtime probe is per model, so the model list has to land first
   loadModels(false).then(() => { loadRuntimes(); loadBenchRuntimes(); });
+  describeChunk();
+  describeRepetition();
   loadDevices(false);
   applySource();
   loadBenchAudioFiles();

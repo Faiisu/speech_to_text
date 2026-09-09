@@ -126,7 +126,7 @@ Omitting `--file` starts a live microphone session:
 
 1. Press Enter to start recording (or pass `--auto-start` to begin immediately once the model finishes loading, no keypress needed)
 2. Speak — every 5 seconds of audio (with 1s overlap between chunks) is transcribed and printed live as `[chunk @ Xs] <text> (latency ..s, RTF ..)`. A chunk with no real audio energy (silence) is skipped and printed as `[chunk @ Xs] (silence, skipped)` instead of being sent to the model — Whisper-family models otherwise hallucinate plausible-sounding text from silence, since they have no "say nothing" output. Tune this with `--silence-threshold` (default `0.02`; lower it if quiet speech gets skipped, raise it if background noise still triggers hallucinated text — some microphones' ambient noise floor sits above the default, so don't assume `0.02` works everywhere without checking).
-   - Separately, generation is configured to avoid Whisper's repetition-loop failure mode (regenerating the same phrase over and over when there's no clear speech) — see ADR 0004. This doesn't eliminate an occasional single hallucinated word from noise that clears the silence threshold; that's what `--silence-threshold` tuning is for.
+   - Separately, Whisper's repetition-loop failure mode (regenerating the same phrase over and over when there's no clear speech) has its own mitigation — see ADR 0004 — which is available per session but **off by default**; raise `--repetition-penalty` if the model genuinely loops on noise — check first that the repeats aren't simply what was said. Neither that nor the silence gate eliminates an occasional single hallucinated word from noise that clears the threshold; that's what `--silence-threshold` tuning is for.
 3. Press Enter again to stop — a final full-clip batch transcription then prints as a `[reference transcript]` (or `(silence, skipped)` if the whole recording was silent), for comparing against the live chunked output
 
 ### Keyword spotting, reported to the backend
@@ -253,8 +253,9 @@ The model is always a Whisper-family model; what changes per machine is the mach
 | Runtime | Runs on | Notes |
 |---|---|---|
 | `pytorch` | anywhere | Apple MPS if present, else CPU float32. Always works; the slowest option on an Intel box. |
-| `openvino-gpu` | Intel integrated GPU | The interesting one on a Core Ultra machine. |
-| `openvino-cpu` | CPU | |
+| `openvino-gpu` | Intel integrated GPU | The interesting one on a Core Ultra machine, and the fastest measured so far — 2.2x `ctranslate2` int8. Needs an OpenCL runtime and `render` group access, see below. |
+| `openvino-cpu` | CPU | Same weights as the GPU path; the device is picked at load time. |
+| `openvino-npu` | Intel NPU ("AI Boost") | Offered wherever OpenVINO reports an NPU. Not usable on the UBX-330M as shipped — no `/dev/accel/accel0`, so the kernel driver isn't loaded. |
 | `ctranslate2` | CPU, int8 | Wants AVX-VNNI to be worth it — check with `check_hardware.py`. |
 | `whispercpp` | CPU / GPU (GGML) | Uses whisper.cpp via pywhispercpp; benefits from AVX-VNNI / SIMD or GPU acceleration. |
 
@@ -270,20 +271,54 @@ Everything except `pytorch` needs the weights converted once per machine. `faste
 
 ```bash
 uv sync                                # installs ctranslate2 + whispercpp libraries
-uv add "optimum-intel[openvino]"       # Intel machines only
+uv sync --extra openvino               # Intel machines only
 
 uv run python convert_model.py --runtime ctranslate2 --model turbo
 uv run python convert_model.py --runtime whispercpp  --model turbo
 uv run python convert_model.py --runtime openvino    --model turbo
 ```
 
-`--runtime openvino` converts once into `models/openvino-<model>`, shared by `openvino-gpu` and `openvino-cpu` — the IR is identical and the device is chosen at load time. `--runtime whispercpp` downloads a **community** GGML build (`korakotlee/typhoon-whisper-turbo-ggml`), not one published by typhoon-ai, and only `turbo` has one; for `large-v3` you'd convert it yourself with whisper.cpp's `models/convert-h5-to-ggml.py`.
+`openvino-gpu` needs two things `uv sync` can't provide, and both fail the same silent way — `/dev/dri/renderD*` still exists, OpenVINO just lists `CPU` and the runtime panel greys the GPU out:
+
+```bash
+sudo apt install intel-opencl-icd        # the OpenCL runtime for the iGPU
+sudo usermod -aG render $USER            # then log in again — the node is root:render 0660
+uv run python -c "import openvino; print(openvino.Core().available_devices)"   # want ['CPU', 'GPU']
+```
+
+The group step is easy to miss on a headless box: the render node carries an ACL for whoever is logged in at the console, so it works for the desktop user and not for the service account running the app over SSH. `openvino-cpu` is unaffected by both.
+
+`--runtime openvino` also takes `--precision int8` or `--precision int4`, which compresses the weights as they are exported. A compressed build is written as its own model (`models/openvino-turbo-int8`, discovered as the model `turbo-int8`) rather than replacing the uncompressed one, so the two can be benchmarked against each other. Default is `source`: whatever dtype the checkpoint holds, which for the Typhoon fine-tunes is bf16, not fp32.
+
+`--runtime openvino` converts once into `models/openvino-<model>`, shared by every `openvino-*` runtime — the IR is identical and the device is chosen at load time. `--runtime whispercpp` downloads a **community** GGML build (`korakotlee/typhoon-whisper-turbo-ggml`), not one published by typhoon-ai, and only `turbo` has one; for `large-v3` you'd convert it yourself with whisper.cpp's `models/convert-h5-to-ggml.py`.
 
 Converted weights go in `models/` (gitignored) and are reused after that. The panel lists unavailable runtimes greyed out with the reason, and `POST /start` refuses one that isn't ready rather than failing mid-session.
 
 > **Verified:** `pytorch`, `ctranslate2` and `whispercpp` all convert and transcribe Thai correctly on macOS. The CTranslate2 conversion was the step most likely to fail, since Typhoon is a fine-tune rather than stock Whisper.
 >
-> **Not verified by the author:** both OpenVINO paths, written against hardware that wasn't available for testing (no Intel GPU). Treat the first run on the UBX-330M as the real test — the conversion step in particular may need adjusting.
+> **Measured on the UBX-330M (Core Ultra 5 125H, Ubuntu 24.04),** one fixed 21.1s clip, 5s chunks, Thai:
+>
+> | Runtime | Weights | mean RTF | Keeps up? |
+> |---|---|---|---|
+> | `openvino-gpu` | int8 | **0.53** | yes |
+> | `openvino-gpu` | int4 | 0.56 | yes |
+> | `openvino-gpu` | bf16 (source) | 0.60 | yes |
+> | `ctranslate2` | int8 | 1.34 | no |
+> | `openvino-cpu` | int8 | 1.39 | no |
+> | `openvino-cpu` | bf16 (source) | 2.53 | no |
+> | `pytorch` | fp32 | 4.89 | no |
+> | `whispercpp` | q5_0 | 4.27 (at 8 threads) | no |
+>
+> Two things worth carrying forward. **The device mattered more than the format:** the same weights move from
+> 2.53 to 0.60 just by running on the iGPU — a bigger gap than any amount of quantisation produced.
+> **Fewer bits is not automatically faster:** int8 bought a lot on the CPU (2.53 → 1.39) and next to nothing on
+> the GPU. The three GPU rows are within run-to-run variance of each other (a repeat run put them at 0.59 /
+> 0.59 / 0.50), so treat them as tied on speed and decide on the transcript instead — where each step down in
+> precision was visibly worse on the noisiest chunk. `whispercpp` remains unexplained: q5_0 weights, the
+> lightest of the lot, and still the slowest after its thread count was fixed.
+>
+> Numbers this close need repeating before they mean anything. One pass over three 5s chunks is enough to rank
+> `openvino-gpu` against `ctranslate2`; it is not enough to rank int8 against int4.
 
 ## Measuring performance & Benchmark Studio
 
@@ -323,6 +358,51 @@ Reports per-chunk latency and real-time factor, plus mean/median/worst across th
 
 Use a clip of realistic continuous speech, not a short test phrase — a chunk packed with words takes far longer than one with a single utterance, so short clips flatter the result.
 
+### Choosing the chunk length
+
+Whisper pads **every** input to a 30-second mel window and truncates anything longer, so the encoder — the expensive half — costs the same whether you hand it 5 seconds or 30. At the 5s default the model does a 30s pass to transcribe 5s of audio, and the fixed cost is spread over six times less speech than it could be.
+
+`--chunk` takes one value or a sweep:
+
+```bash
+uv run python benchmark.py --model turbo --file clip.wav --runtime ctranslate2 --chunk 5,10,20
+```
+
+Measured on a Mac (`ctranslate2`, 21s clip): 5s chunks gave RTF 1.18 at 5.90s per chunk, 10s gave **0.61** at 6.08s, 20s gave **0.33** at 6.65s. Latency per chunk barely moved — that is the fixed encoder pass, made visible.
+
+Which is why the table has a **`you wait`** column: chunk length plus latency, what the person speaking actually sits through before their words appear. It goes the other way (10.9s → 16.1s → 26.7s in that run), and it is the real price of a low RTF. RTF answers "can this machine keep up"; `you wait` answers "is this usable live".
+
+30 is the ceiling and is enforced — beyond it the audio past the window is dropped silently, so both the CLI and the API refuse it rather than transcribing part of a chunk. In the Web GUI the same control is **Chunk length** in the session panel and in Benchmark Studio.
+
+A longer chunk also tends to transcribe *better*: 5 seconds is far less context than the 30-second windows Whisper was trained on. The trade is responsiveness, not accuracy.
+
+### The repetition guards (off by default)
+
+Whisper fed noise it cannot resolve will regenerate one phrase over and over. `no_repeat_ngram_size` and `repetition_penalty` are the standard mitigation, added in ADR 0004 against exactly that failure — but they are **off by default** (`0` and `1.0`), because `whispercpp` cannot receive them at all (pywhispercpp exposes no generation knobs) and defaulting them on meant the runtimes were never being compared on the same terms. Plain greedy is the neutral baseline; the guards are something to reach for when the model genuinely loops on noise — not merely when the transcript contains repeats:
+
+```bash
+uv run python transcribe.py --model turbo --runtime openvino-gpu --repetition-penalty 1.3 --no-repeat-ngram 3
+uv run python benchmark.py --model turbo --file clip.wav --runtime openvino-gpu --repetition-penalty 1.0,1.3,1.5
+```
+
+`--repetition-penalty` sweeps like `--chunk` does, and prints what each setting heard. In the Web GUI they are the **Repetition penalty** and **No-repeat n-gram** fields, in both the session panel and Benchmark Studio, and the hint under each says what the value you typed will do. The results table names the decoding used and calls out any runtime that ignored it.
+
+**Repeated output is not automatically a loop, and this is easy to get backwards.** On this project's own clip the speaker says `สวัสดีครับ` three times in a row. At 1.0 `ctranslate2` transcribes it that way — correctly. At 1.3 the penalty, having already emitted those tokens, substitutes invented words for the repeats: `สุขสวนต์ครัป การเซ็กซ์ สวยค่ะ ฤๅจิม`. The setting that looks tidier in a diff is the one destroying real speech. `whispercpp`, which never receives the penalty at any value, reproduces the repeats like 1.0 does.
+
+Thai makes this sharp — `ครับ`, `ค่ะ` and greetings repeat constantly in ordinary speech — so before raising the penalty, confirm the repetition in the transcript is not simply repetition in the audio. Check against the full-clip reference transcript printed when a session stops, and sweep with the transcripts side by side rather than trusting either end.
+
+### Comparing models on one runtime
+
+The runtime is only half the question — the other half is which model, and whether a compressed build is worth what it costs in accuracy. Pass several keys to `--model` and they are replayed through the same clip on the same runtime:
+
+```bash
+uv run python benchmark.py --model turbo,turbo-int8,turbo-int4 --file clip.wav --runtime openvino-gpu
+```
+
+The table gains a model column, and underneath it prints what each model actually heard, because a model that is faster and wrong is not faster. A combination that can't run (a model never converted for that runtime) is reported and skipped rather than ending the sweep.
+
+In the Web GUI the same thing lives in **Benchmark Studio**: models and runtimes are both checkbox lists, and every ticked model is run on every ticked runtime. Availability is checked per model — `ctranslate2` can be ready for `turbo` and missing for `turbo-int8` — so unrunnable pairs are skipped with the reason instead of failing the run.
+
 ### Finding the best thread count
 
 On hybrid Intel CPUs (P-cores + E-cores + low-power E-cores) using every core is often *slower* than using only the fast ones, because the slowest core holds up each synchronised operation:
@@ -331,7 +411,11 @@ On hybrid Intel CPUs (P-cores + E-cores + low-power E-cores) using every core is
 uv run python benchmark.py --model turbo --file clip.wav --threads 4,8,14
 ```
 
-It prints a row per setting and names the winner. To pin to performance cores specifically, combine with `taskset` (on a Core Ultra 5 125H the P-core threads are usually CPUs 0–7):
+It prints a row per setting and names the winner, reloading the model for each one: CTranslate2, whisper.cpp and OpenVINO all fix their thread pool when the model is built, so the count has to be chosen before loading, not after. (This flag used to call `torch.set_num_threads()` and nothing else, which meant it silently measured the same thing five times for every runtime except `pytorch`.)
+
+The effect is real and not monotonic — `whispercpp` on the UBX-330M: 5.24 RTF at 4 threads, **4.27 at 8**, 4.94 at 14, 8.36 at 18. `ctranslate2` on the same box barely moves, so measure rather than assume.
+
+To pin to performance cores specifically, combine with `taskset` (on a Core Ultra 5 125H the P-core threads are usually CPUs 0–7):
 
 ```bash
 taskset -c 0-7 uv run python benchmark.py --model turbo --file clip.wav --threads 8

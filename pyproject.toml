@@ -8,13 +8,24 @@ dependencies = [
     "accelerate>=1.14.0",
     "fastapi>=0.141.1",
     "faster-whisper>=1.2.1",
-    "numpy>=2.5.2",
+    # The upper bounds here and on transformers exist for the [openvino]
+    # extra below, even though it isn't installed by default: without them
+    # uv resolves optimum-intel back to 1.15.0 (the only release with pins
+    # loose enough to sit beside the latest numpy/transformers), and that
+    # version probes for OpenVINO via `openvino.runtime` — removed in
+    # openvino 2026 — so the OV classes come back as dummies that only fail
+    # once from_pretrained() is called.
+    "numpy>=2.0,<2.5",  # nncf, pulled in by optimum-intel, caps this
     "python-multipart>=0.0.32",
     "pywhispercpp>=1.5.1",
     "requests>=2.34.2",
     "sounddevice>=0.5.6",
     "soundfile>=0.14.0",
     "torch>=2.13.0",
-    "transformers>=5.16.1",
+    "transformers>=4.51,<5.6",  # optimum-intel caps this
     "uvicorn[standard]>=0.52.4",
 ]
+
+[project.optional-dependencies]
+# Intel machines only — see README. Install with: uv sync --extra openvino
+openvino = ["optimum-intel[openvino]>=2.1"]

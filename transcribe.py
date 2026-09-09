@@ -3,6 +3,7 @@ import platform
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import numpy as np
@@ -54,13 +55,73 @@ LANGUAGES = {
 DEFAULT_LANGUAGE = "th"
 
 SAMPLE_RATE = 16_000
-CHUNK_SECONDS = 5
-OVERLAP_SECONDS = 1
-STEP_SECONDS = CHUNK_SECONDS - OVERLAP_SECONDS
-# Consecutive chunks are exactly STEP_SECONDS apart, so an overlap-caused
-# duplicate detection always lands exactly one chunk later. The debounce
-# window has to cover that full step, not just the overlap itself.
-DEBOUNCE_SECONDS = STEP_SECONDS + 0.5
+
+# Whisper pads every input to a 30s mel window and truncates anything longer,
+# so a chunk above this is audio the model never sees — silently, with no
+# error. It is also the ceiling worth wanting: the encoder costs the same for
+# a 5s chunk as for a 30s one, so a longer chunk spreads that fixed cost over
+# more audio, and gives the model more of the context it was trained on.
+MAX_CHUNK_SECONDS = 30.0
+
+
+@dataclass(frozen=True)
+class Chunking:
+    """How the audio is cut up, which used to be three module constants.
+
+    A live session and a benchmark can now disagree about it — and the same
+    benchmark can sweep it — so it travels as a value instead. Everything
+    derived from it (step, sample counts, the keyword debounce window) is
+    computed here, because those derivations drifting apart is exactly how
+    changing "just the chunk size" used to break keyword debouncing.
+    """
+
+    chunk_seconds: float = 5.0
+    overlap_seconds: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.chunk_seconds <= 0:
+            raise ValueError("chunk_seconds must be positive")
+        if self.chunk_seconds > MAX_CHUNK_SECONDS:
+            raise ValueError(
+                f"chunk_seconds {self.chunk_seconds} exceeds Whisper's {MAX_CHUNK_SECONDS}s "
+                "window — the audio past 30s would be dropped without an error"
+            )
+        if not 0 <= self.overlap_seconds < self.chunk_seconds:
+            raise ValueError(
+                f"overlap_seconds must be at least 0 and less than chunk_seconds "
+                f"({self.chunk_seconds}); got {self.overlap_seconds}"
+            )
+
+    @property
+    def step_seconds(self) -> float:
+        return self.chunk_seconds - self.overlap_seconds
+
+    @property
+    def chunk_samples(self) -> int:
+        return int(self.chunk_seconds * SAMPLE_RATE)
+
+    @property
+    def step_samples(self) -> int:
+        return int(self.step_seconds * SAMPLE_RATE)
+
+    @property
+    def debounce_seconds(self) -> float:
+        # Consecutive chunks are exactly one step apart, so an overlap-caused
+        # duplicate detection always lands exactly one chunk later. The
+        # debounce window has to cover that full step, not just the overlap.
+        return self.step_seconds + 0.5
+
+    def label(self) -> str:
+        return f"{self.chunk_seconds:g}s chunks, {self.overlap_seconds:g}s overlap"
+
+
+DEFAULT_CHUNKING = Chunking()
+# Kept as module constants because they are the defaults everything still
+# imports; the values now come from one place instead of three.
+CHUNK_SECONDS = DEFAULT_CHUNKING.chunk_seconds
+OVERLAP_SECONDS = DEFAULT_CHUNKING.overlap_seconds
+STEP_SECONDS = DEFAULT_CHUNKING.step_seconds
+DEBOUNCE_SECONDS = DEFAULT_CHUNKING.debounce_seconds
 # Whisper-family models hallucinate plausible-sounding text from silence
 # (there's no "say nothing" output). Skip transcribing a chunk entirely if
 # its audio energy is below this RMS threshold, rather than trusting the
@@ -111,15 +172,12 @@ def load_audio(path: str) -> np.ndarray:
 
 
 def transcribe(asr_pipeline, audio: np.ndarray) -> str:
-    # Whisper-family models can get stuck regenerating the same phrase in a
-    # loop when there's no clear speech to anchor generation (a distinct
-    # failure mode from silence hallucination in ADR 0004 — this happens
-    # even when is_silent() lets the chunk through). These generation
-    # settings are the standard mitigation.
-    result = asr_pipeline(
-        {"array": audio, "sampling_rate": SAMPLE_RATE},
-        generate_kwargs={"no_repeat_ngram_size": 3, "repetition_penalty": 1.3},
-    )
+    # Plain greedy, matching the default in runtimes.Decoding. This held a
+    # hardcoded second copy of the anti-looping settings, which is precisely
+    # how it would have gone on applying them after they were turned off
+    # everywhere else. The runtimes take theirs per session; this helper takes
+    # no setting at all, so it applies none.
+    result = asr_pipeline({"array": audio, "sampling_rate": SAMPLE_RATE})
     return result["text"].strip()
 
 
@@ -154,13 +212,14 @@ def spot_keywords(
     session_id: str,
     backend_url: str,
     on_event=None,
+    debounce_seconds: float = DEBOUNCE_SECONDS,
 ) -> None:
     lowered = text.lower()
     for keyword in keywords:
         if keyword.lower() not in lowered:
             continue
         last = last_alerted.get(keyword)
-        if last is not None and now - last < DEBOUNCE_SECONDS:
+        if last is not None and now - last < debounce_seconds:
             continue
         last_alerted[keyword] = now
         report_event(backend_url, keyword, model_key, session_id)
@@ -179,6 +238,7 @@ def run_replay_session(
     session_id: str,
     on_event=None,
     language: str = DEFAULT_LANGUAGE,
+    chunking: Chunking = DEFAULT_CHUNKING,
 ) -> np.ndarray:
     """Feed a file through the same chunking a live session uses.
 
@@ -188,8 +248,8 @@ def run_replay_session(
     the model manages rather than paced to real time; the reported latency and
     RTF are still the real per-chunk figures.
     """
-    chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
-    step_samples = chunk_samples - OVERLAP_SECONDS * SAMPLE_RATE
+    chunk_samples = chunking.chunk_samples
+    step_samples = chunking.step_samples
     last_alerted: dict[str, float] = {}
 
     def emit(event: dict) -> None:
@@ -219,7 +279,7 @@ def run_replay_session(
                 "text": text,
                 "silent": False,
                 "latency": latency,
-                "rtf": latency / CHUNK_SECONDS,
+                "rtf": latency / chunking.chunk_seconds,
             }
         )
         if keywords:
@@ -232,6 +292,7 @@ def run_replay_session(
                 session_id=session_id,
                 backend_url=backend_url,
                 on_event=emit,
+                debounce_seconds=chunking.debounce_seconds,
             )
         start += step_samples
 
@@ -249,6 +310,7 @@ def run_recording_session(
     session_id: str,
     on_event=None,
     language: str = DEFAULT_LANGUAGE,
+    chunking: Chunking = DEFAULT_CHUNKING,
 ) -> np.ndarray:
     """Records from the mic and transcribes chunks until stop_event is set.
 
@@ -265,8 +327,8 @@ def run_recording_session(
         with lock:
             frames.append(indata.copy())
 
-    chunk_samples = CHUNK_SECONDS * SAMPLE_RATE
-    step_samples = chunk_samples - OVERLAP_SECONDS * SAMPLE_RATE
+    chunk_samples = chunking.chunk_samples
+    step_samples = chunking.step_samples
     last_alerted: dict[str, float] = {}
 
     def emit(event: dict) -> None:
@@ -297,7 +359,7 @@ def run_recording_session(
             chunk_start = time.perf_counter()
             text = runtime.transcribe(chunk, language)
             latency = time.perf_counter() - chunk_start
-            rtf = latency / CHUNK_SECONDS
+            rtf = latency / chunking.chunk_seconds
             emit(
                 {
                     "type": "chunk",
@@ -318,6 +380,7 @@ def run_recording_session(
                     session_id=session_id,
                     backend_url=backend_url,
                     on_event=emit,
+                    debounce_seconds=chunking.debounce_seconds,
                 )
             next_start += step_samples
 
@@ -371,6 +434,7 @@ def record_with_streaming(
     auto_start: bool,
     silence_threshold: float,
     language: str = DEFAULT_LANGUAGE,
+    chunking: Chunking = DEFAULT_CHUNKING,
 ) -> np.ndarray:
     """CLI wrapper: prints terminal output, start/stop driven by Enter keypresses."""
     if auto_start:
@@ -414,10 +478,15 @@ def record_with_streaming(
         session_id,
         on_event=on_event,
         language=language,
+        chunking=chunking,
     )
 
 
 def main() -> None:
+    # local, like the load_runtime import below: runtimes.py imports from this
+    # module, so a top-level import would be circular
+    from runtimes import RUNTIME_NAMES
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=model_repos().keys(), required=False)
     parser.add_argument(
@@ -451,7 +520,7 @@ def main() -> None:
     parser.add_argument(
         "--runtime",
         default="pytorch",
-        choices=["pytorch", "openvino-gpu", "openvino-cpu", "ctranslate2", "whispercpp"],
+        choices=RUNTIME_NAMES,
         help="How to execute the model (default: pytorch). Run "
         "'uv run python runtimes.py' to see which are usable on this machine.",
     )
@@ -462,6 +531,46 @@ def main() -> None:
         help=f"Language to transcribe (default: {DEFAULT_LANGUAGE}). 'auto' lets the model "
         "detect it per chunk, which on 5-second chunks can misfire and make Whisper "
         "translate instead of transcribe.",
+    )
+    parser.add_argument(
+        "--chunk",
+        type=float,
+        default=DEFAULT_CHUNKING.chunk_seconds,
+        help="Seconds of audio per transcription (default: "
+        f"{DEFAULT_CHUNKING.chunk_seconds:g}, maximum {MAX_CHUNK_SECONDS:g}). Whisper pads every "
+        "chunk to 30s regardless, so a longer chunk spreads that fixed encoder cost over more "
+        "audio and gives the model more context — at the price of waiting a whole chunk before "
+        "any text appears.",
+    )
+    parser.add_argument(
+        "--overlap",
+        type=float,
+        default=DEFAULT_CHUNKING.overlap_seconds,
+        help="Seconds each chunk overlaps the previous one, so a word split across the boundary "
+        f"is still heard whole (default: {DEFAULT_CHUNKING.overlap_seconds:g}). The cost is the "
+        "duplicated words you sometimes see across lines.",
+    )
+    parser.add_argument(
+        "--repetition-penalty",
+        type=float,
+        default=None,
+        help="Penalty on tokens the model has already emitted; 1.0 is off and is the "
+        "default. Raise it (1.3 was the old default, from ADR 0004) to stop Whisper "
+        "looping one phrase on noise — at the cost of punishing the words Thai speech "
+        "legitimately repeats. whispercpp never receives it at any value.",
+    )
+    parser.add_argument(
+        "--no-repeat-ngram",
+        type=int,
+        default=None,
+        help="Forbid repeating any n-gram of this size within a chunk; 0 is off and is "
+        "the default. Same trade as --repetition-penalty.",
+    )
+    parser.add_argument(
+        "--plain-greedy",
+        action="store_true",
+        help="Shorthand for --repetition-penalty 1.0 --no-repeat-ngram 0. Now the "
+        "default, so this only states explicitly what you already get.",
     )
     parser.add_argument(
         "--silence-threshold",
@@ -490,15 +599,46 @@ def main() -> None:
 
     keywords = [k.strip() for k in args.keywords.split(",") if k.strip()] if args.keywords else []
 
+    try:
+        chunking = Chunking(args.chunk, args.overlap)
+    except ValueError as exc:
+        parser.error(str(exc))
+
     # imported here rather than at module scope: runtimes.py imports from this
     # module, so a top-level import would be circular
-    from runtimes import load_runtime
+    from runtimes import DEFAULT_DECODING, Decoding, load_runtime
+
+    if args.plain_greedy and (args.repetition_penalty is not None or args.no_repeat_ngram is not None):
+        parser.error("--plain-greedy already sets both; drop the explicit values or drop it")
+    if args.plain_greedy:
+        decoding = Decoding.off()
+    else:
+        try:
+            decoding = Decoding(
+                no_repeat_ngram_size=(
+                    DEFAULT_DECODING.no_repeat_ngram_size
+                    if args.no_repeat_ngram is None
+                    else args.no_repeat_ngram
+                ),
+                repetition_penalty=(
+                    DEFAULT_DECODING.repetition_penalty
+                    if args.repetition_penalty is None
+                    else args.repetition_penalty
+                ),
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
 
     print(f"[platform] {platform.system()} {platform.machine()}")
     print(f"[model] loading {resolve_repo(args.model)} via {args.runtime}...")
-    runtime = load_runtime(args.runtime, args.model)
+    runtime = load_runtime(args.runtime, args.model, decoding=decoding)
     print(f"[runtime] {runtime.description}")
+    print(
+        f"[decoding] {decoding.label()}"
+        + ("" if runtime.honours_decoding else "  (ignored: this runtime exposes no knobs)")
+    )
     print(f"[language] {LANGUAGES[args.language]}")
+    print(f"[chunking] {chunking.label()}")
 
     audio = (
         load_audio(args.file)
@@ -512,6 +652,7 @@ def main() -> None:
             args.auto_start,
             args.silence_threshold,
             args.language,
+            chunking,
         )
     )
 
