@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from benchmark_parallel import MEDIA_SUFFIXES, Options, Run, collect_clips, summarise
 from model_catalog import discover
-from runtimes import probe
+from runtimes import probe, requires_single_worker
 from stations import config as station_config
 from stations.capture import DeviceError, input_devices, resolve_device
 from stations.config import ConfigError, Settings, Station
@@ -398,6 +398,15 @@ def benchmark(body: BenchmarkBody) -> StreamingResponse:
         raise HTTPException(status_code=422, detail="Give at least one stream count")
     if max(counts) > 16:
         raise HTTPException(status_code=422, detail="16 streams is the ceiling here")
+
+    if body.workers > 1 and requires_single_worker(body.runtime):
+        # Caught here rather than when Run builds its Settings, so it fails
+        # before the model loads instead of a minute into the stream.
+        raise HTTPException(
+            status_code=422,
+            detail=f"{body.runtime} runs on a single exclusive accelerator and must use "
+                   "1 worker. Extra workers contend for the same execution units.",
+        )
 
     floor = max(MIN_DURATION_SECONDS, body.chunk_seconds * MIN_DURATION_CHUNKS)
     if body.duration < floor:

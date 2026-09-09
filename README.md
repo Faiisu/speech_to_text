@@ -484,7 +484,9 @@ Stations live in `stations.json` (start from `deploy/stations.example.json`) or 
 }
 ```
 
-Keep `workers` at 1 for a single iGPU. Raise it only for a CPU runtime with spare cores.
+`workers` is pinned to 1 for `openvino-gpu` and `openvino-npu`, and the UI disables the field for them — a second worker on a single exclusive accelerator contends for the same execution units instead of adding throughput, and because every worker shares one loaded model it would also call that model from two threads. CPU runtimes still accept more.
+
+`queue_size` is how many chunks may wait for the shared model before the oldest is dropped. Bigger is not better: it does not make the machine faster, it trades lost audio for late alerts, and a keyword reported two minutes after it was spoken is no use. If drops are climbing, raise the chunk length or run fewer stations.
 
 ### Operating
 

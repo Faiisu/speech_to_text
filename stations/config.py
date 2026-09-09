@@ -14,6 +14,7 @@ import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from runtimes import requires_single_worker
 from transcribe import (
     DEFAULT_BACKEND_URL,
     DEFAULT_LANGUAGE,
@@ -111,6 +112,13 @@ class Settings:
             raise ConfigError("queue_size must be at least 1")
         if self.workers < 1:
             raise ConfigError("workers must be at least 1")
+        if self.workers > 1 and requires_single_worker(self.runtime):
+            raise ConfigError(
+                f"{self.runtime} runs on a single exclusive accelerator, so it must use "
+                f"1 worker (got {self.workers}). A second worker would contend for the "
+                "same execution units instead of adding throughput, and would call one "
+                "shared model from two threads."
+            )
         ids = [s.id for s in self.stations]
         duplicate_ids = {i for i in ids if ids.count(i) > 1}
         if duplicate_ids:

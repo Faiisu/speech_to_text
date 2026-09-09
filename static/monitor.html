@@ -162,7 +162,7 @@
           <div><label for="cfg-queue">Queue size</label><input id="cfg-queue" name="queue_size" type="number" min="1"></div>
           <div><label for="cfg-workers">Workers</label><input id="cfg-workers" name="workers" type="number" min="1"></div>
         </div>
-        <p class="note">One worker is correct for a single iGPU: a second thread contends for the same execution units rather than adding throughput.</p>
+        <p class="note" id="cfg-workers-note"></p>
       </fieldset>
 
       <fieldset>
@@ -219,6 +219,7 @@
           <div><label for="b-queue">Queue size</label><input id="b-queue" type="number" min="1" value="6"></div>
           <div><label for="b-workers">Workers</label><input id="b-workers" type="number" min="1" value="1"></div>
         </div>
+        <p class="note" id="b-workers-note"></p>
         <label class="inline"><input type="checkbox" id="b-realtime" checked> Feed at microphone pace</label>
         <p class="note">Unticked feeds as fast as the model accepts. That measures raw throughput, but &ldquo;keeping up&rdquo; stops meaning anything.</p>
       </fieldset>
@@ -627,13 +628,17 @@ async function loadConfig() {
   await fillRuntimeSelect($("#cfg-runtime"), config.model, config.runtime, "#cfg-runtime-why");
   // onchange, not addEventListener: loadConfig() runs again after every save
   // and listeners would stack up.
-  $("#cfg-model").onchange = () => {
+  $("#cfg-model").onchange = async () => {
     // Availability is per model, so the runtime list has to follow it.
-    fillRuntimeSelect($("#cfg-runtime"), $("#cfg-model").value, $("#cfg-runtime").value, "#cfg-runtime-why");
+    await fillRuntimeSelect($("#cfg-runtime"), $("#cfg-model").value, $("#cfg-runtime").value, "#cfg-runtime-why");
+    syncWorkers($("#cfg-runtime"), $("#cfg-workers"), "#cfg-workers-note");
   };
+  $("#cfg-runtime").addEventListener("change", () =>
+    syncWorkers($("#cfg-runtime"), $("#cfg-workers"), "#cfg-workers-note"));
   $("#cfg-backend").value = config.backend_url;
   $("#cfg-queue").value = config.queue_size;
   $("#cfg-workers").value = config.workers;
+  syncWorkers($("#cfg-runtime"), $("#cfg-workers"), "#cfg-workers-note");
   const host = $("#station-edits");
   host.innerHTML = "";
   for (const station of config.stations) host.appendChild(stationEditor(station));
@@ -651,7 +656,7 @@ $("#config-form").addEventListener("submit", async (event) => {
     runtime: $("#cfg-runtime").value,
     backend_url: $("#cfg-backend").value.trim(),
     queue_size: parseInt($("#cfg-queue").value, 10),
-    workers: parseInt($("#cfg-workers").value, 10),
+    workers: $("#cfg-workers").disabled ? 1 : parseInt($("#cfg-workers").value, 10),
     stations: readStationEditors(),
   };
   try {
@@ -747,11 +752,15 @@ async function loadClips() {
       await loadModels();
       fillModelSelect($("#b-model"), config.model);
       await fillRuntimeSelect($("#b-runtime"), config.model, config.runtime, "#b-runtime-why");
-      $("#b-model").onchange = () => {
-        fillRuntimeSelect($("#b-runtime"), $("#b-model").value, $("#b-runtime").value, "#b-runtime-why");
+      $("#b-model").onchange = async () => {
+        await fillRuntimeSelect($("#b-runtime"), $("#b-model").value, $("#b-runtime").value, "#b-runtime-why");
+        syncWorkers($("#b-runtime"), $("#b-workers"), "#b-workers-note");
       };
+      $("#b-runtime").addEventListener("change", () =>
+        syncWorkers($("#b-runtime"), $("#b-workers"), "#b-workers-note"));
       $("#b-queue").value = config.queue_size;
       $("#b-workers").value = config.workers;
+      syncWorkers($("#b-runtime"), $("#b-workers"), "#b-workers-note");
       const first = config.stations[0];
       if (first) {
         $("#b-chunk").value = first.chunk_seconds;
@@ -762,6 +771,22 @@ async function loadClips() {
     }
   } catch (err) {
     message("#bench-msg", err.message, "err");
+  }
+}
+
+// A runtime on one exclusive accelerator can only use one worker. Rather than
+// letting the field be set and rejected on save, it is pinned and explained.
+const SINGLE_WORKER_RUNTIMES = new Set(["openvino-gpu", "openvino-npu"]);
+
+function syncWorkers(runtimeSelect, workersInput, noteSelector) {
+  const pinned = SINGLE_WORKER_RUNTIMES.has(runtimeSelect.value);
+  workersInput.disabled = pinned;
+  if (pinned) workersInput.value = 1;
+  const note = noteSelector && $(noteSelector);
+  if (note) {
+    note.textContent = pinned
+      ? `${runtimeSelect.value} runs on one exclusive accelerator — a second worker would contend for the same execution units, not add throughput.`
+      : "One worker per concurrent transcription. More than one only helps a CPU runtime with cores to spare.";
   }
 }
 
@@ -884,7 +909,7 @@ $("#bench-form").addEventListener("submit", async (event) => {
     chunk_seconds: parseFloat($("#b-chunk").value),
     overlap_seconds: parseFloat($("#b-overlap").value),
     queue_size: parseInt($("#b-queue").value, 10),
-    workers: parseInt($("#b-workers").value, 10),
+    workers: $("#b-workers").disabled ? 1 : parseInt($("#b-workers").value, 10),
     realtime: $("#b-realtime").checked,
   };
   $("#b-run").disabled = true;

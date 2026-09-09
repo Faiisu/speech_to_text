@@ -376,3 +376,46 @@ def test_models_endpoint_lists_what_this_machine_offers(client):
     assert "turbo" in keys, "the builtin Typhoon models are always offered"
     turbo = next(m for m in models if m["key"] == "turbo")
     assert turbo["repo"] == "typhoon-ai/typhoon-whisper-turbo"
+
+
+# -- workers vs the accelerator -------------------------------------------
+
+
+@pytest.mark.parametrize("runtime", ["openvino-gpu", "openvino-npu"])
+def test_gpu_and_npu_runtimes_are_pinned_to_one_worker(runtime):
+    """Every worker shares one loaded model, so a second worker on a single
+    exclusive accelerator both contends for the same execution units and calls
+    a library that does not promise thread-safety from two threads. It can
+    only do harm, so it is refused rather than offered."""
+    assert Settings(runtime=runtime, workers=1).workers == 1
+    with pytest.raises(ConfigError, match="single exclusive accelerator"):
+        Settings(runtime=runtime, workers=2)
+
+
+@pytest.mark.parametrize("runtime", ["ctranslate2", "openvino-cpu", "whispercpp", "pytorch"])
+def test_cpu_runtimes_still_allow_extra_workers(runtime):
+    assert Settings(runtime=runtime, workers=4).workers == 4
+
+
+def test_config_endpoint_rejects_extra_workers_on_the_igpu(client):
+    body = {
+        "model": "turbo",
+        "runtime": "openvino-gpu",
+        "backend_url": "http://localhost:8000",
+        "queue_size": 6,
+        "workers": 2,
+        "stations": [],
+    }
+    response = client.put("/api/config", json=body)
+    assert response.status_code == 422
+    assert "single exclusive accelerator" in response.json()["detail"]
+
+
+def test_benchmark_rejects_extra_workers_on_the_igpu_before_loading(client):
+    """Caught at the door, not a minute into the stream."""
+    response = client.post(
+        "/api/benchmark",
+        json=_benchmark_body(runtime="openvino-gpu", workers=2, duration=60),
+    )
+    assert response.status_code == 422
+    assert "1 worker" in response.json()["detail"]
