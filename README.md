@@ -2,10 +2,10 @@
 
 Testing and benchmarking [`typhoon-ai/typhoon-whisper-turbo`](https://huggingface.co/typhoon-ai/typhoon-whisper-turbo) and [`typhoon-ai/typhoon-whisper-large-v3`](https://huggingface.co/typhoon-ai/typhoon-whisper-large-v3) — Thai-language Whisper fine-tunes — for transcription quality, keyword spotting, and hardware performance.
 
-Three parts:
+The **production service** is [`stations/` + `production_server.py`](#station-service-production): several labelled microphones running continuously on one machine against a single shared model, with keyword detections stored per station. That is what gets deployed. Everything else here is the testing and measurement toolkit it was built from:
 
 - **`transcribe.py`** — a CLI that transcribes a file or live microphone audio, optionally spotting target keywords in real time
-- **`server.py`** — a local web server (same machine as the microphone) exposing a browser GUI and an HTTP API to start/stop recording and configure it remotely, instead of using the CLI directly
+- **`server.py`** — a local web server (same machine as the microphone) exposing a browser GUI and an HTTP API to start/stop recording and configure it remotely, instead of using the CLI directly. One session at a time; this is the panel for comparing runtimes, not the product
 - **`backend/`** — a FastAPI + TimescaleDB service that stores keyword detections reported during a recording session and exposes an API to query them
 
 See [`CONTEXT-MAP.md`](./CONTEXT-MAP.md), [`CONTEXT.md`](./CONTEXT.md), and [`docs/adr/`](./docs/adr/) for the domain vocabulary and the design decisions behind how this works.
@@ -432,6 +432,86 @@ Reports the CPU, core count, the instruction sets that matter for inference (not
 On the deployment target (Advantech UBX-330M, Intel Core Ultra 5 125H) this reports 14 cores, **AVX-VNNI present** (so int8 models get real hardware acceleration), an Arc integrated GPU, and an NPU whose `intel_vpu` driver isn't loaded — so the NPU is unusable until that's installed.
 
 The default `pytorch` runtime uses none of that: CPU, float32, no iGPU, no int8. Switching runtime is what unlocks it — see [Runtimes](#runtimes) above, and ADR 0005. Measure a baseline with `benchmark.py` before and after, on the same clip, or the comparison means nothing (ADR 0006).
+
+## Station service (production)
+
+The deployment target is an Advantech UBX-330M running `typhoon-whisper-turbo` on the **OpenVINO iGPU** runtime, with three microphones at once. Each microphone is a **station**: a label, a device, its keywords, and its language. Keyword detections are stored in TimescaleDB tagged with the station's label.
+
+```
+Station A ─┐
+Station B ─┼─► chunk queue ─► inference worker ─► keyword spotting ─► TimescaleDB
+Station C ─┘  (bounded,       (ONE shared
+               drop-oldest)    OpenVINO iGPU model)
+                    │                 │
+                    └──── SSE ────────┴──► operator UI at :8080
+```
+
+**One model, not three.** A single iGPU runs one decode at a time, so three capture threads each calling the model would contend and all three would fall behind. The stations produce chunks into a bounded queue and one worker consumes them. More stations mean more queueing, not more throughput — which is exactly what `benchmark_parallel.py` measures.
+
+**Bounded everywhere.** Capture keeps only the audio still needed to cut the next chunk, so memory is a function of chunk length rather than uptime. When the model can't keep up, the queue drops its *oldest* chunk and counts it per station rather than growing a backlog — a monitoring system that silently lags is worse than one that says it dropped four chunks.
+
+### Deploying
+
+```bash
+./deploy/preflight.sh          # refuses to continue if the iGPU isn't actually usable
+sudo ./deploy/install.sh       # deps, model conversion, DB migrations, systemd unit
+```
+
+`preflight.sh` checks the render node exists, the user is in the `render` group, OpenVINO reports a `GPU` device, the model is converted, and every configured microphone is present and unambiguous. Each of those is a way an iGPU deploy fails *after* it looks like it succeeded.
+
+The STT service runs on the host as a systemd unit rather than in a container: the OpenVINO GPU plugin has to match the host's i915 driver, and an image that drifts from the host is the usual way this breaks. Only TimescaleDB and its query API are containerised.
+
+```
+logs      journalctl -u stt-stations -f
+restart   systemctl restart stt-stations
+```
+
+### Configuring
+
+Stations live in `stations.json` (start from `deploy/stations.example.json`) or are edited in the web UI. Microphones are identified **by device name, never by index** — PortAudio indices shift when a USB mic is replugged, which would silently rebind a station and mislabel everything it detected. An ambiguous name is rejected rather than guessed at.
+
+```json
+{
+  "model": "turbo",
+  "runtime": "openvino-gpu",
+  "queue_size": 6,
+  "workers": 1,
+  "stations": [
+    {"id": "line1", "label": "Line 1", "device": "USB Audio Device",
+     "keywords": ["สวัสดี"], "language": "th", "enabled": true,
+     "chunk_seconds": 5.0, "overlap_seconds": 1.0, "silence_threshold": 0.02}
+  ]
+}
+```
+
+Keep `workers` at 1 for a single iGPU. Raise it only for a CPU runtime with spare cores.
+
+### Operating
+
+The UI at `http://<host>:8080` has three tabs:
+
+- **Monitor** — a column per station with live transcript, keyword hits highlighted, and per-station RTF, chunk count, drops and errors. A station whose microphone is unplugged goes red and is restarted automatically when it comes back; the other stations are unaffected.
+- **Configuration** — edit stations, pick microphones from a list of what's actually connected. Saving validates every device before writing, so you don't discover a typo at the next restart.
+- **History** — query stored detections by station and keyword.
+
+### Capacity: how many microphones fit?
+
+`benchmark.py` answers "which runtime is fastest on one clip". `benchmark_parallel.py` answers the question the product turns on — how many concurrent stations one machine sustains — by running the real engine, the real queue, and the real backpressure against N clips at microphone pace.
+
+```bash
+uv run python benchmark_parallel.py --clips recordings/ --sweep 1,2,3,4 --duration 120
+uv run python benchmark_parallel.py --clips a.mp4 b.mp4 c.mp4 --streams 3
+```
+
+Video files work as input — audio is extracted with ffmpeg — so a folder of recordings is usable test material directly. A stream count only counts as sustained if **nothing was dropped and nothing was left queued**: mean RTF below 1 is not sufficient on its own, since a run can average under 1 and still lose audio in bursts. If three streams fall behind, raising `--chunk-seconds` is the first thing to try — Whisper pads every chunk to 30s regardless, so a longer chunk spreads one fixed encoder pass over more audio.
+
+### Tests
+
+```bash
+uv run --group dev pytest
+```
+
+Covers the failures that would be expensive to find in production: capture memory growing with uptime, audio silently lost under load, a station bound to the wrong microphone, and what actually reaches the database.
 
 ## Project tracking
 

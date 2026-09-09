@@ -186,7 +186,9 @@ def is_silent(audio: np.ndarray, threshold: float) -> bool:
     return rms < threshold
 
 
-def report_event(backend_url: str, word: str, model_key: str, session_id: str) -> None:
+def report_event(
+    backend_url: str, word: str, model_key: str, session_id: str, station: str = ""
+) -> None:
     try:
         requests.post(
             f"{backend_url}/events",
@@ -195,6 +197,7 @@ def report_event(backend_url: str, word: str, model_key: str, session_id: str) -
                 "detected_at": datetime.now(timezone.utc).isoformat(),
                 "model": model_key,
                 "session_id": session_id,
+                "station": station,
             },
             timeout=2,
         )
@@ -213,6 +216,7 @@ def spot_keywords(
     backend_url: str,
     on_event=None,
     debounce_seconds: float = DEBOUNCE_SECONDS,
+    station: str = "",
 ) -> None:
     lowered = text.lower()
     for keyword in keywords:
@@ -222,9 +226,11 @@ def spot_keywords(
         if last is not None and now - last < debounce_seconds:
             continue
         last_alerted[keyword] = now
-        report_event(backend_url, keyword, model_key, session_id)
+        report_event(backend_url, keyword, model_key, session_id, station)
         if on_event:
-            on_event({"type": "keyword", "keyword": keyword, "time": now})
+            on_event(
+                {"type": "keyword", "keyword": keyword, "time": now, "station": station}
+            )
 
 
 def run_replay_session(

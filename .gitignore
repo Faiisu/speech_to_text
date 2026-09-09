@@ -13,3 +13,8 @@ __pycache__/
 audio/*.wav
 # per-machine model list (models.local.json is your own additions, not the project's)
 models.local.json
+# per-machine station config: device names differ on every host, so this is
+# deployment state, not project state. deploy/stations.example.json is the
+# committed starting point.
+stations.json
+stations.json.tmp

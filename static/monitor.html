@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stations — Typhoon Whisper</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1e222b; --line: #2a2f3a;
+    --text: #e6e9ef; --muted: #8b93a4; --accent: #4da3ff; --ok: #3ecf8e;
+    --warn: #f0b429; --bad: #ef5f5f; --hit: #ffd166;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 10;
+  }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .01em; }
+  .spacer { flex: 1; }
+  .pill {
+    font: 12px/1 var(--mono); padding: 5px 9px; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+    white-space: nowrap;
+  }
+  .pill b { color: var(--text); font-weight: 600; }
+  button {
+    font: 13px system-ui; padding: 7px 13px; border-radius: 6px; cursor: pointer;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #05121f; font-weight: 600; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
+  nav { display: flex; gap: 4px; padding: 10px 20px 0; }
+  nav button { border-radius: 6px 6px 0 0; border-bottom-color: transparent; }
+  nav button[aria-selected="true"] { background: var(--panel); border-color: var(--line); color: var(--accent); }
+  main { padding: 12px 20px 32px; }
+  [hidden] { display: none !important; }
+
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .station { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; min-height: 340px; }
+  .station.down { border-color: var(--bad); }
+  .station header { position: static; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 12px 14px; gap: 10px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(62,207,142,.16); }
+  .dot.off { background: var(--muted); }
+  .dot.err { background: var(--bad); box-shadow: 0 0 0 3px rgba(239,95,95,.16); }
+  .station h2 { font-size: 14px; margin: 0; font-weight: 600; }
+  .station .device { font: 11px var(--mono); color: var(--muted); }
+  .stats { display: flex; gap: 14px; flex-wrap: wrap; padding: 9px 14px; border-bottom: 1px solid var(--line); font: 11px var(--mono); color: var(--muted); }
+  .stats b { color: var(--text); font-weight: 600; }
+  .stats .bad b { color: var(--bad); }
+  .stats .warn b { color: var(--warn); }
+  .feed { flex: 1; overflow-y: auto; padding: 10px 14px; max-height: 46vh; }
+  .line { padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,.04); display: flex; gap: 9px; }
+  .line time { font: 11px var(--mono); color: var(--muted); flex: none; padding-top: 2px; }
+  .line .text { word-break: break-word; }
+  .line.silent .text { color: var(--muted); font-style: italic; }
+  .line.hit { background: rgba(255,209,102,.07); margin: 0 -14px; padding: 5px 14px; }
+  .line.hit .text { color: var(--hit); font-weight: 600; }
+  .line.drop .text, .line.error .text { color: var(--bad); }
+  .empty { color: var(--muted); padding: 22px 14px; text-align: center; font-size: 13px; }
+
+  form.config { max-width: 900px; }
+  fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 0 0 14px; background: var(--panel); }
+  legend { padding: 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input, select {
+    width: 100%; padding: 7px 9px; border-radius: 6px; background: var(--bg);
+    color: var(--text); border: 1px solid var(--line); font: 13px system-ui;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .row { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 10px; }
+  .station-edit { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: var(--panel-2); }
+  .station-edit .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .station-edit .head strong { flex: 1; }
+  .inline { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .inline input[type=checkbox] { width: auto; }
+  .actions { display: flex; gap: 8px; align-items: center; }
+  .note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+  .msg { padding: 9px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; }
+  .msg.ok { background: rgba(62,207,142,.12); color: var(--ok); border: 1px solid rgba(62,207,142,.3); }
+  .msg.err { background: rgba(239,95,95,.12); color: var(--bad); border: 1px solid rgba(239,95,95,.3); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  td.when { font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Stations</h1>
+  <span class="pill" id="svc-state">connecting…</span>
+  <span class="pill" id="svc-model">—</span>
+  <span class="pill" id="svc-queue">queue —</span>
+  <span class="pill" id="svc-uptime">—</span>
+  <span class="spacer"></span>
+  <button id="btn-start" class="primary">Start service</button>
+  <button id="btn-stop" class="danger" disabled>Stop</button>
+</header>
+
+<nav>
+  <button data-tab="monitor" aria-selected="true">Monitor</button>
+  <button data-tab="config" aria-selected="false">Configuration</button>
+  <button data-tab="history" aria-selected="false">History</button>
+</nav>
+
+<main>
+  <section id="tab-monitor">
+    <div id="stations" class="grid"></div>
+    <p class="empty" id="no-stations" hidden>No stations configured yet — add one under Configuration.</p>
+  </section>
+
+  <section id="tab-config" hidden>
+    <div id="config-msg"></div>
+    <form class="config" id="config-form">
+      <fieldset>
+        <legend>Shared</legend>
+        <div class="row">
+          <div><label for="cfg-model">Model</label><input id="cfg-model" name="model"></div>
+          <div><label for="cfg-runtime">Runtime</label><input id="cfg-runtime" name="runtime"></div>
+          <div><label for="cfg-backend">Backend URL</label><input id="cfg-backend" name="backend_url"></div>
+        </div>
+        <div class="row">
+          <div><label for="cfg-queue">Queue size</label><input id="cfg-queue" name="queue_size" type="number" min="1"></div>
+          <div><label for="cfg-workers">Workers</label><input id="cfg-workers" name="workers" type="number" min="1"></div>
+        </div>
+        <p class="note">One worker is correct for a single iGPU: a second thread contends for the same execution units rather than adding throughput.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Stations</legend>
+        <div id="station-edits"></div>
+        <button type="button" id="btn-add">Add station</button>
+      </fieldset>
+
+      <div class="actions">
+        <button type="submit" class="primary">Save configuration</button>
+        <span class="note" id="cfg-hint"></span>
+      </div>
+    </form>
+  </section>
+
+  <section id="tab-history" hidden>
+    <div class="row" style="max-width:640px">
+      <div><label for="h-station">Station</label><input id="h-station" placeholder="all stations"></div>
+      <div><label for="h-word">Keyword</label><input id="h-word" placeholder="any keyword"></div>
+      <div style="align-self:end"><button id="btn-history">Search</button></div>
+    </div>
+    <div id="history-msg"></div>
+    <table>
+      <thead><tr><th>When</th><th>Station</th><th>Keyword</th><th>Model</th><th>Session</th></tr></thead>
+      <tbody id="history-rows"></tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+
+let devices = [];
+let config = null;
+let health = null;
+
+// ---- tabs ---------------------------------------------------------------
+document.querySelectorAll("nav button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav button").forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
+    for (const name of ["monitor", "config", "history"]) {
+      $("#tab-" + name).hidden = name !== btn.dataset.tab;
+    }
+    if (btn.dataset.tab === "history") loadHistory();
+  });
+});
+
+// ---- helpers ------------------------------------------------------------
+async function api(path, options) {
+  const res = await fetch(path, options);
+  let body = null;
+  try { body = await res.json(); } catch (_) { /* empty body is fine */ }
+  if (!res.ok) throw new Error((body && body.detail) || res.statusText);
+  return body;
+}
+
+function message(target, text, kind) {
+  const box = $(target);
+  box.innerHTML = "";
+  if (!text) return;
+  box.appendChild(el("div", "msg " + kind, text));
+}
+
+function fmtDuration(seconds) {
+  if (!seconds) return "0s";
+  const d = Math.floor(seconds / 86400), h = Math.floor(seconds % 86400 / 3600);
+  const m = Math.floor(seconds % 3600 / 60), s = Math.floor(seconds % 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+// ---- monitor ------------------------------------------------------------
+const feeds = new Map();
+
+function stationCard(station) {
+  const card = el("div", "station");
+  card.id = "station-" + station.id;
+  const head = el("header");
+  const dot = el("span", "dot");
+  const box = el("div");
+  box.appendChild(el("h2", null, station.label));
+  box.appendChild(el("div", "device", station.device));
+  head.appendChild(dot);
+  head.appendChild(box);
+  const toggle = el("button", null, "Stop");
+  toggle.addEventListener("click", () => toggleStation(station.id, toggle.textContent === "Start"));
+  head.appendChild(el("span", "spacer"));
+  head.appendChild(toggle);
+  card.appendChild(head);
+  card.appendChild(el("div", "stats"));
+  const feed = el("div", "feed");
+  feed.appendChild(el("div", "empty", "waiting for audio…"));
+  card.appendChild(feed);
+  feeds.set(station.id, feed);
+  return card;
+}
+
+function renderStations() {
+  const host = $("#stations");
+  const stations = (health && health.stations) || [];
+  $("#no-stations").hidden = stations.length > 0;
+  const seen = new Set();
+  for (const station of stations) {
+    seen.add(station.id);
+    let card = document.getElementById("station-" + station.id);
+    if (!card) { card = stationCard(station); host.appendChild(card); }
+    updateCard(card, station);
+  }
+  for (const card of [...host.children]) {
+    if (!seen.has(card.id.replace("station-", ""))) { card.remove(); }
+  }
+}
+
+function updateCard(card, station) {
+  const dot = card.querySelector(".dot");
+  const failing = Boolean(station.last_error) || (station.enabled && !station.running);
+  dot.className = "dot " + (station.running ? "on" : failing ? "err" : "off");
+  card.classList.toggle("down", failing && station.enabled);
+  card.querySelector("h2").textContent = station.label;
+  card.querySelector(".device").textContent = station.device;
+  card.querySelector("header button").textContent = station.running ? "Stop" : "Start";
+
+  const stats = card.querySelector(".stats");
+  stats.innerHTML = "";
+  const rtf = station.mean_rtf;
+  const add = (label, value, cls) => {
+    const span = el("span", cls);
+    span.append(label + " ");
+    span.appendChild(el("b", null, value));
+    stats.appendChild(span);
+  };
+  add("RTF", rtf == null ? "—" : rtf.toFixed(2), rtf == null ? "" : rtf < 1 ? "" : "bad");
+  add("chunks", String(station.chunks_done ?? 0));
+  add("dropped", String(station.chunks_dropped ?? 0), (station.chunks_dropped || 0) > 0 ? "bad" : "");
+  add("hits", String(station.keywords_found ?? 0));
+  if (station.stream_errors) add("audio errs", String(station.stream_errors), "warn");
+  if (station.last_error) {
+    const err = el("span", "bad");
+    err.append("error ");
+    err.appendChild(el("b", null, station.last_error.slice(0, 60)));
+    stats.appendChild(err);
+  }
+}
+
+function appendLine(stationId, kind, time, text) {
+  const feed = feeds.get(stationId);
+  if (!feed) return;
+  const placeholder = feed.querySelector(".empty");
+  if (placeholder) placeholder.remove();
+  const line = el("div", "line " + kind);
+  line.appendChild(el("time", null, time == null ? "" : time.toFixed(1) + "s"));
+  line.appendChild(el("div", "text", text));
+  feed.appendChild(line);
+  while (feed.children.length > 200) feed.firstChild.remove();
+  // Only follow the tail when the operator is already at the bottom, so
+  // scrolling back to read something isn't yanked away by the next chunk.
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
+  if (atBottom) feed.scrollTop = feed.scrollHeight;
+}
+
+function handleEvent(event) {
+  if (event.type === "chunk") {
+    appendLine(event.station_id, event.silent ? "silent" : "", event.time,
+               event.silent ? "(silence)" : event.text);
+  } else if (event.type === "keyword") {
+    appendLine(event.station_id, "hit", event.time, "🔔 " + event.keyword);
+  } else if (event.type === "drop") {
+    appendLine(event.station_id, "drop", null,
+               `dropped a chunk — the model is behind (${event.dropped_total} total)`);
+  } else if (event.type === "error") {
+    appendLine(event.station_id, "error", null, event.message);
+  } else if (event.type === "station" && event.state === "error") {
+    appendLine(event.station_id, "error", null, event.message);
+  }
+  if (event.type === "service" || event.type === "station") refreshHealth();
+}
+
+// ---- health -------------------------------------------------------------
+async function refreshHealth() {
+  try {
+    health = await api("/api/health");
+  } catch (err) {
+    $("#svc-state").innerHTML = "<b>unreachable</b>";
+    return;
+  }
+  const running = health.running;
+  $("#svc-state").innerHTML = running ? "<b style='color:var(--ok)'>running</b>" : "<b>stopped</b>";
+  $("#svc-model").innerHTML = `<b>${health.model || "—"}</b> · ${health.runtime || "—"}`;
+  $("#svc-queue").textContent = running ? `queue ${health.queue_depth}/${health.queue_size}` : "queue —";
+  $("#svc-uptime").textContent = running ? "up " + fmtDuration(health.uptime_seconds) : "—";
+  $("#btn-start").disabled = running;
+  $("#btn-stop").disabled = !running;
+  renderStations();
+}
+
+async function toggleStation(id, start) {
+  try {
+    await api(`/api/stations/${id}/${start ? "start" : "stop"}`, { method: "POST" });
+  } catch (err) {
+    alert(err.message);
+  }
+  refreshHealth();
+}
+
+$("#btn-start").addEventListener("click", async () => {
+  $("#btn-start").disabled = true;
+  try { await api("/api/service/start", { method: "POST" }); }
+  catch (err) { alert(err.message); }
+  setTimeout(refreshHealth, 500);
+});
+$("#btn-stop").addEventListener("click", async () => {
+  try { await api("/api/service/stop", { method: "POST" }); }
+  catch (err) { alert(err.message); }
+  refreshHealth();
+});
+
+// ---- configuration ------------------------------------------------------
+function stationEditor(station) {
+  const box = el("div", "station-edit");
+  const head = el("div", "head");
+  head.appendChild(el("strong", null, station.label || station.id || "new station"));
+  const enabled = el("label", "inline");
+  const check = el("input");
+  check.type = "checkbox"; check.checked = station.enabled !== false; check.dataset.field = "enabled";
+  enabled.appendChild(check); enabled.append("enabled");
+  head.appendChild(enabled);
+  const remove = el("button", "danger", "Remove");
+  remove.type = "button";
+  remove.addEventListener("click", () => box.remove());
+  head.appendChild(remove);
+  box.appendChild(head);
+
+  const mk = (label, field, value, type) => {
+    const wrap = el("div");
+    wrap.appendChild(el("label", null, label));
+    const input = el("input");
+    input.dataset.field = field;
+    input.value = value ?? "";
+    if (type) { input.type = type; input.step = "any"; }
+    wrap.appendChild(input);
+    return wrap;
+  };
+
+  const row1 = el("div", "row");
+  row1.appendChild(mk("Id", "id", station.id));
+  row1.appendChild(mk("Label", "label", station.label));
+  const devWrap = el("div");
+  devWrap.appendChild(el("label", null, "Microphone"));
+  const select = el("select");
+  select.dataset.field = "device";
+  for (const device of devices) {
+    const option = el("option", null, device.name);
+    option.value = device.name;
+    select.appendChild(option);
+  }
+  if (station.device && !devices.some((d) => d.name === station.device)) {
+    // Keep a configured mic that isn't plugged in right now, rather than
+    // silently rewriting the station to a different device on save.
+    const option = el("option", null, station.device + " (not connected)");
+    option.value = station.device;
+    select.appendChild(option);
+  }
+  select.value = station.device || (devices[0] && devices[0].name) || "";
+  devWrap.appendChild(select);
+  row1.appendChild(devWrap);
+  box.appendChild(row1);
+
+  const row2 = el("div", "row");
+  row2.appendChild(mk("Keywords (comma separated)", "keywords", (station.keywords || []).join(", ")));
+  const langWrap = el("div");
+  langWrap.appendChild(el("label", null, "Language"));
+  const lang = el("select");
+  lang.dataset.field = "language";
+  for (const code of ["th", "auto"]) {
+    const option = el("option", null, code);
+    option.value = code;
+    lang.appendChild(option);
+  }
+  lang.value = station.language || "th";
+  langWrap.appendChild(lang);
+  row2.appendChild(langWrap);
+  box.appendChild(row2);
+
+  const row3 = el("div", "row");
+  row3.appendChild(mk("Chunk seconds", "chunk_seconds", station.chunk_seconds ?? 5, "number"));
+  row3.appendChild(mk("Overlap seconds", "overlap_seconds", station.overlap_seconds ?? 1, "number"));
+  row3.appendChild(mk("Silence threshold", "silence_threshold", station.silence_threshold ?? 0.02, "number"));
+  box.appendChild(row3);
+  return box;
+}
+
+function readStationEditors() {
+  return [...document.querySelectorAll("#station-edits .station-edit")].map((box) => {
+    const get = (field) => box.querySelector(`[data-field="${field}"]`);
+    return {
+      id: get("id").value.trim(),
+      label: get("label").value.trim(),
+      device: get("device").value,
+      enabled: get("enabled").checked,
+      language: get("language").value,
+      keywords: get("keywords").value.split(",").map((k) => k.trim()).filter(Boolean),
+      chunk_seconds: parseFloat(get("chunk_seconds").value),
+      overlap_seconds: parseFloat(get("overlap_seconds").value),
+      silence_threshold: parseFloat(get("silence_threshold").value),
+    };
+  });
+}
+
+async function loadConfig() {
+  [config, devices] = await Promise.all([
+    api("/api/config"),
+    api("/api/devices").then((d) => d.devices),
+  ]);
+  $("#cfg-model").value = config.model;
+  $("#cfg-runtime").value = config.runtime;
+  $("#cfg-backend").value = config.backend_url;
+  $("#cfg-queue").value = config.queue_size;
+  $("#cfg-workers").value = config.workers;
+  const host = $("#station-edits");
+  host.innerHTML = "";
+  for (const station of config.stations) host.appendChild(stationEditor(station));
+}
+
+$("#btn-add").addEventListener("click", () => {
+  const n = document.querySelectorAll("#station-edits .station-edit").length + 1;
+  $("#station-edits").appendChild(stationEditor({ id: "line" + n, label: "Line " + n, enabled: true }));
+});
+
+$("#config-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const body = {
+    model: $("#cfg-model").value.trim(),
+    runtime: $("#cfg-runtime").value.trim(),
+    backend_url: $("#cfg-backend").value.trim(),
+    queue_size: parseInt($("#cfg-queue").value, 10),
+    workers: parseInt($("#cfg-workers").value, 10),
+    stations: readStationEditors(),
+  };
+  try {
+    const result = await api("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    message("#config-msg", result.restart_required
+      ? "Saved. Restart the service for the changes to take effect."
+      : "Saved.", "ok");
+    await loadConfig();
+    refreshHealth();
+  } catch (err) {
+    message("#config-msg", err.message, "err");
+  }
+});
+
+// ---- history ------------------------------------------------------------
+async function loadHistory() {
+  const params = new URLSearchParams();
+  if ($("#h-station").value.trim()) params.set("station", $("#h-station").value.trim());
+  if ($("#h-word").value.trim()) params.set("word", $("#h-word").value.trim());
+  const rows = $("#history-rows");
+  try {
+    const result = await api("/api/events?" + params.toString());
+    message("#history-msg", "", "ok");
+    rows.innerHTML = "";
+    if (!result.events.length) {
+      const tr = el("tr");
+      const td = el("td", "when", "No matching detections.");
+      td.colSpan = 5;
+      tr.appendChild(td);
+      rows.appendChild(tr);
+      return;
+    }
+    for (const event of result.events) {
+      const tr = el("tr");
+      tr.appendChild(el("td", "when", new Date(event.detected_at).toLocaleString()));
+      tr.appendChild(el("td", null, event.station || "—"));
+      tr.appendChild(el("td", null, event.word));
+      tr.appendChild(el("td", null, event.model));
+      tr.appendChild(el("td", "when", (event.session_id || "").slice(0, 8)));
+      rows.appendChild(tr);
+    }
+  } catch (err) {
+    message("#history-msg", err.message, "err");
+  }
+}
+$("#btn-history").addEventListener("click", loadHistory);
+
+// ---- live feed ----------------------------------------------------------
+function connect() {
+  const source = new EventSource("/api/stream");
+  source.onmessage = (message) => {
+    try { handleEvent(JSON.parse(message.data)); } catch (_) { /* keepalive */ }
+  };
+  source.onerror = () => {
+    source.close();
+    // The service restarting is normal; reconnect rather than going dark.
+    setTimeout(connect, 3000);
+  };
+}
+
+(async function init() {
+  try { await loadConfig(); } catch (err) { message("#config-msg", err.message, "err"); }
+  await refreshHealth();
+  try {
+    const recent = await api("/api/recent");
+    for (const event of recent.events) handleEvent(event);
+  } catch (_) { /* nothing buffered yet */ }
+  connect();
+  setInterval(refreshHealth, 3000);
+})();
+</script>
+</body>
+</html>

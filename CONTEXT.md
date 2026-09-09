@@ -41,8 +41,23 @@ The loudness floor below which a chunk is skipped entirely rather than transcrib
 The machinery that executes a model, chosen independently of *which* model runs: `pytorch`, `openvino-gpu`, `openvino-cpu`, `openvino-npu`, `ctranslate2`, or `whispercpp`. Swapping runtime changes speed, not the model. See ADR 0005.
 _Avoid_: Backend (means the TimescaleDB service in this project), engine, device
 
+In the station service the runtime is **shared**: one loaded model serves every station, behind a queue. A second copy would not run in parallel on a single iGPU — it would contend for the same execution units — so more stations mean more queueing, not more throughput.
+
 **Session**:
 One run that produces transcripts — either a **live session** reading from a microphone, or a **replay session** reading a clip from disk. Both use identical chunking and emit identical events; only the audio source differs.
+
+**Station**:
+One microphone plus the configuration that gives it meaning: a human **label** ("Line 1"), the audio device it captures from, its keywords, and its language. The unit an operator configures, the monitor displays, and every stored detection is tagged with. Several stations run at once, each with its own session id.
+
+Distinct from a session: a station is the standing configuration, a session is one run of it. A station outlives many restarts; its label is what makes a detection row mean something a week later.
+_Avoid_: Channel (suggests audio channels within one stream), input, source
+
+**Device name**:
+How a station identifies its microphone — the device's *name*, never its index. PortAudio indices shift when a USB mic is replugged or the machine reboots, so an index would silently rebind a station to a different microphone and mislabel everything it detected. An ambiguous name is an error rather than a first-match guess, for the same reason.
+
+**Drop**:
+A chunk discarded without being transcribed, because the shared model was too far behind and the queue was full. The oldest queued chunk goes first. Dropping is the deliberate alternative to an unbounded backlog: audio is lost, but it is lost *visibly* and counted per station, whereas a growing queue looks like a working system until the machine runs out of memory.
+_Avoid_: Skip (that is the silence gate, which is a different decision — see **Silence gate**)
 
 **Replay**:
 Feeding a stored clip through the live chunking path instead of a microphone. The only way to compare runtimes, models, or machines, since two live sessions are never the same input. See ADR 0006.
