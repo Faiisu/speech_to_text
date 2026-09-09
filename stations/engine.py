@@ -40,6 +40,11 @@ class StationHealth:
     station_id: str
     label: str
     session_id: str
+    # Chunks arrive one step apart, not one chunk apart — with the default 5s
+    # chunk and 1s overlap, every 4 seconds. This is the interval the work has
+    # to fit inside, and dividing by the chunk length instead understated the
+    # load by exactly the overlap.
+    step_seconds: float = 1.0
     chunks_done: int = 0
     chunks_dropped: int = 0
     chunks_silent: int = 0
@@ -47,16 +52,33 @@ class StationHealth:
     last_chunk_at: float | None = None
     last_error: str | None = None
     _recent_rtf: collections.deque = field(default_factory=lambda: collections.deque(maxlen=RTF_WINDOW))
+    _recent_latency: collections.deque = field(default_factory=lambda: collections.deque(maxlen=RTF_WINDOW))
 
     @property
     def mean_rtf(self) -> float | None:
+        """Transcription time over the chunk's audio duration.
+
+        A quality-of-speed number for the model on this machine, and correct
+        as such. It is *not* the answer to "are we keeping up" — see `demand`.
+        """
         return sum(self._recent_rtf) / len(self._recent_rtf) if self._recent_rtf else None
 
     @property
-    def keeping_up(self) -> bool | None:
-        """RTF < 1 means the model transcribed the chunk faster than realtime."""
-        rtf = self.mean_rtf
-        return None if rtf is None else rtf < 1.0
+    def mean_latency(self) -> float | None:
+        return (sum(self._recent_latency) / len(self._recent_latency)
+                if self._recent_latency else None)
+
+    @property
+    def demand(self) -> float | None:
+        """Share of one worker this station needs, 1.0 being all of it.
+
+        Latency over the *step*, because that is how often this station hands
+        over another chunk. Stations add up: three stations each at 0.4 need
+        1.2 workers, which one iGPU does not have — which is why RTF alone
+        never answered the capacity question.
+        """
+        latency = self.mean_latency
+        return None if latency is None else latency / self.step_seconds
 
     def as_dict(self) -> dict:
         return {
@@ -70,7 +92,8 @@ class StationHealth:
             "last_chunk_at": self.last_chunk_at,
             "last_error": self.last_error,
             "mean_rtf": round(self.mean_rtf, 3) if self.mean_rtf is not None else None,
-            "keeping_up": self.keeping_up,
+            "mean_latency": round(self.mean_latency, 3) if self.mean_latency is not None else None,
+            "demand": round(self.demand, 3) if self.demand is not None else None,
         }
 
 
@@ -131,8 +154,12 @@ class Engine:
 
     # -- lifecycle ---------------------------------------------------------
 
-    def load(self):
-        """Load the shared model. Slow, and worth doing before any mic opens."""
+    def load_model(self):
+        """Load the shared model. Slow, and worth doing before any mic opens.
+
+        Named load_model, not load: `load` is the capacity metric below, and a
+        property shadowing this method broke every inference worker at start.
+        """
         with self._runtime_lock:
             if self._runtime is None:
                 self._runtime = load_runtime(self.settings.runtime, self.settings.model)
@@ -140,7 +167,10 @@ class Engine:
 
     def register(self, station: Station) -> StationHealth:
         health = StationHealth(
-            station_id=station.id, label=station.label, session_id=str(uuid.uuid4())
+            station_id=station.id,
+            label=station.label,
+            session_id=str(uuid.uuid4()),
+            step_seconds=station.chunking.step_seconds,
         )
         self.health[station.id] = health
         self._last_alerted[station.id] = {}
@@ -158,6 +188,24 @@ class Engine:
         for worker in self._workers:
             worker.join(timeout=timeout)
         self._workers.clear()
+
+    @property
+    def load(self) -> float | None:
+        """How much of the available inference capacity the stations need.
+
+        The sum of every station's demand, over the number of workers. At or
+        under 1.0 the machine keeps up; above it, chunks queue and then get
+        dropped. This — not RTF — is the number that answers "can this machine
+        run three microphones", because it is the only one that knows there
+        are three of them.
+        """
+        demands = [h.demand for h in self.health.values() if h.demand is not None]
+        return sum(demands) / self.settings.workers if demands else None
+
+    @property
+    def keeping_up(self) -> bool | None:
+        load = self.load
+        return None if load is None else load <= 1.0
 
     # -- the hot path ------------------------------------------------------
 
@@ -179,7 +227,7 @@ class Engine:
             )
 
     def _run(self) -> None:
-        runtime = self.load()
+        runtime = self.load_model()
         while not self._stop.is_set():
             item = self.queue.get(timeout=0.2)
             if item is None:
@@ -226,6 +274,7 @@ class Engine:
         health.chunks_done += 1
         health.last_chunk_at = time.time()
         health._recent_rtf.append(rtf)
+        health._recent_latency.append(latency)
 
         self._emit(
             {

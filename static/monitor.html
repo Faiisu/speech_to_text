@@ -137,6 +137,7 @@
   <h1>Stations</h1>
   <span class="pill" id="svc-state">connecting…</span>
   <span class="pill" id="svc-model">—</span>
+  <span class="pill" id="svc-load">load —</span>
   <span class="pill" id="svc-queue">queue —</span>
   <span class="pill" id="svc-uptime">—</span>
   <span class="spacer"></span>
@@ -377,6 +378,11 @@ function updateCard(card, station) {
     stats.appendChild(span);
   };
   add("RTF", rtf == null ? "—" : rtf.toFixed(2), rtf == null ? "" : rtf < 1 ? "" : "bad");
+  // This station's share of the one worker. Shares add up across stations —
+  // which is exactly what RTF never showed.
+  const demand = station.demand;
+  add("uses", demand == null ? "—" : Math.round(demand * 100) + "%",
+      demand == null ? "" : demand > 0.9 ? "bad" : demand > 0.6 ? "warn" : "");
   add("chunks", String(station.chunks_done ?? 0));
   add("dropped", String(station.chunks_dropped ?? 0), (station.chunks_dropped || 0) > 0 ? "bad" : "");
   add("hits", String(station.keywords_found ?? 0));
@@ -433,6 +439,17 @@ async function refreshHealth() {
   const running = health.running;
   $("#svc-state").innerHTML = running ? "<b style='color:var(--ok)'>running</b>" : "<b>stopped</b>";
   $("#svc-model").innerHTML = `<b>${health.model || "—"}</b> · ${health.runtime || "—"}`;
+  // Load, not RTF, is the "can this machine cope" number: it is the only one
+  // that knows how many stations share the single model.
+  const load = health.load;
+  const loadPill = $("#svc-load");
+  if (!running || load == null) {
+    loadPill.textContent = "load —";
+    loadPill.style.color = "";
+  } else {
+    loadPill.innerHTML = `load <b>${Math.round(load * 100)}%</b>`;
+    loadPill.style.color = load > 1 ? "var(--bad)" : load > 0.8 ? "var(--warn)" : "var(--ok)";
+  }
   $("#svc-queue").textContent = running ? `queue ${health.queue_depth}/${health.queue_size}` : "queue —";
   $("#svc-uptime").textContent = running ? "up " + fmtDuration(health.uptime_seconds) : "—";
   $("#btn-start").disabled = running;
@@ -1048,6 +1065,14 @@ function renderRun(result) {
     line.innerHTML = `RTF mean <b>${rtf.toFixed(2)}</b> · p95 <b>${result.p95_rtf.toFixed(2)}</b>` +
       ` · latency <b>${result.mean_latency.toFixed(2)}s</b> · peak queue <b>${result.max_depth}</b>`;
     detail.appendChild(line);
+    if (result.load != null) {
+      const load = el("div", "k");
+      const colour = result.load > 1 ? "var(--bad)" : result.load > 0.8 ? "var(--warn)" : "var(--ok)";
+      load.innerHTML = `load <b style="color:${colour}">${Math.round(result.load * 100)}%</b>` +
+        ` of capacity — ${result.streams} x ${result.mean_latency.toFixed(2)}s of work per ` +
+        `${result.step_seconds}s step`;
+      detail.appendChild(load);
+    }
   }
   for (const [label, value] of Object.entries(result.per_stream).sort()) {
     detail.appendChild(el("div", "streamrow", `${label}  RTF ${value.toFixed(2)}`));

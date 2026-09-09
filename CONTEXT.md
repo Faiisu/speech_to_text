@@ -12,7 +12,14 @@ _Avoid_: Streaming (ambiguous — could imply native model streaming support, wh
 A fixed-length window of buffered audio (5 seconds by default, with 1 second of overlap with the previous chunk) that gets independently transcribed during a real-time session. Overlapping regions are not deduplicated or stitched — each chunk's transcript is logged as-is. The length is a property of the session, chosen per run and capped at 30 seconds because Whisper pads every chunk to a 30-second window and discards anything beyond it; a longer chunk therefore spends the same fixed encoder pass on more audio.
 
 **RTF_chunk**:
-Real-time factor for a single chunk: transcription latency for that chunk divided by the chunk's audio duration. RTF_chunk < 1 means the model kept pace with live speech; RTF_chunk ≥ 1 means it fell behind.
+Real-time factor for a single chunk: transcription latency for that chunk divided by the chunk's audio duration. A measure of how fast the model is on this machine.
+
+It does **not** say whether the system is keeping up, and reading it that way is wrong in two directions. Chunks arrive one **step** apart, not one chunk apart, so with the default 1s overlap a station handing over a chunk every 4 seconds can show RTF 0.9 against a 5s chunk while its queue grows. And RTF is per chunk: it has no idea how many stations share the one model, so three stations at RTF 0.3 look idle and are in fact over capacity. The number that answers "are we keeping up" is **load**.
+
+**Load**:
+The share of available inference capacity the running stations need: each station's mean latency over its **step** interval — how much of one worker it consumes — summed across stations and divided by the worker count. At or under 1.0 the machine keeps up; above it, chunks queue and are then dropped.
+
+Load is the only one of these numbers that knows how many stations there are, which is why it, and not RTF, answers "can this machine run three microphones".
 
 **Reference transcript**:
 The full-clip batch transcription produced once, after a real-time session stops, by transcribing the entire recording in one pass. Used as a manual quality comparison point against the chunked/streamed output — not a ground-truth score (no automated WER/diff, since no independently-verified ground truth exists).

@@ -97,18 +97,19 @@ def test_queue_bound_and_drop_accounting_survive_concurrent_producers():
     assert sum(queue.dropped.values()) + queue.depth == 600, "every chunk is accounted for"
 
 
-def test_health_reports_keeping_up_from_recent_chunks_only():
-    health = StationHealth(station_id="a", label="Line 1", session_id="s")
-    assert health.keeping_up is None, "no data yet is not the same as falling behind"
+def test_health_reports_demand_from_recent_chunks_only():
+    """Demand is a rolling figure: a station that recovers has to show it
+    without waiting for a restart."""
+    health = StationHealth(station_id="a", label="Line 1", session_id="s", step_seconds=4.0)
+    assert health.demand is None, "no data yet is not the same as falling behind"
 
     for _ in range(20):
-        health._recent_rtf.append(2.0)
-    assert health.keeping_up is False
+        health._recent_latency.append(8.0)
+    assert health.demand == pytest.approx(2.0), "needs two workers, has one"
 
-    # The window is rolling: recovery has to show up without a restart.
     for _ in range(20):
-        health._recent_rtf.append(0.3)
-    assert health.keeping_up is True
+        health._recent_latency.append(1.2)
+    assert health.demand == pytest.approx(0.3)
 
 
 # -- configuration ---------------------------------------------------------
@@ -674,3 +675,105 @@ def test_a_dead_stream_stops_the_chunk_loop_once_the_buffer_is_drained():
     # Audio already captured is still worth transcribing before giving up.
     capture._buffer.add(np.zeros(cam.chunking.chunk_samples, dtype="float32"))
     assert capture._source_alive() is True
+
+
+# -- load: the number that actually answers "are we keeping up" ------------
+
+
+def _health(step_seconds, latency, samples=5):
+    from stations.engine import StationHealth
+
+    health = StationHealth(station_id="a", label="L", session_id="s", step_seconds=step_seconds)
+    for _ in range(samples):
+        health._recent_rtf.append(latency / (step_seconds + 1))
+        health._recent_latency.append(latency)
+    return health
+
+
+def test_demand_divides_by_the_step_not_the_chunk():
+    """Chunks arrive one step apart, not one chunk apart. Dividing by the
+    chunk understated the load by exactly the overlap: with the default 5s/1s
+    a station could show RTF 0.9 while its queue grew."""
+    # 5s chunk, 1s overlap -> a chunk every 4s; each takes 4.5s.
+    health = _health(step_seconds=4.0, latency=4.5)
+
+    assert health.demand == pytest.approx(4.5 / 4.0)
+    assert health.demand > 1.0, "one station already needs more than one worker"
+
+
+def test_load_adds_the_stations_up():
+    """Three stations at 0.375 need 1.125 workers, which one iGPU is not.
+    RTF never showed this because it does not know there are three."""
+    from stations.engine import Engine
+
+    settings = Settings(runtime="ctranslate2", workers=1)
+    engine = Engine(settings)
+    for n in range(3):
+        engine.health[f"s{n}"] = _health(step_seconds=4.0, latency=1.5)
+
+    assert engine.load == pytest.approx(1.125)
+    assert engine.keeping_up is False, "over capacity, however good each RTF looks"
+
+
+def test_load_accounts_for_extra_workers():
+    from stations.engine import Engine
+
+    settings = Settings(runtime="ctranslate2", workers=2)
+    engine = Engine(settings)
+    for n in range(3):
+        engine.health[f"s{n}"] = _health(step_seconds=4.0, latency=1.5)
+
+    assert engine.load == pytest.approx(0.5625)
+    assert engine.keeping_up is True
+
+
+def test_load_is_unknown_before_any_chunk():
+    from stations.engine import Engine
+
+    engine = Engine(Settings(runtime="ctranslate2"))
+    assert engine.load is None
+    assert engine.keeping_up is None, "no data is not the same as falling behind"
+
+
+def test_rtf_is_still_reported_and_still_means_what_it_meant():
+    """RTF stays: it is a correct measure of model speed on this machine, and
+    the thing to watch when comparing runtimes. It just isn't the capacity
+    number."""
+    health = _health(step_seconds=4.0, latency=1.5)
+    assert health.mean_rtf is not None
+    assert health.mean_latency == pytest.approx(1.5)
+    assert health.as_dict()["mean_rtf"] is not None
+    assert health.as_dict()["demand"] == pytest.approx(0.375)
+
+
+def test_the_engine_can_still_load_its_model_and_process_a_chunk():
+    """Regression: adding a `load` property shadowed the `load()` method that
+    loads the runtime, and every inference worker died at start with
+    'NoneType is not callable'. Nothing caught it, because no test had ever
+    run a worker."""
+    import time
+
+    from stations.engine import Engine
+
+    class FakeRuntime:
+        def transcribe(self, audio, language="th", decoding=None):
+            return "สวัสดี"
+
+    station = Station(id="s1", label="Line 1", device="mic",
+                      chunk_seconds=1.0, overlap_seconds=0.0, silence_threshold=0.0)
+    engine = Engine(Settings(runtime="ctranslate2", stations=[station]))
+    engine._runtime = FakeRuntime()
+
+    assert engine.load_model() is engine._runtime
+    engine.register(station)
+    engine.start()
+    try:
+        engine.submit(station, np.ones(16_000, dtype="float32") * 0.5, 0.0)
+        deadline = time.time() + 5
+        while engine.health["s1"].chunks_done == 0 and time.time() < deadline:
+            time.sleep(0.05)
+    finally:
+        engine.stop()
+
+    assert engine.health["s1"].chunks_done == 1, "the worker never processed the chunk"
+    assert engine.load is not None, "and the capacity metric still works"

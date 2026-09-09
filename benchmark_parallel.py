@@ -143,7 +143,7 @@ class Run:
         engine = Engine(settings, on_event=self.on_event)
         self._emit({"type": "loading", "streams": self.streams,
                     "model": self.args.model, "runtime": self.args.runtime})
-        engine.load()
+        engine.load_model()
         engine.start()
         for station in stations:
             engine.register(station)
@@ -203,6 +203,7 @@ class Run:
         sampling.set()
         engine.stop()
 
+        step_seconds = stations[0].chunking.step_seconds
         submitted = sum(c.chunks_emitted for c in captures)
         dropped = sum(engine.queue.dropped.values())
         processed = sum(len(v) for v in self.latencies.values()) + self.silent
@@ -222,6 +223,14 @@ class Run:
                         else (max(all_rtfs) if all_rtfs else None)),
             "mean_latency": statistics.mean(all_latencies) if all_latencies else None,
             "max_depth": max(self.depths) if self.depths else 0,
+            # The capacity number. RTF is per chunk and does not know how many
+            # streams share the one model; this divides the work each stream
+            # hands over by the interval it has to fit in, and adds them up.
+            "load": (
+                len(stations) * statistics.mean(all_latencies) / step_seconds / self.args.workers
+                if all_latencies else None
+            ),
+            "step_seconds": step_seconds,
             "per_stream": {k: statistics.mean(v) for k, v in self.rtfs.items()},
             "transcripts": dict(self.texts),
             # Keeping up means every chunk that a microphone produced actually
@@ -262,6 +271,11 @@ def report(result: dict, chunk_seconds: float) -> None:
     if result["mean_rtf"] is not None:
         print(f"    RTF per chunk   mean {result['mean_rtf']:.2f}   p95 {result['p95_rtf']:.2f}   "
               f"latency {result['mean_latency']:.2f}s for a {chunk_seconds:g}s chunk")
+        # RTF says how fast one chunk was; load says whether the machine can
+        # keep taking them from this many streams. They are different numbers
+        # and only the second answers the capacity question.
+        print(f"    load            {result['load']:.2f} of capacity "
+              f"({n} x {result['mean_latency']:.2f}s per {result['step_seconds']:g}s step)")
     print(f"    queue depth     max {result['max_depth']}")
     for label, rtf in sorted(result["per_stream"].items()):
         print(f"      {label:34} {rtf:.2f}")

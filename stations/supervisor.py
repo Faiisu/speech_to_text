@@ -44,7 +44,7 @@ class Supervisor:
         # than as three identical errors from three capture threads.
         self._emit({"type": "service", "state": "loading", "model": self.settings.model,
                     "runtime": self.settings.runtime})
-        self.engine.load()
+        self.engine.load_model()
         self.engine.start()
         self._stop.clear()
         self.started_at = time.time()
@@ -119,8 +119,13 @@ class Supervisor:
             if health:
                 entry.update(health.as_dict())
             stations.append(entry)
+        load = self.engine.load
         return {
             "model": self.settings.model,
+            # The capacity number: RTF cannot answer it, because RTF does not
+            # know how many stations share the one model.
+            "load": round(load, 3) if load is not None else None,
+            "keeping_up": self.engine.keeping_up,
             "runtime": self.settings.runtime,
             "workers": self.settings.workers,
             "queue_depth": self.engine.queue.depth,

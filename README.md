@@ -515,7 +515,11 @@ uv run python benchmark_parallel.py --clips recordings/ --sweep 1,2,3,4 --durati
 uv run python benchmark_parallel.py --clips a.mp4 b.mp4 c.mp4 --streams 3
 ```
 
-Video files work as input — audio is extracted with ffmpeg — so a folder of recordings is usable test material directly. A stream count only counts as sustained if **nothing was dropped and nothing was left queued**: mean RTF below 1 is not sufficient on its own, since a run can average under 1 and still lose audio in bursts. If three streams fall behind, raising `--chunk-seconds` is the first thing to try — Whisper pads every chunk to 30s regardless, so a longer chunk spreads one fixed encoder pass over more audio.
+Video files work as input — audio is extracted with ffmpeg — so a folder of recordings is usable test material directly.
+
+**Read `load`, not RTF, for capacity.** RTF is transcription time over the chunk's audio duration: a measure of how fast the model is here, and the right number for comparing runtimes. It answers the capacity question wrongly in two directions. Chunks arrive one *step* apart, not one chunk apart, so with the default 1s overlap a station can show RTF 0.9 against a 5s chunk while its queue grows. And RTF is per chunk — it does not know how many stations share the one model, so three stations at RTF 0.3 look idle while needing 112% of capacity. `load` sums each station's latency-over-step and divides by the worker count; at or under 1.0 the machine keeps up.
+
+A stream count only counts as sustained if **nothing was dropped and nothing was left queued**: mean RTF below 1 is not sufficient on its own, since a run can average under 1 and still lose audio in bursts. If three streams fall behind, raising `--chunk-seconds` is the first thing to try — Whisper pads every chunk to 30s regardless, so a longer chunk spreads one fixed encoder pass over more audio.
 
 ### Tests
 
