@@ -572,6 +572,16 @@ async function fillRuntimeSelect(select, model, current, whySelector) {
 
 
 // ---- configuration ------------------------------------------------------
+const STREAM_SENTINEL = "__stream__";
+const STREAM_SCHEMES = /^(rtsps?|rtmps?|https?|srt|udp):\/\//i;
+
+// The device a station reads from, whichever control holds it.
+function deviceOf(box) {
+  const select = box.querySelector('[data-field="device"]');
+  if (select.value !== STREAM_SENTINEL) return select.value;
+  return box.querySelector('[data-field="stream_url"]').value.trim();
+}
+
 function stationEditor(station) {
   const box = el("div", "station-edit");
   const head = el("div", "head");
@@ -602,23 +612,44 @@ function stationEditor(station) {
   row1.appendChild(mk("Id", "id", station.id));
   row1.appendChild(mk("Label", "label", station.label));
   const devWrap = el("div");
-  devWrap.appendChild(el("label", null, "Microphone"));
+  devWrap.appendChild(el("label", null, "Audio source"));
   const select = el("select");
   select.dataset.field = "device";
+  const isStream = STREAM_SCHEMES.test(station.device || "");
   for (const device of devices) {
     const option = el("option", null, device.name);
     option.value = device.name;
     select.appendChild(option);
   }
-  if (station.device && !devices.some((d) => d.name === station.device)) {
+  if (station.device && !isStream && !devices.some((d) => d.name === station.device)) {
     // Keep a configured mic that isn't plugged in right now, rather than
     // silently rewriting the station to a different device on save.
     const option = el("option", null, station.device + " (not connected)");
     option.value = station.device;
     select.appendChild(option);
   }
-  select.value = station.device || (devices[0] && devices[0].name) || "";
+  // A CCTV camera is not a sound card: it arrives over the network, so it is
+  // typed in rather than picked from what PortAudio can see.
+  const streamOption = el("option", null, "Network stream (RTSP / CCTV)…");
+  streamOption.value = STREAM_SENTINEL;
+  select.appendChild(streamOption);
+
+  const url = el("input");
+  url.dataset.field = "stream_url";
+  url.placeholder = "rtsp://user:password@192.168.1.50:554/stream1";
+  url.value = isStream ? station.device : "";
+  url.style.marginTop = "6px";
+  url.hidden = !isStream;
+
+  select.value = isStream
+    ? STREAM_SENTINEL
+    : (station.device || (devices[0] && devices[0].name) || "");
+  select.addEventListener("change", () => {
+    url.hidden = select.value !== STREAM_SENTINEL;
+  });
+
   devWrap.appendChild(select);
+  devWrap.appendChild(url);
   row1.appendChild(devWrap);
   box.appendChild(row1);
 
@@ -660,11 +691,11 @@ function stationEditor(station) {
 }
 
 async function measureRoom(box, button, readout) {
-  const device = box.querySelector('[data-field="device"]').value;
+  const device = deviceOf(box);
   const field = box.querySelector('[data-field="silence_threshold"]');
   if (!device) {
     readout.className = "noise err";
-    readout.textContent = "pick a microphone first";
+    readout.textContent = "pick a microphone, or enter a stream URL, first";
     return;
   }
   const label = button.textContent;
@@ -711,7 +742,7 @@ function readStationEditors() {
     return {
       id: get("id").value.trim(),
       label: get("label").value.trim(),
-      device: get("device").value,
+      device: deviceOf(box),
       enabled: get("enabled").checked,
       language: get("language").value,
       keywords: get("keywords").value.split(",").map((k) => k.trim()).filter(Boolean),

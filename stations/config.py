@@ -71,7 +71,19 @@ class Station:
         if not self.label.strip():
             raise ConfigError(f"Station {self.id!r} needs a label — it is what the UI shows")
         if not self.device.strip():
-            raise ConfigError(f"Station {self.id!r} needs a device name to capture from")
+            raise ConfigError(f"Station {self.id!r} needs a device name or stream URL")
+        # A URL with a scheme nothing can read is worth rejecting here: it
+        # would otherwise be treated as a microphone name and fail with a
+        # confusing "no input device matching rtspp://..." at start.
+        if "://" in self.device:
+            from stations.capture import STREAM_SCHEMES
+
+            scheme = self.device.split("://", 1)[0].lower()
+            if scheme not in STREAM_SCHEMES:
+                raise ConfigError(
+                    f"Station {self.id!r}: {scheme}:// is not a stream this can read; "
+                    f"expected one of {', '.join(STREAM_SCHEMES)}"
+                )
         if self.language not in LANGUAGES:
             raise ConfigError(
                 f"Station {self.id!r}: unknown language {self.language!r}; "

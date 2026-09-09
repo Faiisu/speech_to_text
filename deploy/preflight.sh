@@ -79,13 +79,21 @@ else
   bad "no audio input devices found"
 fi
 
+echo
+echo "Network streams (CCTV)"
+if command -v ffmpeg > /dev/null 2>&1; then
+  ok "ffmpeg present — stations can read RTSP sources"
+else
+  warn "ffmpeg missing: microphone stations work, RTSP/CCTV stations do not. Fix: sudo apt-get install -y ffmpeg"
+fi
+
 if [ -f stations.json ]; then
   echo
   echo "Configured stations"
   "$UV" run python -c "
 import sys
 from stations.config import load, ConfigError
-from stations.capture import resolve_device, DeviceError
+from stations.capture import check_device, DeviceError
 try:
     settings = load()
 except ConfigError as exc:
@@ -94,7 +102,7 @@ for s in settings.stations:
     if not s.enabled:
         print(f'    - {s.label}: disabled'); continue
     try:
-        resolve_device(s.device); print(f'    ok {s.label} -> {s.device}')
+        check_device(s.device); print(f'    ok {s.label} -> {s.device}')
     except DeviceError as exc:
         print(f'    MISSING {s.label}: {exc}'); sys.exit(1)
 " || bad "a configured station's microphone is missing or ambiguous"

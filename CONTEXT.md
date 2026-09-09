@@ -55,6 +55,11 @@ _Avoid_: Channel (suggests audio channels within one stream), input, source
 **Device name**:
 How a station identifies its microphone — the device's *name*, never its index. PortAudio indices shift when a USB mic is replugged or the machine reboots, so an index would silently rebind a station to a different microphone and mislabel everything it detected. An ambiguous name is an error rather than a first-match guess, for the same reason.
 
+**Stream station**:
+A station whose source is a URL rather than a sound card — an `rtsp://` feed from a CCTV camera being the case it was built for. ffmpeg does the reading, decoding, downmixing and resampling, so from the engine's side a camera is an ordinary station: same chunking, same silence gate, same queue, same watchdog.
+
+Worth knowing before relying on one: CCTV audio is typically 8kHz G.711 from a far-field microphone, upsampled to the 16kHz Whisper wants. The lost detail does not come back, and accuracy suffers accordingly — most of all for a tonal language. Measure a real camera before planning around one.
+
 **Drop**:
 A chunk discarded without being transcribed, because the shared model was too far behind and the queue was full. The oldest queued chunk goes first. Dropping is the deliberate alternative to an unbounded backlog: audio is lost, but it is lost *visibly* and counted per station, whereas a growing queue looks like a working system until the machine runs out of memory.
 _Avoid_: Skip (that is the silence gate, which is a different decision — see **Silence gate**)

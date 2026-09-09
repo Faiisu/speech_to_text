@@ -10,15 +10,39 @@ chunk length, not of uptime.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
+from urllib.parse import urlparse
 
 import numpy as np
 import sounddevice as sd
 
 from stations.config import Station
 from transcribe import SAMPLE_RATE
+
+# Network sources a station can read from instead of a local microphone.
+# RTSP is what CCTV speaks; the rest come free with the same ffmpeg pipe.
+STREAM_SCHEMES = ("rtsp", "rtsps", "rtmp", "rtmps", "http", "https", "srt", "udp")
+
+# How much audio to pull from the pipe at a time. Small enough that stopping
+# is prompt, large enough not to syscall per sample.
+STREAM_READ_SAMPLES = 4096
+
+# Socket timeout handed to ffmpeg, in microseconds. Without it an unreachable
+# camera leaves ffmpeg waiting indefinitely: a measurement hangs, and a live
+# station sits with a thread alive and no audio, which the watchdog reads as
+# healthy. Making ffmpeg give up turns both into an error that gets reported
+# and retried.
+STREAM_TIMEOUT_MICROSECONDS = 8_000_000
+
+
+def is_stream_url(device: str) -> bool:
+    """Is this station reading from the network rather than a sound card?"""
+    return urlparse(device.strip()).scheme in STREAM_SCHEMES
 
 
 class DeviceError(RuntimeError):
@@ -63,6 +87,54 @@ def resolve_device(name: str) -> int:
     )
 
 
+def _input_options(url: str) -> list[str]:
+    """ffmpeg input options for this URL's scheme.
+
+    -rtsp_transport belongs to the RTSP demuxer and ffmpeg *rejects the whole
+    command* if it is passed for an http:// or srt:// input, so it cannot be
+    applied unconditionally.
+    """
+    options = ["-timeout", str(STREAM_TIMEOUT_MICROSECONDS)]
+    if urlparse(url.strip()).scheme in ("rtsp", "rtsps"):
+        # TCP rather than the default UDP: cameras are usually across a switch
+        # or a VPN, and UDP RTSP loses packets silently, which arrives as audio
+        # that is subtly wrong rather than as an error.
+        options = ["-rtsp_transport", "tcp", *options]
+    return options
+
+
+def _sample_stream(url: str, seconds: float) -> np.ndarray:
+    """Grab a few seconds from a network stream, for measuring it.
+
+    -t bounds it inside ffmpeg rather than relying on us to stop reading, so a
+    camera that never stops talking cannot hang the request.
+    """
+    check_device(url)
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-nostdin", "-loglevel", "error",
+             *_input_options(url), "-t", str(seconds), "-i", url,
+             "-vn", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "f32le", "-"],
+            capture_output=True,
+            # ffmpeg's own timeout should fire first; this is the backstop for
+            # the case where it doesn't, and it must not surface as a raw
+            # TimeoutExpired traceback.
+            timeout=seconds + STREAM_TIMEOUT_MICROSECONDS / 1e6 + 10,
+        )
+    except subprocess.TimeoutExpired:
+        raise DeviceError(
+            f"{url} did not respond. Check the address, that the camera is reachable "
+            "from this machine, and that the credentials in the URL are right."
+        ) from None
+    if not result.stdout:
+        detail = (result.stderr or b"").decode(errors="replace").strip()
+        raise DeviceError(
+            f"No audio from {url}: {detail.splitlines()[-1] if detail else 'stream gave nothing'}. "
+            "Many cameras ship with audio disabled, or have no microphone at all."
+        )
+    return np.frombuffer(result.stdout, dtype="float32").copy()
+
+
 def measure_noise(device: str, seconds: float = 5.0) -> dict:
     """Record a short sample and report how loud this microphone's room is.
 
@@ -73,12 +145,15 @@ def measure_noise(device: str, seconds: float = 5.0) -> dict:
     slam need different thresholds and one overall average hides which you
     have.
     """
-    index = resolve_device(device)
     frames = int(seconds * SAMPLE_RATE)
-    recording = sd.rec(frames, samplerate=SAMPLE_RATE, channels=1,
-                       dtype="float32", device=index)
-    sd.wait()
-    audio = recording.reshape(-1)
+    if is_stream_url(device):
+        audio = _sample_stream(device, seconds)
+    else:
+        index = resolve_device(device)
+        recording = sd.rec(frames, samplerate=SAMPLE_RATE, channels=1,
+                           dtype="float32", device=index)
+        sd.wait()
+        audio = recording.reshape(-1)
 
     def dbfs(value: float) -> float | None:
         return round(float(20 * np.log10(value)), 1) if value > 0 else None
@@ -119,6 +194,24 @@ def measure_noise(device: str, seconds: float = 5.0) -> dict:
         # letting the operator raise the gate until real speech is dropped too.
         "noisy": overall > 0.05,
     }
+
+
+def check_device(device: str) -> None:
+    """Validate a station's source without opening it for real.
+
+    Both kinds of device get checked the same way at the same points — saving
+    config, starting a station, and the watchdog deciding whether to retry —
+    so a network station is not quietly exempt from the checks a microphone
+    gets.
+    """
+    if is_stream_url(device):
+        if not shutil.which("ffmpeg"):
+            raise DeviceError(
+                f"{device} is a network stream, which needs ffmpeg to read. "
+                "Install it:  sudo apt-get install -y ffmpeg"
+            )
+        return
+    resolve_device(device)
 
 
 class _RingBuffer:
@@ -180,12 +273,13 @@ class _RingBuffer:
                     remaining -= in_head
 
 
-class StationCapture:
-    """Captures one station's audio and emits chunks to a sink.
+class _Capture:
+    """Cuts a source's audio into chunks and hands them to a sink.
 
-    The sink is called with (station, chunk, chunk_time) and is expected not to
-    block for long — it hands off to the shared inference queue, which applies
-    its own backpressure policy.
+    The chunking lives here, once, so a microphone station and a network
+    station cannot drift into behaving differently — the same failure the
+    Chunking dataclass exists to prevent. Subclasses only supply audio: they
+    open a source in `_source()` and push blocks into `self._buffer`.
     """
 
     def __init__(self, station: Station, sink, on_error=None) -> None:
@@ -196,31 +290,30 @@ class StationCapture:
         self._buffer = _RingBuffer(self._chunking.chunk_samples)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._device_index: int | None = None
         self.started_at: float | None = None
         self.stream_errors = 0
 
-    # PortAudio calls this on its own high-priority thread: do as little as
-    # possible here. Anything slow risks an input overflow and lost audio.
-    def _callback(self, indata, frame_count, time_info, status) -> None:
-        if status:
-            self.stream_errors += 1
-        self._buffer.add(indata.copy().reshape(-1))
+    @contextmanager
+    def _source(self):
+        raise NotImplementedError
+
+    def _source_alive(self) -> bool:
+        """Is the source still capable of producing audio?
+
+        A microphone stream raises when it fails; a subprocess just stops
+        writing. Without this the chunk loop would wait for a chunk that can
+        never arrive, with the thread alive — which the watchdog reads as a
+        healthy station.
+        """
+        return True
 
     def _run(self) -> None:
         step_samples = self._chunking.step_samples
         elapsed_samples = 0
         try:
-            self._device_index = resolve_device(self.station.device)
-            with sd.InputStream(
-                samplerate=SAMPLE_RATE,
-                channels=1,
-                dtype="float32",
-                callback=self._callback,
-                device=self._device_index,
-            ):
+            with self._source():
                 self.started_at = time.time()
-                while not self._stop.is_set():
+                while not self._stop.is_set() and self._source_alive():
                     chunk = self._buffer.take_chunk()
                     if chunk is None:
                         # Sleep well under one step so a chunk is picked up
@@ -253,3 +346,115 @@ class StationCapture:
     @property
     def buffered_seconds(self) -> float:
         return self._buffer.available / SAMPLE_RATE
+
+
+class StationCapture(_Capture):
+    """A station reading from a local microphone."""
+
+    def __init__(self, station: Station, sink, on_error=None) -> None:
+        super().__init__(station, sink, on_error)
+        self._device_index: int | None = None
+
+    # PortAudio calls this on its own high-priority thread: do as little as
+    # possible here. Anything slow risks an input overflow and lost audio.
+    def _callback(self, indata, frame_count, time_info, status) -> None:
+        if status:
+            self.stream_errors += 1
+        self._buffer.add(indata.copy().reshape(-1))
+
+    @contextmanager
+    def _source(self):
+        self._device_index = resolve_device(self.station.device)
+        with sd.InputStream(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="float32",
+            callback=self._callback,
+            device=self._device_index,
+        ):
+            yield
+
+
+class StreamCapture(_Capture):
+    """A station reading from a network stream — a CCTV camera's RTSP feed.
+
+    ffmpeg does the work: it speaks RTSP, decodes whatever codec the camera
+    uses, downmixes to mono and resamples to the rate Whisper wants, and hands
+    back raw float32 on a pipe. A dying pipe raises, which the supervisor's
+    watchdog turns into a reconnect — the same path an unplugged USB mic takes.
+    """
+
+    def __init__(self, station: Station, sink, on_error=None) -> None:
+        super().__init__(station, sink, on_error)
+        self._process: subprocess.Popen | None = None
+        self._reader: threading.Thread | None = None
+
+    def _command(self) -> list[str]:
+        return [
+            "ffmpeg", "-nostdin", "-loglevel", "error",
+            *_input_options(self.station.device),
+            "-i", self.station.device,
+            "-vn",                      # the video is not our business
+            "-ac", "1",
+            "-ar", str(SAMPLE_RATE),
+            "-f", "f32le",              # the format _RingBuffer already holds
+            "-",
+        ]
+
+    def _source_alive(self) -> bool:
+        # Whatever is still buffered is worth cutting into chunks first; only
+        # then is the dead process a reason to stop.
+        if self._process is None or self._process.poll() is None:
+            return True
+        return self._buffer.available >= self._chunking.chunk_samples
+
+    def _pump(self) -> None:
+        """Move audio from the pipe into the ring buffer."""
+        assert self._process and self._process.stdout
+        width = np.dtype("float32").itemsize
+        want = STREAM_READ_SAMPLES * width
+        while not self._stop.is_set():
+            data = self._process.stdout.read(want)
+            if not data:
+                break  # ffmpeg exited; _source() reports why
+            self._buffer.add(np.frombuffer(data, dtype="float32").copy())
+
+    @contextmanager
+    def _source(self):
+        check_device(self.station.device)
+        self._process = subprocess.Popen(
+            self._command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        self._reader = threading.Thread(
+            target=self._pump, name=f"rtsp-{self.station.id}", daemon=True
+        )
+        self._reader.start()
+        try:
+            yield
+            # Falling out while the pipe is dead means ffmpeg quit on its own.
+            # Its stderr is the only thing that says why, so it is the error.
+            if self._process.poll() is not None and not self._stop.is_set():
+                self.stream_errors += 1
+                detail = (self._process.stderr.read() or b"").decode(errors="replace").strip()
+                raise DeviceError(
+                    f"stream ended: {detail.splitlines()[-1] if detail else 'ffmpeg exited'}"
+                )
+        finally:
+            process, self._process = self._process, None
+            if process and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            for pipe in (process.stdout, process.stderr) if process else ():
+                if pipe:
+                    pipe.close()
+            if self._reader:
+                self._reader.join(timeout=2)
+
+
+def open_capture(station: Station, sink, on_error=None) -> _Capture:
+    """The right capture for this station's source."""
+    kind = StreamCapture if is_stream_url(station.device) else StationCapture
+    return kind(station, sink, on_error)

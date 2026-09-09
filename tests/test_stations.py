@@ -531,3 +531,146 @@ def test_measure_noise_endpoint_reports_a_busy_microphone(client, monkeypatch):
     response = client.post("/api/measure-noise", json={"device": "USB Mic", "seconds": 5})
     assert response.status_code == 503
     assert "Device unavailable" in response.json()["detail"]
+
+
+# -- network stream stations (CCTV) ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "device, expected",
+    [
+        ("rtsp://cam:554/stream1", True),
+        ("RTSP://Cam:554/stream1", True),
+        ("rtsps://cam/s", True),
+        ("http://host/audio.mp3", True),
+        ("USB Audio Device", False),
+        ("HDA Intel PCH: ALC888-VD Analog (hw:0,0)", False),
+        ("", False),
+    ],
+)
+def test_stream_urls_are_told_apart_from_device_names(device, expected):
+    from stations.capture import is_stream_url
+
+    assert is_stream_url(device) is expected
+
+
+def test_a_stream_station_gets_the_stream_capture():
+    """The engine must not care which it is — that is what makes a camera a
+    station rather than a special case."""
+    from stations.capture import StationCapture, StreamCapture, open_capture
+
+    cam = Station(id="cam1", label="Camera 1", device="rtsp://cam:554/s")
+    mic = Station(id="mic1", label="Desk", device="USB Audio Device")
+
+    assert isinstance(open_capture(cam, lambda *a: None), StreamCapture)
+    assert isinstance(open_capture(mic, lambda *a: None), StationCapture)
+
+
+def test_the_ffmpeg_command_asks_for_what_whisper_needs():
+    from stations.capture import StreamCapture
+
+    cam = Station(id="cam1", label="Camera 1", device="rtsp://cam:554/s")
+    command = StreamCapture(cam, lambda *a: None)._command()
+
+    assert command[:1] == ["ffmpeg"]
+    assert "-vn" in command, "the video is not our business"
+    assert command[command.index("-ar") + 1] == "16000", "Whisper wants 16kHz"
+    assert command[command.index("-ac") + 1] == "1", "mono"
+    assert command[command.index("-f") + 1] == "f32le", "the format the ring buffer holds"
+    # UDP RTSP loses packets silently, which arrives as subtly wrong audio
+    # rather than as an error.
+    assert command[command.index("-rtsp_transport") + 1] == "tcp"
+    # Without this an unreachable camera leaves a thread alive and no audio,
+    # which the watchdog would read as healthy.
+    assert "-timeout" in command
+
+
+def test_a_bad_url_scheme_is_rejected_at_configuration_time():
+    """Otherwise it is treated as a microphone name and fails much later with
+    'no input device matching rtspp://...'."""
+    with pytest.raises(ConfigError, match="not a stream this can read"):
+        Station(id="cam1", label="Camera 1", device="rtspp://typo/s")
+
+
+def test_check_device_requires_ffmpeg_for_streams(monkeypatch):
+    import stations.capture as capture
+
+    monkeypatch.setattr(capture.shutil, "which", lambda name: None)
+    with pytest.raises(DeviceError, match="needs ffmpeg"):
+        capture.check_device("rtsp://cam:554/s")
+
+    monkeypatch.setattr(capture.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    capture.check_device("rtsp://cam:554/s")  # no raise
+
+
+def test_an_unreachable_camera_is_a_device_error_not_a_traceback(monkeypatch):
+    """A hung ffmpeg must not reach the operator as TimeoutExpired."""
+    import subprocess
+
+    import stations.capture as capture
+
+    monkeypatch.setattr(capture.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="ffmpeg", timeout=1)
+
+    monkeypatch.setattr(capture.subprocess, "run", timeout)
+    with pytest.raises(DeviceError, match="did not respond"):
+        capture.measure_noise("rtsp://cam:554/s", 2.0)
+
+
+def test_a_camera_with_no_audio_says_so(monkeypatch):
+    """Many cameras ship with audio disabled, or have no microphone at all —
+    the most likely reason for an empty stream, and worth saying."""
+    import stations.capture as capture
+
+    monkeypatch.setattr(capture.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    class Result:
+        stdout = b""
+        stderr = b"Stream map '0:a' matches no streams"
+
+    monkeypatch.setattr(capture.subprocess, "run", lambda *a, **k: Result())
+    with pytest.raises(DeviceError, match="audio disabled"):
+        capture.measure_noise("rtsp://cam:554/s", 2.0)
+
+
+def test_rtsp_only_options_are_not_passed_to_other_schemes():
+    """ffmpeg rejects the whole command if -rtsp_transport is given for an
+    http:// input — "Option rtsp_transport not found" — so the stream produces
+    nothing at all, silently."""
+    from stations.capture import _input_options
+
+    rtsp = _input_options("rtsp://cam:554/s")
+    assert rtsp[:2] == ["-rtsp_transport", "tcp"]
+
+    for url in ["http://host/a.mp4", "srt://host:1234", "udp://host:5000"]:
+        assert "-rtsp_transport" not in _input_options(url), url
+        assert "-timeout" in _input_options(url), "every scheme still needs a timeout"
+
+
+def test_a_dead_stream_stops_the_chunk_loop_once_the_buffer_is_drained():
+    """Without this the loop waits for a chunk that can never arrive, with the
+    thread still alive — which the watchdog reads as a healthy station."""
+    from stations.capture import StreamCapture
+
+    cam = Station(id="cam1", label="Camera 1", device="rtsp://cam:554/s",
+                  chunk_seconds=1, overlap_seconds=0)
+    capture = StreamCapture(cam, lambda *a: None)
+
+    class Process:
+        def __init__(self, code):
+            self._code = code
+
+        def poll(self):
+            return self._code
+
+    capture._process = Process(None)  # still running
+    assert capture._source_alive() is True
+
+    capture._process = Process(1)  # died, nothing buffered
+    assert capture._source_alive() is False
+
+    # Audio already captured is still worth transcribing before giving up.
+    capture._buffer.add(np.zeros(cam.chunking.chunk_samples, dtype="float32"))
+    assert capture._source_alive() is True

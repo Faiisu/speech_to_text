@@ -468,6 +468,16 @@ restart   systemctl restart stt-stations
 
 ### Configuring
 
+A station's source is either a local microphone or a network stream. For a camera, choose *Network stream (RTSP / CCTV)* in the source dropdown and enter the URL:
+
+```
+rtsp://user:password@192.168.1.50:554/stream1
+```
+
+ffmpeg reads it, so it needs to be installed (`preflight.sh` checks). From the engine's side a camera is an ordinary station — same chunking, silence gate, queue and watchdog, and the same automatic reconnect when it drops off the network.
+
+**Before planning around cameras, measure one.** CCTV audio is usually 8kHz G.711 from a far-field microphone; upsampling to 16kHz does not bring back what the codec discarded, and accuracy suffers — most of all for a tonal language. Record a minute from a real camera, drop it in `audio/`, and run it through the Benchmark tab, reading the *output* panel rather than the timings. Note also that the camera's password sits in `stations.json` in plain text.
+
 Stations live in `stations.json` (start from `deploy/stations.example.json`) or are edited in the web UI. Microphones are identified **by device name, never by index** — PortAudio indices shift when a USB mic is replugged, which would silently rebind a station and mislabel everything it detected. An ambiguous name is rejected rather than guessed at.
 
 ```json

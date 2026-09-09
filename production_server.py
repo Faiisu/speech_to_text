@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import queue
+import shutil
 import threading
 from pathlib import Path
 
@@ -22,7 +23,13 @@ from benchmark_parallel import MEDIA_SUFFIXES, Options, Run, collect_clips, summ
 from model_catalog import discover
 from runtimes import probe, requires_single_worker
 from stations import config as station_config
-from stations.capture import DeviceError, input_devices, measure_noise, resolve_device
+from stations.capture import (
+    DeviceError,
+    check_device,
+    input_devices,
+    is_stream_url,
+    measure_noise,
+)
 from stations.config import ConfigError, Settings, Station
 from stations.replay import MediaError, media_duration
 from stations.supervisor import Supervisor
@@ -130,7 +137,7 @@ def put_config(body: ConfigBody) -> dict:
         if not station.enabled:
             continue
         try:
-            resolve_device(station.device)
+            check_device(station.device)
         except DeviceError as exc:
             missing.append(f"{station.label}: {exc}")
     if missing:
@@ -202,7 +209,7 @@ def runtimes(model: str = station_config.DEFAULT_MODEL) -> dict:
 @app.get("/api/devices")
 def devices() -> dict:
     """Input devices, so the operator picks a name instead of typing one."""
-    return {"devices": input_devices()}
+    return {"devices": input_devices(), "supports_streams": bool(shutil.which("ffmpeg"))}
 
 
 # -- service lifecycle -----------------------------------------------------
@@ -253,7 +260,7 @@ def start_station(station_id: str) -> dict:
     if station is None:
         raise HTTPException(status_code=404, detail=f"Unknown station {station_id!r}")
     try:
-        resolve_device(station.device)
+        check_device(station.device)
     except DeviceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     supervisor.start_station(station)

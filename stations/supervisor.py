@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 
-from stations.capture import DeviceError, StationCapture, resolve_device
+from stations.capture import DeviceError, check_device, open_capture
 from stations.config import Settings, Station
 from stations.engine import Engine
 
@@ -75,7 +75,7 @@ class Supervisor:
             if existing and existing.running:
                 return
             self.engine.register(station)
-            capture = StationCapture(
+            capture = open_capture(
                 station, sink=self.engine.submit, on_error=self._on_capture_error
             )
             self._captures[station.id] = capture
@@ -155,10 +155,12 @@ class Supervisor:
                 if time.time() - failed_at < RETRY_BACKOFF_SECONDS:
                     continue
                 try:
-                    resolve_device(station.device)
+                    check_device(station.device)
                 except DeviceError:
-                    # Still absent. Stay quiet until the backoff elapses again
-                    # rather than logging the same line every five seconds.
+                    # Still absent — an unplugged mic, or a camera that is
+                    # off the network. Stay quiet until the backoff elapses
+                    # again rather than logging the same line every five
+                    # seconds.
                     self._failed_at[station.id] = time.time()
                     continue
                 self._emit({"type": "station", "state": "restarting",
