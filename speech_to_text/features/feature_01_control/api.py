@@ -1,11 +1,11 @@
 """HTTP and event-stream adapter for the Feature 01 public callable API."""
 
 import asyncio
+import hmac
 import json
+import os
 import queue
 import secrets
-import hmac
-import os
 import tempfile
 import threading
 import time
@@ -17,11 +17,16 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from ..model_deployment import (list_available_models, load_model, start_microphone_flow,
-                                start_multiprocess_microphone_flows, transcribe_clip)
+from ..model_deployment import (
+    list_available_models,
+    load_model,
+    start_microphone_flow,
+    start_multiprocess_microphone_flows,
+    transcribe_clip,
+)
 from ..model_deployment.capacity import run_benchmark
-from ..model_deployment.remote_audio import RemoteAudioSource
 from ..model_deployment.errors import AudioInputError
+from ..model_deployment.remote_audio import RemoteAudioSource
 
 
 class FeatureState:
@@ -54,13 +59,13 @@ class FeatureState:
             except Exception as exc:
                 try:
                     group.abort(timeout=2)
-                except Exception as abort_exc:
+                except Exception as abort_exc:  # noqa: BLE001
                     self.record_error(str(abort_exc))
                 self.record_error(str(exc))
         for handle_id, handle in list(self.models.items()):
             try:
                 handle.close(timeout=5)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self.record_error(str(exc))
 
     def record_error(self, message):
