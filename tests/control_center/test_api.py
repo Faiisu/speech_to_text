@@ -106,11 +106,17 @@ def test_registered_second_contribution_supplies_its_own_page_assets():
         assert "feature-01-model-deployment" not in shell
 
 
-def test_cli_rejects_non_loopback_host_before_starting_server():
-    result = subprocess.run([sys.executable, "-m", "speech_to_text.control_center",
-                             "--host", "0.0.0.0"], capture_output=True, text=True, timeout=10)
-    assert result.returncode == 2
-    assert "loopback bind addresses" in result.stderr
+def test_cli_allows_explicit_container_bridge_bind(monkeypatch):
+    from speech_to_text.control_center import __main__ as control_center_cli
+
+    captured = {}
+    monkeypatch.setattr(sys, "argv", ["control-center", "--host", "0.0.0.0", "--port", "8765"])
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: captured.update(kwargs))
+
+    control_center_cli.main()
+
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 8765
 
 
 def test_catalog_model_lifecycle_and_wav_clip_use_feature_public_api():

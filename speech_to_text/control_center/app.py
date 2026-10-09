@@ -1,4 +1,4 @@
-"""FastAPI application factory for the loopback-only local control center."""
+"""FastAPI application factory for the local control center."""
 
 from contextlib import asynccontextmanager
 from pathlib import Path

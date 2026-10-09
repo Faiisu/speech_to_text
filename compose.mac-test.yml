@@ -30,7 +30,7 @@ services:
       HF_HOME: /home/speech/.cache/huggingface
       XDG_CACHE_HOME: /home/speech/.cache
     ports:
-      - "127.0.0.1:${MAC_TEST_CONTROL_CENTER_PORT:-18766}:8765"
+      - "0.0.0.0:${MAC_TEST_CONTROL_CENTER_PORT:-18766}:8765"
     volumes:
       - ${SPEECH_TO_TEXT_MODELS_DIR:-./models}:/app/models:ro
       - ./.cache/huggingface:/home/speech/.cache/huggingface

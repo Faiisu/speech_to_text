@@ -2,13 +2,15 @@
 
 # API Reference
 
-The Control Center HTTP API adapts requests to the callable feature modules. It binds to loopback by default and rejects non-loopback bind addresses. Its CORS middleware allows all origins, methods, and headers without credentials; the loopback bind remains in force. The feature function contract is defined in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#callable-interface); the control-center route design is recorded in the [control center specification](../.scratch/feature-test-console/spec.md#local-service-api-and-run-command).
+The Control Center HTTP API adapts requests to the callable feature modules. It binds to loopback by default when run directly; Linux and Mac Compose profiles bind inside the container and publish their host ports on all IPv4 host interfaces. Its CORS middleware allows all origins, methods, and headers without credentials, and the API has no authentication. Deployment exposure is documented in [Deployment](deployment.md#network-exposure). The feature function contract is defined in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#callable-interface); the control-center route design is recorded in the [control center specification](../.scratch/feature-test-console/spec.md#local-service-api-and-run-command).
 
 Set `BASE_URL` to `http://127.0.0.1:8765` in the examples below.
 
 ```bash
 export BASE_URL=http://127.0.0.1:8765
 ```
+
+For local access, use `http://127.0.0.1:18765` for Linux Compose or `http://127.0.0.1:18766` for Mac Docker Desktop. Other devices on the same routed network can use the Docker host's IPv4 address with the corresponding port, subject to firewall rules.
 
 ## Shared endpoints
 

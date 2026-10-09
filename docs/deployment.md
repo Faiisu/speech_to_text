@@ -6,7 +6,7 @@ The service runs directly on the host for development or in one of two speech-se
 
 ## Linux service container
 
-The Linux image uses Ubuntu 24.04, Python 3.12, CPU-only PyTorch, OpenVINO, and the host Intel OpenCL driver interface. It shares the host network and PID namespace and receives the Intel GPU, audio devices, and host PipeWire runtime socket. Its health check calls `/api/system` without loading a model.
+The Linux image uses Ubuntu 24.04, Python 3.12, CPU-only PyTorch, OpenVINO, and the host Intel OpenCL driver interface. It uses Compose bridge networking and publishes the API on all IPv4 host interfaces; the service receives the Intel GPU, audio devices, and host PipeWire runtime socket. Its health check calls `/api/system` without loading a model.
 
 Copy the optional deployment defaults, prepare model and download-cache directories, then build and start the speech service:
 
@@ -14,16 +14,16 @@ Copy the optional deployment defaults, prepare model and download-cache director
 test -f .env || cp .env.example .env
 mkdir -p .cache/huggingface models
 docker compose -p speech-feature-01 -f compose.speech-service.yml up -d --build --wait speech-service
-curl -fsS http://127.0.0.1:8765/api/system
+curl -fsS http://127.0.0.1:18765/api/system
 ```
 
-The service binds to `127.0.0.1:8765`. The model directory is writable in this profile. The host UID/GID owns mounted cache files; `RENDER_GID` and `AUDIO_GID` grant device access, `/dev/dri` and `/dev/snd` are passed through, and `/run/user/$HOST_UID` is mounted read-only for PipeWire. Start the host user's PipeWire session before Compose; its runtime directory must exist. Rebuild after changing `HOST_UID` or `HOST_GID`.
+The container listens on `0.0.0.0:8765`, and Docker publishes it as `0.0.0.0:18765` on the host by default. `SPEECH_TO_TEXT_HOST_PORT` changes the host port; `CONTROL_CENTER_PORT` changes the container port. The service is reachable through host network interfaces, subject to host firewall and network routing rules; the existing SSH tunnel can also target host port `18765`. The Control Center has no authentication, so use this binding only on a network where its users are trusted. The model directory is writable in this profile. The host UID/GID owns mounted cache files; `RENDER_GID` and `AUDIO_GID` grant device access, `/dev/dri` and `/dev/snd` are passed through, and `/run/user/$HOST_UID` is mounted read-only for PipeWire. Start the host user's PipeWire session before Compose; its runtime directory must exist. Rebuild after changing `HOST_UID` or `HOST_GID`.
 
 The project name remains `speech-feature-01`. If retiring an earlier observability stack under this project name, first wait for the speech service to become healthy, then remove its orphan containers with the same standalone compose file:
 
 ```bash
 docker compose -p speech-feature-01 -f compose.speech-service.yml ps
-curl -fsS http://127.0.0.1:8765/api/system
+curl -fsS http://127.0.0.1:18765/api/system
 docker compose -p speech-feature-01 -f compose.speech-service.yml up -d --remove-orphans
 ```
 
@@ -50,7 +50,7 @@ HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose -p speech-mac-test \
 curl -fsS http://127.0.0.1:18766/api/system
 ```
 
-The container API listens on `0.0.0.0:8765` internally and publishes only `127.0.0.1:18766` on the Mac. `MAC_TEST_PLATFORM` defaults to `linux/arm64`; set it to `linux/amd64` only to use Docker Desktop emulation. The project name and API port remain `speech-mac-test` and `18766`.
+The container API listens on `0.0.0.0:8765` internally and Docker publishes `0.0.0.0:18766` on the Mac by default. `MAC_TEST_PLATFORM` defaults to `linux/arm64`; set it to `linux/amd64` only to use Docker Desktop emulation. The project name and API port remain `speech-mac-test` and `18766`. The UI and API can be reached through the Mac's network interfaces, subject to firewall rules. The Mac microphone bridge still listens only on the Mac's loopback address, so microphone capture through that bridge requires opening the UI in a browser on the Mac itself.
 
 If this project previously included the observability services, run the single-service Compose command after `/api/system` succeeds to stop those orphans:
 
@@ -94,7 +94,7 @@ Run again with `--topology per-input-model` to compare the alternative. The tool
 
 ## Network exposure
 
-The HTTP server binds only to loopback: `127.0.0.1` on Linux and the Mac-published API. The Control Center permits CORS requests from any origin, method, and header, with credentials disabled. This CORS policy does not change the loopback bind. The Mac microphone bridge also has wildcard CORS for loopback aliases while remaining bound to `127.0.0.1`. Remote access and public exposure require a separately designed deployment boundary.
+Docker publishes Linux `18765` and the Mac profile's `18766` on `0.0.0.0`, exposing both services through the host's IPv4 interfaces. The Linux container listens on `0.0.0.0:8765` on its Compose bridge network. The Control Center permits CORS requests from any origin, method, and header, with credentials disabled; it has no authentication. Restrict access with trusted network placement and host firewall rules. The Mac microphone bridge remains bound to `127.0.0.1`, even though the Mac UI/API port is published on all interfaces.
 
 ## See also
 

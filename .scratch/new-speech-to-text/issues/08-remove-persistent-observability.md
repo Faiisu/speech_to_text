@@ -10,6 +10,8 @@ Remove the current application's TimescaleDB/Grafana deployment and persistence 
 
 The deployment owns Compose files, Dockerfiles, environment examples, deployment scripts/assets, operator documentation, and this ticket. Runtime/API implementation and tests are owned by the pipeline work. Preserve historical audit tickets, evidence, and the archived PoC; historical statements are not current deployment instructions.
 
+The initial Linux host publication was implemented by [ticket 09](09-linux-docker-port-publishing.md). The Compose files were later edited to publish Linux `18765` and Mac `18766` on all IPv4 host interfaces (`0.0.0.0`); see the current [deployment guide](../../../docs/deployment.md#network-exposure).
+
 ## Acceptance checklist
 
 - [x] `compose.speech-service.yml` and `compose.mac-test.yml` each define only the speech service, with no database dependency, Grafana service, telemetry DSN, or observability credential interpolation.
@@ -20,7 +22,7 @@ The deployment owns Compose files, Dockerfiles, environment examples, deployment
 - [x] The Feature 01 measurement spec is the authoritative local RTF contract. The former System Observability spec is marked retired and links to it; historical issues/evidence are retained without changing what their past verification claimed.
 - [x] README, API, architecture, configuration, getting-started, deployment, and control-center documentation describe local RTF with no current database/Grafana service or credential requirement, and their active links resolve.
 - [x] Compose config validation succeeds for both projects with an existing `.env` without revealing its values. Both Dockerfiles pass `docker build --check`.
-- [x] Deployment documentation records the Linux Control Center's default wildcard CORS origins/methods/headers with credentials disabled and its unchanged loopback-only bind.
+- [x] Deployment documentation records the Linux Control Center's wildcard CORS origins/methods/headers with credentials disabled and the host-interface publication configured by Compose.
 - [x] Deploy both standalone speech services, verify real per-chunk RTF output and wildcard CORS, and retire their old database/Grafana containers while preserving named volumes.
 
 ## Current measurement contract

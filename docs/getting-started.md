@@ -20,7 +20,7 @@ uv pip install --python .venv/bin/python -e '.[control-center]'
 .venv/bin/python -m speech_to_text.control_center
 ```
 
-The service binds to `127.0.0.1:8765`. Open <http://127.0.0.1:8765/>. Transcription and per-chunk RTF reporting work locally without a database or telemetry service.
+The native development service binds to `127.0.0.1:8765`. For Docker deployment on the same machine, use the Linux endpoint at <http://127.0.0.1:18765/> or the Mac test endpoint at <http://127.0.0.1:18766/>. Both Compose profiles publish their host ports on all IPv4 interfaces, so other devices can use the Docker host's IPv4 address and the same port when network/firewall rules allow it. See [Deployment](deployment.md) for the exposure details and Mac microphone bridge limitation. Transcription and per-chunk RTF reporting work locally without a database or telemetry service.
 
 ## Add a model runtime and microphone support
 

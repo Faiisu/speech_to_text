@@ -10,7 +10,7 @@ Add a FastAPI service and shared control-center shell. Serve native HTML/CSS/Jav
 
 ## Acceptance checklist
 
-- [x] The service binds to loopback only by default and rejects unsupported remote binding configuration.
+- [x] Direct CLI execution binds to loopback by default and accepts an explicit `0.0.0.0` bind; Linux and Mac Compose profiles publish on all IPv4 host interfaces.
 - [x] Add FastAPI and its ASGI server as an optional `control-center` dependency; static frontend files load from the same service origin.
 - [x] A documented local command starts the control center from the repository root.
 - [x] The API adapter can register feature-owned routes/operations without moving feature logic into shared routes.
@@ -30,4 +30,4 @@ Add a FastAPI service and shared control-center shell. Serve native HTML/CSS/Jav
 
 Contract source: [console spec](../spec.md) and [Feature 01 spec](../../new-speech-to-text/spec.md). Do not move feature validation logic into HTTP routes.
 
-Implementation: FastAPI + uvicorn optional `control-center` extra, native same-origin modules, explicit `FeatureRegistry`, and feature-owned `feature_01_control` router. Each contribution registers its module, page template, stylesheet, and implementation/verification status. API paths, loopback command, and boundary-injection policy are recorded in the [console spec](../spec.md#local-service-api-and-run-command). Start with `python -m speech_to_text.control_center`; remote host values are rejected. TestClient integration exercises real Feature 01 catalog, model lifecycle, WAV transcription, microphone and process event streams, capacity measurement reporting, unregistered features, a second contribution page seam, errors, and app shutdown using injected runtime/capture boundaries. Hardware and real-runtime proof remain separate.
+Implementation: FastAPI + uvicorn optional `control-center` extra, native same-origin modules, explicit `FeatureRegistry`, and feature-owned `feature_01_control` router. Each contribution registers its module, page template, stylesheet, and implementation/verification status. API paths, bind defaults, and boundary-injection policy are recorded in the [console spec](../spec.md#local-service-api-and-run-command). Start with `python -m speech_to_text.control_center`; it binds to loopback by default and accepts explicit `0.0.0.0`. The Linux and Mac Compose profiles bind inside the container and publish host ports on all IPv4 interfaces. TestClient integration exercises real Feature 01 catalog, model lifecycle, WAV transcription, microphone and process event streams, capacity measurement reporting, unregistered features, a second contribution page seam, errors, and app shutdown using injected runtime/capture boundaries. Hardware and real-runtime proof remain separate.

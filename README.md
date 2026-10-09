@@ -14,8 +14,10 @@ Open <http://127.0.0.1:8765/>. See [Getting Started](docs/getting-started.md) fo
 
 ## Deployment
 
-- Linux Intel GPU host: copy [`.env.example`](.env.example) to `.env`, prepare `models/` and `.cache/huggingface/`, then run `docker compose -p speech-feature-01 -f compose.speech-service.yml up -d --build`.
-- Apple Silicon Docker Desktop: run `docker compose -p speech-mac-test -f compose.mac-test.yml up -d --build`, then open <http://127.0.0.1:18766/>. The Mac microphone bridge runs on the host and listens at <http://127.0.0.1:18767/>.
+- Linux Intel GPU host: copy [`.env.example`](.env.example) to `.env`, prepare `models/` and `.cache/huggingface/`, then run `docker compose -p speech-feature-01 -f compose.speech-service.yml up -d --build`; open <http://127.0.0.1:18765/> locally or use the host IPv4 address on the network.
+- Apple Silicon Docker Desktop: run `docker compose -p speech-mac-test -f compose.mac-test.yml up -d --build`, then open <http://127.0.0.1:18766/> locally or use the Mac's host IPv4 address on the network. The Mac microphone bridge runs on the host and listens only at <http://127.0.0.1:18767/>, so bridge-based microphone capture requires a browser on the Mac.
+
+Both Compose profiles publish their HTTP port on all IPv4 host interfaces. The Control Center has no authentication; use these bindings on trusted networks and configure host firewall rules as needed. See [Deployment](docs/deployment.md#network-exposure).
 
 See [Deployment](docs/deployment.md) for Linux host access, the Mac microphone bridge, and migration from the retired observability stack.
 

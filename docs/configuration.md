@@ -23,7 +23,7 @@ Copy [`.env.example`](../.env.example) to `.env` to override deployment defaults
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory for a host process; `./models` as the Compose host bind source | Local model files used by catalog discovery and runtime loading. Compose mounts the host directory at `/app/models` and sets this variable to that container path; Linux mounts read-write and the Mac test profile mounts read-only. |
-| `MAC_TEST_CONTROL_CENTER_PORT` | `18766` | Mac Docker Desktop test profile API port; bound to loopback. |
+| `MAC_TEST_CONTROL_CENTER_PORT` | `18766` | Mac Docker Desktop test profile API port; published on all IPv4 host interfaces (`0.0.0.0`). |
 | `MAC_TEST_MICROPHONE_BRIDGE_PORT` | `18767` | Mac host microphone bridge port; bound to Mac loopback. |
 | `MAC_TEST_PLATFORM` | `linux/arm64` | Native Mac test image platform. Use `linux/amd64` only for Docker Desktop emulation fallback. |
 
@@ -36,7 +36,8 @@ These values configure the Linux service defined in `compose.speech-service.yml`
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SPEECH_TO_TEXT_IMAGE` | `speech-to-text:local` | Container image tag. Set to a built or registry image when starting with `--no-build`. |
-| `CONTROL_CENTER_PORT` | `8765` | Loopback port for the containerized Control Center; can be overridden temporarily for staged rollout. |
+| `CONTROL_CENTER_PORT` | `8765` | Port the containerized Control Center listens on inside the Compose network. |
+| `SPEECH_TO_TEXT_HOST_PORT` | `18765` | Linux host port published on all IPv4 host interfaces (`0.0.0.0`); the existing SSH tunnel can target this port on Linux. |
 | `HOST_UID` / `HOST_GID` | `1001` / `1001` | Numeric host identity used by the service process and persistent bind-mounted files. |
 | `RENDER_GID` | `992` | Host render-device group added to the container process. |
 | `AUDIO_GID` | `29` | Host audio-device group added to the container process. |
