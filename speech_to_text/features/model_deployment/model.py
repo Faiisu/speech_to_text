@@ -12,8 +12,10 @@ from queue import Queue
 
 from .audio import TARGET_RATE, read_clip
 from .config import (
-    model_config as validate_model_config,
     flow_config as validate_flow_config,
+)
+from .config import (
+    model_config as validate_model_config,
 )
 from .errors import (
     ChunkInferenceWarning,
@@ -21,8 +23,8 @@ from .errors import (
     ModelClosedError,
     ModelLoadError,
 )
-from .runtime import create_runtime
 from .measurements import publish_inference_measurement
+from .runtime import create_runtime
 
 
 class ModelHandle:
@@ -95,8 +97,7 @@ class ModelHandle:
         with self._state_lock:
             self._check()
             if self._worker is None:
-                from .session import model_worker
-                from .session import ingress_worker
+                from .session import ingress_worker, model_worker
 
                 self._worker = threading.Thread(
                     target=model_worker,
@@ -189,7 +190,7 @@ def load_model(model_config=None, *, runtime_factory=None):
                 "runtime factory must return an object with transcribe(audio, *, language, decoding_options)"
             )
         return ModelHandle(resolved, runtime)
-    except (ModelLoadError,):
+    except ModelLoadError:
         raise
     except Exception as exc:
         raise ModelLoadError(
@@ -216,7 +217,7 @@ def transcribe_clip(
             f"Language {flow['language']!r} is not supported by model {model_handle.model!r}"
         )
     audio = read_clip(clip)
-    frame_count = max(1, int(round(flow["chunk_seconds"] * TARGET_RATE)))
+    frame_count = max(1, round(flow["chunk_seconds"] * TARGET_RATE))
     transcripts = []
     source_id = source_id or uuid.uuid4().hex
     monotonic_clock = monotonic_clock or time.perf_counter
@@ -233,7 +234,7 @@ def transcribe_clip(
             inference_started = monotonic_clock()
             try:
                 text = model_handle._transcribe(chunk, flow)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 elapsed = max(0.0, monotonic_clock() - inference_started)
                 publish_inference_measurement(
                     measurement_sink,

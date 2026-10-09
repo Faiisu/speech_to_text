@@ -23,7 +23,7 @@ Copy [`.env.example`](../.env.example) to `.env` to override deployment defaults
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `COMPOSE_PROFILES` | `linux` | Active Docker Compose profile (`linux` for Linux Intel GPU / ALSA, or `mac` for macOS development with host microphone bridge). |
-| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory for a host process (falling back to `legacies-poc/models/` when empty); `/app/models` in containers | Local model files used by catalog discovery and runtime loading. Container images copy host models into `/app/models` during build. The Compose bind mount can be uncommented to override container models with a host path (e.g. `./models` or `./legacies-poc/models`). |
+| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory for a host process (falling back to `legacies-poc/models/` when empty); `/app/models` in containers | Local model files used by catalog discovery and runtime loading. Mounted into `/app/models` read-only by Docker Compose (e.g. `./models` or `./legacies-poc/models`). |
 | `MAC_TEST_CONTROL_CENTER_PORT` | `18766` | Mac Docker Desktop test profile API port; published on all IPv4 host interfaces (`0.0.0.0`). |
 | `MAC_TEST_MICROPHONE_BRIDGE_PORT` | `18767` | Mac host microphone bridge port; bound to Mac loopback. |
 | `MAC_TEST_PLATFORM` | `linux/arm64` | Native Mac test image platform. Use `linux/amd64` only for Docker Desktop emulation fallback. |
@@ -36,7 +36,7 @@ These values configure the services defined in `docker-compose.yml` (as well as 
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SPEECH_TO_TEXT_IMAGE` | `ghcr.io/faiisu/speech-to-text:latest` | Container image tag. Defaults to the pre-built turnkey image on GitHub Container Registry with pre-baked OpenVINO and CTranslate2 models. Set to `speech-to-text:local` when building locally. |
+| `SPEECH_TO_TEXT_IMAGE` | `speech-to-text:local` | Container image tag. Set to a built or registry image when starting with `--no-build`. |
 | `CONTROL_CENTER_PORT` | `8765` | Port the containerized Control Center listens on inside the Compose network. |
 | `SPEECH_TO_TEXT_HOST_PORT` | `18765` | Linux host port published on all IPv4 host interfaces (`0.0.0.0`); the existing SSH tunnel can target this port on Linux. |
 | `HOST_UID` / `HOST_GID` | `1001` / `1001` | Numeric host identity used by the service process and persistent bind-mounted files. |

@@ -6,7 +6,8 @@ dist
 **/__pycache__
 **/*.py[cod]
 .cache
-# models included in build context
+# models mounted at runtime, excluded from build context
+models
 legacies-poc
 tests
 scripts

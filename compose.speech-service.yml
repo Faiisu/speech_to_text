@@ -33,8 +33,7 @@ services:
       - /dev/dri:/dev/dri
       - /dev/snd:/dev/snd
     volumes:
-      # Models are baked into /app/models inside the image. Uncomment below to override with host models (e.g. ./models or ./legacies-poc/models):
-      # - ${SPEECH_TO_TEXT_MODELS_DIR:-./legacies-poc/models}:/app/models
+      - ${SPEECH_TO_TEXT_MODELS_DIR:-./models}:/app/models:ro
       - ./.cache/huggingface:/home/speech/.cache/huggingface
       - type: bind
         source: /run/user/${HOST_UID:-1001}

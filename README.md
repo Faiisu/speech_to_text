@@ -14,9 +14,7 @@ Open <http://127.0.0.1:8765/>. See [Getting Started](docs/getting-started.md) fo
 
 ## Deployment
 
-- Linux Intel GPU host:
-  - **Turnkey deployment (recommended)**: run `docker compose -p speech-feature-01 --profile linux pull speech-service && docker compose -p speech-feature-01 --profile linux up -d speech-service` using the pre-built image (`ghcr.io/faiisu/speech-to-text:latest`) containing pre-baked OpenVINO and CTranslate2 models. Open <http://127.0.0.1:18765/> locally or via host IP.
-  - **Local build**: copy [`.env.example`](.env.example) to `.env`, prepare `models/`, then run `docker compose -p speech-feature-01 --profile linux up -d --build`.
+- Linux Intel GPU host: copy [`.env.example`](.env.example) to `.env`, place models in `models/` (or `legacies-poc/models/`), then run `docker compose -p speech-feature-01 --profile linux up -d --build`; open <http://127.0.0.1:18765/> locally or via host IP. Models are mounted read-only into `/app/models`.
 - Apple Silicon Docker Desktop: run `docker compose -p speech-mac-test --profile mac up -d --build`, then open <http://127.0.0.1:18766/> locally or use the Mac's host IPv4 address on the network. The Mac microphone bridge runs on the host and listens only at <http://127.0.0.1:18767/>, so bridge-based microphone capture requires a browser on the Mac.
 
 Both Compose profiles publish their HTTP port on all IPv4 host interfaces. The Control Center has no authentication; use these bindings on trusted networks and configure host firewall rules as needed. See [Deployment](docs/deployment.md#network-exposure).

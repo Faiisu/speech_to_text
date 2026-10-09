@@ -32,6 +32,5 @@ services:
     ports:
       - "0.0.0.0:${MAC_TEST_CONTROL_CENTER_PORT:-18766}:8765"
     volumes:
-      # Models are baked into /app/models inside the image. Uncomment below to override with host models:
-      # - ${SPEECH_TO_TEXT_MODELS_DIR:-./models}:/app/models:ro
+      - ${SPEECH_TO_TEXT_MODELS_DIR:-./models}:/app/models:ro
       - ./.cache/huggingface:/home/speech/.cache/huggingface
