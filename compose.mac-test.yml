@@ -11,9 +11,6 @@ services:
     restart: unless-stopped
     stop_grace_period: 90s
     init: true
-    depends_on:
-      timescaledb:
-        condition: service_healthy
     entrypoint:
       - python
       - -m
@@ -28,9 +25,8 @@ services:
     environment:
       CONTROL_CENTER_PORT: "8765"
       SPEECH_TO_TEXT_MODELS_DIR: /app/models
-      SPEECH_TO_TEXT_MODEL_VOLUME_PATH: /app/models
-      SPEECH_TO_TEXT_TELEMETRY_DATABASE_URL: postgresql://telemetry_writer:${TELEMETRY_WRITER_PASSWORD:?Set TELEMETRY_WRITER_PASSWORD in .env}@timescaledb:5432/${TELEMETRY_DATABASE:-speech_telemetry}
-      SPEECH_TO_TEXT_TELEMETRY_RETENTION_DAYS: ${SPEECH_TO_TEXT_TELEMETRY_RETENTION_DAYS:-30}
+      SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE: "1"
+      SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE_URL: http://127.0.0.1:${MAC_TEST_MICROPHONE_BRIDGE_PORT:-18767}/api
       HF_HOME: /home/speech/.cache/huggingface
       XDG_CACHE_HOME: /home/speech/.cache
     ports:
@@ -38,11 +34,3 @@ services:
     volumes:
       - ${SPEECH_TO_TEXT_MODELS_DIR:-./models}:/app/models:ro
       - ./.cache/huggingface:/home/speech/.cache/huggingface
-
-  timescaledb:
-    ports: !override
-      - "127.0.0.1:${MAC_TEST_TELEMETRY_DATABASE_PORT:-15433}:5432"
-
-  grafana:
-    ports: !override
-      - "127.0.0.1:${MAC_TEST_GRAFANA_PORT:-13001}:3000"

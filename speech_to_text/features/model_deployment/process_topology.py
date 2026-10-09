@@ -5,7 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 from collections import deque
 import multiprocessing as mp
-import logging
 from multiprocessing.managers import SyncManager
 import os
 import math
@@ -20,7 +19,7 @@ from .audio import StreamingResampler, TARGET_RATE
 from .catalog import list_models
 from .config import flow_config as validate_flow_config, model_config as validate_model_config
 from .errors import AudioInputError, ConfigurationError, ModelLoadError
-from .telemetry import publish_inference_measurement, publish_service_event
+from .measurements import publish_inference_measurement
 
 
 class _BoundedFIFO:
@@ -113,27 +112,8 @@ class _IPCManager(SyncManager):
 
 _IPCManager.register("BoundedFIFO", _BoundedFIFO)
 
-MEASUREMENT_QUEUE_CAPACITY = 4096
-_measurement_logger = logging.getLogger(__name__)
-
-
 def _put_event(output, kind, source_id, **fields):
     output.put({"type": kind, "source_id": source_id, "pid": os.getpid(), **fields})
-
-
-def _enqueue_measurement(measurement_queue, dropped_counter, record):
-    """Never let a full telemetry side queue delay an inference process."""
-    try:
-        measurement_queue.put_nowait(record)
-        return True
-    except Full:
-        if dropped_counter is not None:
-            with dropped_counter.get_lock():
-                dropped_counter.value += 1
-                dropped = dropped_counter.value
-            if dropped == 1:
-                _measurement_logger.warning("Feature 01 measurement queue saturated; subsequent records may be dropped")
-        return False
 
 
 def _validate_timeout(timeout):
@@ -142,7 +122,7 @@ def _validate_timeout(timeout):
 
 
 def _capture_chunks(device, source_id, flow, model_config, input_queue, source_control, model_control,
-                    output_queue, ready_queue, telemetry_queue, measurement_queue, measurement_drop_counter, topology,
+                    output_queue, ready_queue, telemetry_queue, topology,
                     runtime_factory=None, audio_source_factory=None):
     """Capture in its own spawned process; only bounded audio enters IPC."""
     from .capture import SoundDeviceSource
@@ -158,7 +138,6 @@ def _capture_chunks(device, source_id, flow, model_config, input_queue, source_c
         if topology == "per-input-model":
             handle = load_model(model_config, runtime_factory=runtime_factory)
             handle._telemetry_sink = telemetry_queue
-            handle._measurement_sink = lambda record: _enqueue_measurement(measurement_queue, measurement_drop_counter, record)
             handle._measurement_operation = "microphone-process-group"
             from . import start_microphone_flow
             session = start_microphone_flow(device, handle, flow, audio_source_factory=audio_source_factory)
@@ -226,12 +205,12 @@ def _capture_chunks(device, source_id, flow, model_config, input_queue, source_c
                     inference_error = exc
                     _put_event(output_queue, "error", source_id, code="CHUNK_INFERENCE_FAILED",
                                message=str(exc), sequence=sequence, fatal=False)
-                publish_inference_measurement(
-                    lambda record: _enqueue_measurement(measurement_queue, measurement_drop_counter, record),
+                record = publish_inference_measurement(None,
                     operation="microphone-process-group", source_id=source_id, sequence=sequence,
                     audio_seconds=len(chunk) / TARGET_RATE,
                     inference_seconds=max(0.0, time.perf_counter() - inference_started),
-                    status="failed" if inference_error else "completed")
+                    status="failed" if inference_error else "completed", error=inference_error)
+                output_queue.put(record)
                 return True
             try:
                 input_queue.put(("chunk", source_id, sequence, chunk, flow, time.perf_counter()),
@@ -349,7 +328,7 @@ def _capture_chunks(device, source_id, flow, model_config, input_queue, source_c
 
 
 def _shared_model_worker(config, input_queue, control_queue, output_queue, ready_queue, telemetry_queue,
-                         measurement_queue, measurement_drop_counter, runtime_factory=None):
+                         runtime_factory=None):
     from .model import load_model
     try:
         handle = load_model(config, runtime_factory=runtime_factory)
@@ -393,10 +372,10 @@ def _shared_model_worker(config, input_queue, control_queue, output_queue, ready
                     inference_seconds = time.perf_counter() - inference_started
                     apply_controls()
                     duration = len(audio) / TARGET_RATE
-                    publish_inference_measurement(
-                        lambda record: _enqueue_measurement(measurement_queue, measurement_drop_counter, record),
+                    record = publish_inference_measurement(None,
                         operation="microphone-process-group", source_id=source_id, sequence=sequence,
                         audio_seconds=duration, inference_seconds=inference_seconds)
+                    input_queue.publish_model_event(record)
                     telemetry_queue.put({"source_id": source_id, "sequence": sequence,
                         "queue_wait_seconds": max(0, inference_started - queued_at),
                         "inference_seconds": inference_seconds, "chunk_duration_seconds": duration,
@@ -408,11 +387,11 @@ def _shared_model_worker(config, input_queue, control_queue, output_queue, ready
                 except Exception as exc:
                     apply_controls()
                     inference_seconds = max(0.0, time.perf_counter() - inference_started)
-                    publish_inference_measurement(
-                        lambda record: _enqueue_measurement(measurement_queue, measurement_drop_counter, record),
+                    record = publish_inference_measurement(None,
                         operation="microphone-process-group", source_id=source_id, sequence=sequence,
                         audio_seconds=len(audio) / TARGET_RATE, inference_seconds=inference_seconds,
-                        status="failed")
+                        status="failed", error=exc)
+                    input_queue.publish_model_event(record)
                     if source_id not in retired:
                         input_queue.publish_model_event({"type": "error", "source_id": source_id,
                             "code": "CHUNK_INFERENCE_FAILED", "message": str(exc),
@@ -463,8 +442,7 @@ class ProcessFlowGroup:
     """Owns independent capture processes and the optional shared model process."""
 
     def __init__(self, sessions, context, output_queue, *, model_process=None, model_control=None,
-                 input_queue=None, manager=None, telemetry_queue=None, measurement_queue=None,
-                 measurement_drop_counter=None, event_sink=None):
+                 input_queue=None, manager=None, telemetry_queue=None):
         self.sessions = sessions
         self._context = context
         self._output_queue = output_queue
@@ -472,14 +450,8 @@ class ProcessFlowGroup:
         self._model_control = model_control
         self._input_queue = input_queue
         self._manager = manager
-        self._event_sink = event_sink
         self.topology = "shared-model" if model_process is not None else "per-input-model"
         self.telemetry_queue = telemetry_queue or context.Queue()
-        self.measurement_queue = measurement_queue or context.Queue(maxsize=MEASUREMENT_QUEUE_CAPACITY)
-        if measurement_drop_counter is not None:
-            self.measurement_drop_counter = measurement_drop_counter
-        else:
-            self.measurement_drop_counter = context.Value("Q", 0) if hasattr(context, "Value") else None
         self._finished = threading.Event()
         self._aborted = False
         self._terminal_ids = set()
@@ -503,17 +475,6 @@ class ProcessFlowGroup:
             if session is not None:
                 if session._terminal:
                     continue
-                if event.get("type") == "error":
-                    code = event.get("code")
-                    publish_service_event(self._event_sink,
-                        event_name="inference_chunk_failed" if code == "CHUNK_INFERENCE_FAILED" else "microphone_session_error",
-                        severity="error", pid=event.get("pid"), source_id=session.source_id,
-                        attributes={"code": code, "topology": self.topology, "state": "failed"})
-                elif event.get("type") == "completed":
-                    publish_service_event(self._event_sink, event_name="microphone_session_completed",
-                        pid=event.get("pid"), source_id=session.source_id,
-                        attributes={"status": event.get("status"), "state": event.get("status"),
-                                    "topology": self.topology})
                 session.result_queue.put(event)
                 if event.get("type") == "completed":
                     session._terminal = True
@@ -594,7 +555,7 @@ class ProcessFlowGroup:
 
 def start_multiprocess_microphone_flows(devices, model_config=None, flow_config=None, *,
                                         topology="shared-model", runtime_factory=None,
-                                        audio_source_factory=None, flow_configs=None, event_sink=None):
+                                        audio_source_factory=None, flow_configs=None):
     """Start separate capture processes in shared-model or per-input-model mode.
 
     Shared mode owns one model in its own process and routes tagged PCM chunks
@@ -639,8 +600,6 @@ def start_multiprocess_microphone_flows(devices, model_config=None, flow_config=
     output_queue = context.Queue()
     ready_queue = context.Queue()
     telemetry_queue = context.Queue()
-    measurement_queue = context.Queue(maxsize=MEASUREMENT_QUEUE_CAPACITY)
-    measurement_drop_counter = context.Value("Q", 0)
     model_process = None
     model_control = None
     input_queue = None
@@ -651,7 +610,7 @@ def start_multiprocess_microphone_flows(devices, model_config=None, flow_config=
             model_start = time.perf_counter()
             model_process = context.Process(target=_shared_model_worker,
                 args=(resolved_model, input_queue, model_control, output_queue, ready_queue, telemetry_queue,
-                      measurement_queue, measurement_drop_counter, runtime_factory),
+                      runtime_factory),
                 name="stt-shared-model")
             model_process.start()
             kind, _, error = ready_queue.get(timeout=60)
@@ -680,7 +639,7 @@ def start_multiprocess_microphone_flows(devices, model_config=None, flow_config=
             source_start = time.perf_counter()
             process = context.Process(target=_capture_chunks,
                 args=(device, source_id, flow, resolved_model, input_queue, source_control, model_control,
-                      output_queue, ready_queue, telemetry_queue, measurement_queue, measurement_drop_counter, topology,
+                      output_queue, ready_queue, telemetry_queue, topology,
                       runtime_factory, audio_source_factory), name=f"stt-{source_id}")
             process.start()
             sessions.append(ProcessSession(source_id, process, source_control))
@@ -705,8 +664,7 @@ def start_multiprocess_microphone_flows(devices, model_config=None, flow_config=
         raise
     group = ProcessFlowGroup(sessions, context, output_queue, model_process=model_process,
                              model_control=model_control, input_queue=input_queue, manager=manager,
-                             telemetry_queue=telemetry_queue, measurement_queue=measurement_queue,
-                             measurement_drop_counter=measurement_drop_counter, event_sink=event_sink)
+                             telemetry_queue=telemetry_queue)
     group.model_load_seconds = model_load_seconds
     group.source_load_seconds = source_load_seconds
     group.topology = topology

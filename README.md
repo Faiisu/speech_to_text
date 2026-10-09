@@ -1,29 +1,32 @@
 # Speech-to-Text
 
-Speech-to-Text is a modular Python system for loading speech models, transcribing audio clips or microphone input, and testing feature behavior through a local control center. Optional telemetry is stored in TimescaleDB and explored in Grafana; the former proof of concept is archived in [`legacies-poc/`](legacies-poc/README.md).
+Speech-to-Text is a modular Python service for loading speech models, transcribing audio clips or microphone input, and checking feature behavior through a local control center. It reports per-chunk real-time factor (RTF) locally with each clip result or microphone event; it does not require a database or telemetry service. The former proof of concept remains archived in [`legacies-poc/`](legacies-poc/README.md).
 
-## Quick Start
+## Quick start
 
 ```bash
 uv venv .venv
-uv pip install --python .venv/bin/python -e '.[control-center,telemetry]'
+uv pip install --python .venv/bin/python -e '.[control-center]'
 .venv/bin/python -m speech_to_text.control_center
 ```
 
-Open <http://127.0.0.1:8765/>. See [Getting Started](docs/getting-started.md) to install a model runtime, enable microphone capture, or connect telemetry.
+Open <http://127.0.0.1:8765/>. See [Getting Started](docs/getting-started.md) for adding a model runtime and microphone capture.
 
-## Documentation
+## Deployment
+
+- Linux Intel GPU host: copy [`.env.example`](.env.example) to `.env`, prepare `models/` and `.cache/huggingface/`, then run `docker compose -p speech-feature-01 -f compose.speech-service.yml up -d --build`.
+- Apple Silicon Docker Desktop: run `docker compose -p speech-mac-test -f compose.mac-test.yml up -d --build`, then open <http://127.0.0.1:18766/>. The Mac microphone bridge runs on the host and listens at <http://127.0.0.1:18767/>.
+
+See [Deployment](docs/deployment.md) for Linux host access, the Mac microphone bridge, and migration from the retired observability stack.
+
+## Project guides
 
 - [Getting Started](docs/getting-started.md)
-- [Architecture](docs/architecture.md)
 - [Configuration](docs/configuration.md)
 - [API Reference](docs/api.md)
+- [Architecture](docs/architecture.md)
 - [Deployment](docs/deployment.md)
 - [Contributing](docs/contributing.md)
-- [Agent domain documentation guide](docs/agents/domain.md)
-- [Issue tracker guide](docs/agents/issue-tracker.md)
-- [Triage labels](docs/agents/triage-labels.md)
 - [Feature 01 specification](.scratch/new-speech-to-text/spec.md)
-- [Control center specification](.scratch/feature-test-console/spec.md)
-- [System observability specification](.scratch/system-observability/spec.md)
-- [Archived proof-of-concept guide](legacies-poc/README.md)
+- [Control Center specification](.scratch/feature-test-console/spec.md)
+- [Retired system observability specification](.scratch/system-observability/spec.md)

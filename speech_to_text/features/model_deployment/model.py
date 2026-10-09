@@ -14,7 +14,7 @@ from .audio import TARGET_RATE, read_clip
 from .config import model_config as validate_model_config, flow_config as validate_flow_config
 from .errors import ChunkInferenceWarning, ConfigurationError, ModelClosedError, ModelLoadError
 from .runtime import create_runtime
-from .telemetry import publish_inference_measurement
+from .measurements import publish_inference_measurement
 
 
 class ModelHandle:
@@ -36,8 +36,6 @@ class ModelHandle:
         self._ingress_worker = None
         self._worker = None
         self._sessions = set()
-        self._telemetry_sink = None
-        self._event_sink = None
 
     @property
     def model(self):

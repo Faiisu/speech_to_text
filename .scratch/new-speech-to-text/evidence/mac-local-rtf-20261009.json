@@ -1,0 +1,146 @@
+{
+  "verified_at": "2026-10-09T11:14:12.324900+00:00",
+  "deployment": "Mac Docker Desktop native arm64 CPU",
+  "image": "sha256:b814b48bd65c45c220e3fab4ca88cad463028dc963330d432a585d8b47992ebf",
+  "model": {
+    "handle_id": "4372b4fe853a4cf5b703b6c91a05c83e",
+    "model": "turbo",
+    "runtime": "ctranslate2",
+    "precision": "int8",
+    "state": "ready"
+  },
+  "clip_file": "legacies-poc/audio/clip_20260903_160233.wav",
+  "clip_audio_seconds": 21.129375,
+  "clip": {
+    "transcript": "ฮัลโหลโหลโหเทส หนึ่งสองสามสี่ สวัสดีครับ สวัสดีครับ สวัสดีครับ สวัสดีครับ ฮัลโหลโหเทส สวัสดีครับ การละครั้งหนึ่งนายมาแล้ว อัดวินเทคไทยแลนด์ ค่ะ ที่มี ค่าจะต่อ ค่ะ ค่ะ ค่ะ ค่ะ ใช่ไหมคะ",
+    "elapsed_seconds": 14.975879298999644,
+    "source_id": "7c17dcf580004092b43b23cd10a1873d",
+    "measurements": [
+      {
+        "type": "measurement",
+        "feature_id": "feature-01-model-deployment",
+        "operation": "finite-clip",
+        "pid": 7,
+        "completed_at": "2026-10-09T11:13:54.303133+00:00",
+        "source_id": "7c17dcf580004092b43b23cd10a1873d",
+        "sequence": 0,
+        "elapsed_seconds": 5.682323045000885,
+        "audio_seconds": 10.0,
+        "inference_seconds": 5.682323045000885,
+        "rtf": 0.5682323045000885,
+        "status": "completed",
+        "error": null
+      },
+      {
+        "type": "measurement",
+        "feature_id": "feature-01-model-deployment",
+        "operation": "finite-clip",
+        "pid": 7,
+        "completed_at": "2026-10-09T11:13:59.269556+00:00",
+        "source_id": "7c17dcf580004092b43b23cd10a1873d",
+        "sequence": 1,
+        "elapsed_seconds": 4.966033918999528,
+        "audio_seconds": 10.0,
+        "inference_seconds": 4.966033918999528,
+        "rtf": 0.49660339189995284,
+        "status": "completed",
+        "error": null
+      },
+      {
+        "type": "measurement",
+        "feature_id": "feature-01-model-deployment",
+        "operation": "finite-clip",
+        "pid": 7,
+        "completed_at": "2026-10-09T11:14:03.593688+00:00",
+        "source_id": "7c17dcf580004092b43b23cd10a1873d",
+        "sequence": 2,
+        "elapsed_seconds": 4.324001252000016,
+        "audio_seconds": 1.129375,
+        "inference_seconds": 4.324001252000016,
+        "rtf": 3.8286674063088135,
+        "status": "completed",
+        "error": null
+      }
+    ],
+    "configuration": {
+      "model": "turbo",
+      "runtime": "ctranslate2",
+      "precision": "int8",
+      "language": "th",
+      "chunk_seconds": 10.0,
+      "silence_threshold": 0.0
+    }
+  },
+  "microphone": {
+    "device": "MacBook Air Microphone",
+    "source_id": "mac-local-rtf-04b35020",
+    "events": [
+      {
+        "type": "measurement",
+        "feature_id": "feature-01-model-deployment",
+        "operation": "microphone-session",
+        "pid": 7,
+        "completed_at": "2026-10-09T11:14:12.164125+00:00",
+        "source_id": "mac-local-rtf-04b35020",
+        "sequence": 0,
+        "elapsed_seconds": 6.954594878001444,
+        "audio_seconds": 1.312,
+        "inference_seconds": 6.954594878001444,
+        "rtf": 5.300758291159637,
+        "status": "completed",
+        "error": null,
+        "event_sequence": 0
+      },
+      {
+        "type": "transcript",
+        "source_id": "mac-local-rtf-04b35020",
+        "sequence": 0,
+        "text": "เกม สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สินค้า สิ",
+        "event_sequence": 1
+      },
+      {
+        "type": "completed",
+        "source_id": "mac-local-rtf-04b35020",
+        "status": "stopped",
+        "last_sequence": 0,
+        "event_sequence": 2
+      }
+    ]
+  },
+  "database_dependencies_present": {
+    "psycopg": false,
+    "system_observability": false
+  },
+  "telemetry_environment_present": false,
+  "limitations": [
+    "Transcript accuracy not verified against an independent reference",
+    "Microphone inference uses ambient audio with silence_threshold=0 for transport proof",
+    "RTF samples describe inference speed, not proof that every chunk meets real-time deadlines"
+  ],
+  "final_wildcard_deployment": {
+    "verified_at": "2026-10-09T11:16:46.337972+00:00",
+    "image": "sha256:80f2bc67f58ff4a3c36b1984d21c8e30a0976362dd221458e38ea9d545d7ee4d",
+    "default_cors_origin": "*",
+    "credentials_enabled": false,
+    "get_and_post_preflight": "passed",
+    "runtime_source_hashes_match": true,
+    "loaded_model": {
+      "handle_id": "dc1376e0f5b144afba9be5504fe6872b",
+      "model": "turbo",
+      "runtime": "ctranslate2",
+      "precision": "int8",
+      "state": "ready"
+    },
+    "active_containers": [
+      "speech-mac-test-speech-service-1"
+    ],
+    "preserved_volumes": [
+      "speech-mac-test_telemetry-database",
+      "speech-mac-test_telemetry-grafana"
+    ],
+    "software_tests": {
+      "passed": 103,
+      "skipped": 2
+    }
+  }
+}

@@ -27,7 +27,7 @@ Each feature page supports the operations that its own spec defines. It must mak
 
 ## System observation
 
-The Control Center does not render system-observation dashboards. Service, process, and host telemetry is persisted to TimescaleDB and explored through Grafana as specified in [`../system-observability/spec.md`](../system-observability/spec.md). Feature 01's per-chunk RTF contract remains authoritative in the [Feature 01 spec](../new-speech-to-text/spec.md#per-chunk-performance-measurement).
+There is no separate system-observation dashboard or historical telemetry store. Feature 01 exposes local per-chunk RTF in clip results, microphone events, and process-group results; its measurement contract is in the [Feature 01 spec](../new-speech-to-text/spec.md#per-chunk-performance-measurement).
 
 ## Feature 01 first vertical slice
 
@@ -46,7 +46,7 @@ The Control Center does not render system-observation dashboards. Service, proce
 
 ### Microphone and process flows
 
-- Show host input device names and allow the OS default or a named device. The Python service owns physical capture; browser microphone permission is not used.
+- Show host input device names and allow the OS default or a named device. Native host deployments capture in the service. In the Mac Docker Desktop profile, a loopback-only Mac host bridge owns physical capture and streams bounded PCM batches into the existing Feature 01 session; the browser does not request microphone access.
 - Start/stop `start_microphone_flow` and stream ordered transcript, error, and completion events with source ID and sequence.
 - Support shared-model and per-input-model process topologies, device lists, and per-source flow settings.
 - Show per-source lifecycle, queue timeout/errors, and measured capacity output. Distinguish pass, fail, unavailable, and inconclusive; never show unavailable values as zero or passing.
@@ -67,13 +67,13 @@ The feature's acceptance criteria are incomplete until the page is reachable thr
 ## Architecture and safety
 
 - The browser calls a Python HTTP adapter which invokes callable feature APIs in-process. The browser never imports or duplicates Python feature logic.
-- Bind the local developer service to loopback (`127.0.0.1`) by default. Remote exposure and authentication require a separate deployment decision before implementation.
+- Bind the local developer service to loopback (`127.0.0.1`) by default. The shared Control Center CORS middleware allows all origins, methods, and headers with credentials disabled; this does not change the loopback bind. Remote exposure and authentication require a separate deployment decision before implementation.
 - Use request/response for catalog, configuration, lifecycle, and finite actions. Use an event stream for long-running feature sessions; choose the transport while defining the API contract.
 - Upload WAV bytes to the service, validate them through Feature 01, and avoid retaining uploaded clips after the request.
 - Keep shared shell/navigation/event handling in a common control-center module. Keep each feature page, API adapter, and UI tests in its feature-named module.
 - Show real readiness and API results. Automated tests may inject external boundaries, but identify those runs as simulated and never present them as hardware proof.
 - Feature implementations own input validation. The frontend renders validation and lifecycle errors returned by the public feature service.
-- Keep interactive test-run history in the active browser session. Operational service, process, and host telemetry is the separate documented database-backed [System Observability](../system-observability/spec.md) feature.
+- Keep interactive test-run history in the active browser session. Per-chunk inference measurements are returned by Feature 01 and are not persisted as historical telemetry.
 
 ## Implementation sequence
 
@@ -82,7 +82,7 @@ The feature's acceptance criteria are incomplete until the page is reachable thr
 3. For every later feature, add its page, API adapter, test controls, and UI/API integration checks in parallel with that feature's backend implementation.
 4. Expand the shared overview as features contribute system-level lifecycle and health information. Preserve each feature's own page as the place to configure and test its behavior.
 5. Run end-to-end browser checks with injected boundaries, then record real-runtime and hardware proofs separately on the relevant target machines.
-6. Publish feature operation measurements and owned process descriptors to the shared telemetry store defined by the System Observability spec; Grafana provides the operator view.
+6. Return Feature 01 per-chunk measurements with its clip and process-group results and publish them on its microphone event stream. See the [Feature 01 spec](../new-speech-to-text/spec.md#per-chunk-performance-measurement).
 
 Use feature-based modules as required by the repository's [agent rules](../../AGENTS.md#modular-programming-and-feature-based-folders). Track control-center foundations here; track each feature's page and tests in that feature's own issue directory.
 
@@ -91,7 +91,7 @@ Use feature-based modules as required by the repository's [agent rules](../../AG
 - The shared shell lists only registered, documented features and routes each to its own page module.
 - Feature 01 can be configured, loaded, tested with a WAV, tested with a physical microphone, stopped cleanly, and tested with both process topologies through the real feature API.
 - The system overview shows service/model/session readiness and recent errors using actual service state.
-- System telemetry is persisted outside the Control Center and can be queried by the provisioned Grafana dashboards.
+- Per-chunk measurements are available with the Feature 01 operation that produced them; no telemetry database or Grafana deployment is required.
 - A future feature can add its page and test structure by adding a feature-owned module and registry contribution without rewriting existing pages.
 - Each feature is developed with its frontend contribution and UI/API tests alongside its backend API.
 - Simulated, real-runtime, and hardware proof statuses are distinguishable.
@@ -145,7 +145,7 @@ Design critique: an all-black surface with neon green would resemble a generic d
 
 ## Local service API and run command
 
-The initial service is `speech_to_text.control_center`, built with FastAPI and native browser modules. Install the `control-center` optional dependency group and run `python -m speech_to_text.control_center` at the repository root; it binds to `127.0.0.1:8765`. The CLI permits only `127.0.0.1`, `localhost`, and `::1` bind addresses. `/` serves the page from the same origin as `/api` and `/assets`.
+The initial service is `speech_to_text.control_center`, built with FastAPI and native browser modules. Install the `control-center` optional dependency group and run `python -m speech_to_text.control_center` at the repository root; it binds to `127.0.0.1:8765`. The CLI permits only `127.0.0.1`, `localhost`, and `::1` bind addresses. Shared CORS middleware allows all origins, methods, and headers with credentials disabled. `/` serves the page from the same origin as `/api` and `/assets`.
 
 The explicit registry provides `GET /api/features` and `GET /api/system`. A feature contribution supplies its own router beneath `/api/features/<feature-id>`. Feature 01 exposes:
 
@@ -157,6 +157,9 @@ The explicit registry provides `GET /api/features` and `GET /api/system`. A feat
 | `DELETE /models/<handle-id>` | Stop owned flows and close a model handle |
 | `POST /clips` | Validate and transcribe an uploaded WAV without retaining it |
 | `POST /microphones` | Start a Feature 01 microphone session |
+| `GET /capture-capabilities` | Report deployment-specific microphone capture adapters |
+| `POST /sessions/<source-id>/audio` | Append one authenticated, bounded PCM batch in the Mac profile |
+| `POST /sessions/<source-id>/capture-error` | End a Mac host-bridge session with a typed capture error |
 | `POST /process-groups` | Start shared-model or per-input-model capture processes |
 | `POST /capacity` | Run the Feature 01 microphone-paced capacity measurement and return its real verdict/measurements |
 | `GET /events/<source-id>` | Stream typed source events with transport sequence numbers |

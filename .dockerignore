@@ -12,9 +12,8 @@ tests
 scripts
 .env
 .env.*
-!.env.observability.example
+!.env.example
 .scratch/*
 !.scratch/new-speech-to-text/
 !.scratch/new-speech-to-text/spec.md
 docs
-deploy/observability/postgres-init

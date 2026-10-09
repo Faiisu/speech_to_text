@@ -11,8 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOME=/home/speech \
     HF_HOME=/home/speech/.cache/huggingface \
     XDG_CACHE_HOME=/home/speech/.cache \
-    SPEECH_TO_TEXT_MODELS_DIR=/app/models \
-    SPEECH_TO_TEXT_MODEL_VOLUME_PATH=/app/models
+    SPEECH_TO_TEXT_MODELS_DIR=/app/models
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -34,7 +33,7 @@ COPY .scratch/new-speech-to-text/spec.md ./.scratch/new-speech-to-text/spec.md
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install --upgrade pip \
     && python -m pip install --constraint deploy/mac-test-constraints.txt \
-        -e '.[control-center,telemetry,microphone,ctranslate2]'
+        -e '.[control-center,microphone,ctranslate2]'
 
 USER ${APP_UID}:${APP_GID}
 EXPOSE 8765

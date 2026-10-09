@@ -18,34 +18,16 @@ The HTTP clip adapter currently accepts `beam_size`, `temperature`, and `conditi
 
 ## Environment variables
 
-Copy [`.env.observability.example`](../.env.observability.example) to `.env` and replace its placeholder secrets before starting the observability stack. Keep `.env` out of version control.
+Copy [`.env.example`](../.env.example) to `.env` to override deployment defaults. No credentials or database settings are required. Keep `.env` out of version control.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SPEECH_TO_TEXT_MODELS_DIR` | `<current directory>/models` | Local converted/model files used by catalog discovery and runtime loading. |
-| `SPEECH_TO_TEXT_MODEL_VOLUME_PATH` | `<current directory>/models` | Path whose disk usage is included in host samples. |
-| `SPEECH_TO_TEXT_TELEMETRY_DATABASE_URL` | Unset | Writer connection URL. If unset, telemetry writer and sampler are disabled. |
-| `SPEECH_TO_TEXT_TELEMETRY_QUEUE_CAPACITY` | `4096` | In-memory telemetry writer queue size. |
-| `SPEECH_TO_TEXT_TELEMETRY_BATCH_SIZE` | `100` | Maximum records written per batch. |
-| `SPEECH_TO_TEXT_TELEMETRY_SHUTDOWN_TIMEOUT_SECONDS` | `5` | Writer drain timeout during orderly shutdown. |
-| `SPEECH_TO_TEXT_TELEMETRY_RETENTION_DAYS` | `30` | Database retention window applied by migrations. |
-| `SPEECH_TO_TEXT_TELEMETRY_MIGRATION_DATABASE_URL` | Unset | Privileged connection URL used only to apply schema and retention migrations. |
-| `GRAFANA_HOST` | `http://127.0.0.1:3000` | Grafana URL used by `scripts/observability_smoke.py`. |
-| `TELEMETRY_ADMIN_USER` | `telemetry_admin` | Database bootstrap administrator account. |
-| `TELEMETRY_ADMIN_PASSWORD` | Required by Compose | Database bootstrap administrator password. |
-| `TELEMETRY_WRITER_PASSWORD` | Required by Compose | Password for the application insert-only role. |
-| `TELEMETRY_GRAFANA_PASSWORD` | Required by Compose | Password for Grafana's read-only database role. |
-| `TELEMETRY_DATABASE` | `speech_telemetry` | Database name. |
-| `TELEMETRY_DATABASE_PORT` | `5433` | Host port for TimescaleDB; bound to loopback. |
-| `GRAFANA_ADMIN_USER` | `admin` | Grafana UI administrator username. |
-| `GRAFANA_ADMIN_PASSWORD` | Required by Compose | Grafana UI administrator password. |
-| `GRAFANA_PORT` | `3000` | Host port for Grafana; bound to loopback. |
+| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory for a host process; `./models` as the Compose host bind source | Local model files used by catalog discovery and runtime loading. Compose mounts the host directory at `/app/models` and sets this variable to that container path; Linux mounts read-write and the Mac test profile mounts read-only. |
 | `MAC_TEST_CONTROL_CENTER_PORT` | `18766` | Mac Docker Desktop test profile API port; bound to loopback. |
-| `MAC_TEST_TELEMETRY_DATABASE_PORT` | `15433` | Mac Docker Desktop test profile database port; bound to loopback. |
-| `MAC_TEST_GRAFANA_PORT` | `13001` | Mac Docker Desktop test profile Grafana port; bound to loopback. |
+| `MAC_TEST_MICROPHONE_BRIDGE_PORT` | `18767` | Mac host microphone bridge port; bound to Mac loopback. |
 | `MAC_TEST_PLATFORM` | `linux/arm64` | Native Mac test image platform. Use `linux/amd64` only for Docker Desktop emulation fallback. |
 
-See [Deployment](deployment.md#database-and-grafana) for how these settings are used.
+Other compose defaults for image tags and host UID/GID are listed below and in [`.env.example`](../.env.example).
 
 ## Container deployment settings
 
@@ -58,13 +40,14 @@ These values configure the Linux service defined in `compose.speech-service.yml`
 | `HOST_UID` / `HOST_GID` | `1001` / `1001` | Numeric host identity used by the service process and persistent bind-mounted files. |
 | `RENDER_GID` | `992` | Host render-device group added to the container process. |
 | `AUDIO_GID` | `29` | Host audio-device group added to the container process. |
-| `SPEECH_TO_TEXT_MODELS_DIR` | `./models` on the host | Writable host model directory mounted at `/app/models` in the container. |
 | `HF_HOME` | `/home/speech/.cache/huggingface` in the container | Persistent Hugging Face download and conversion cache. |
-| `SPEECH_TO_TEXT_TELEMETRY_DATABASE_URL` | Unset | Optional insert-only telemetry writer URL passed to the service container. |
-| `SPEECH_TO_TEXT_TELEMETRY_RETENTION_DAYS` | `30` | Retention setting passed to the service container. |
 | `SPEECH_TO_TEXT_MAC_TEST_IMAGE` | `speech-to-text:mac-test` | Native ARM64 Mac Docker Desktop test profile image tag. |
+| `SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE` | Disabled | Enables authenticated PCM ingest in the service container; enabled by the Mac Docker Desktop profile. |
+| `SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE_URL` | `http://127.0.0.1:18767/api` | Host bridge URL supplied to the Control Center page in the Mac profile. |
 
-See [Deployment](deployment.md#linux-service-container) for the combined Compose commands and required Linux host access.
+See [Deployment](deployment.md#linux-service-container) for the service Compose command and required Linux host access.
+
+The Mac host bridge also accepts `SPEECH_TO_TEXT_BRIDGE_PORT` (`18767`), `SPEECH_TO_TEXT_BRIDGE_SERVICE_URL` (`http://127.0.0.1:18766`), and `SPEECH_TO_TEXT_BRIDGE_CONTROL_ORIGIN` (`*`). Wildcard CORS supports loopback aliases used by the Control Center; a specific loopback HTTP origin can be set to enable strict origin checking. See [Deployment](deployment.md#mac-microphone-bridge) for startup and stop commands.
 
 ## Control center command-line options
 
@@ -112,4 +95,4 @@ These variables only configure opt-in proofs in `tests/feature_01/test_hardware_
 
 - [Getting Started](getting-started.md) for local installation.
 - [API Reference](api.md) for where model and flow settings are sent.
-- [Deployment](deployment.md) for database setup and migrations.
+- [Deployment](deployment.md) for Linux and Mac service setup.

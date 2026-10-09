@@ -77,8 +77,15 @@ class FeaturePageHandler(BaseHTTPRequestHandler):
           ]}};
           const json = (body, status = 200) => Promise.resolve({{ok: status >= 200 && status < 300, status, json: async () => body}});
           window.fetch = async (url, options = {{}}) => {{
-            const path = new URL(url, location.href).pathname;
+            const parsedUrl = new URL(url, location.href);
+            const path = parsedUrl.pathname;
             const method = options.method || 'GET';
+            if (parsedUrl.origin === 'http://127.0.0.1:18767') {{
+              window.__calls.push({{path, method, bridge: true}});
+              if (path === '/api/devices') return json({{devices: [{{name: 'MacBook Air Microphone', default: true}}]}});
+              if (path === '/api/sessions' && method === 'POST') return json({{source_id: 'simulated-source'}});
+              if (path === '/api/sessions/simulated-source' && method === 'DELETE') return json({{state: 'stopped'}});
+            }}
             if (!path.startsWith('/api/')) return nativeFetch(url, options);
             window.__calls.push({{path, method}});
             if (scenario === 'disconnected') throw new TypeError('Failed to fetch');
@@ -91,11 +98,14 @@ class FeaturePageHandler(BaseHTTPRequestHandler):
               return scenario === 'catalog-error' ? json({{detail: 'Injected catalog failure'}}, 503) : json({{models: [model]}});
             }}
             if (path === `/api/features/${{featureId}}/devices`) return json({{devices: []}});
+            if (path === `/api/features/${{featureId}}/capture-capabilities`) return json({{host_bridge: scenario === 'host-bridge',
+              host_bridge_url: 'http://127.0.0.1:18767/api'}});
             if (path === `/api/features/${{featureId}}`) return json({{models: scenario === 'clip' ? [{{id: 'loaded-handle', model: 'turbo', runtime: 'ctranslate2', precision: 'int8', state: 'ready'}}] : []}});
             if (path === `/api/features/${{featureId}}/models` && method === 'POST') {{
               return scenario === 'load-error' ? json({{detail: 'Injected model load failure'}}, 503) : json({{handle_id: 'simulated-handle', model: 'turbo', runtime: 'ctranslate2', precision: 'int8', state: 'ready'}});
             }}
             if (path === `/api/features/${{featureId}}/clips` && method === 'POST') return json({{transcript: 'สวัสดีครับ', elapsed_seconds: 1.25,
+              measurements: [{{sequence: 0, rtf: 0.24, audio_seconds: 5, inference_seconds: 1.2, status: 'completed'}}],
               configuration: {{model: 'turbo', runtime: 'ctranslate2', language: 'th'}}}});
             if (path === `/api/features/${{featureId}}/microphones` && method === 'POST') return json({{source_id: 'simulated-source'}});
             if (path === `/api/features/${{featureId}}/sessions/simulated-source/stop` && method === 'POST') return json({{status: 'stopping'}});
@@ -154,6 +164,7 @@ class FeaturePageHandler(BaseHTTPRequestHandler):
                 await wait(() => document.getElementById('transcript-output').textContent === 'สวัสดีครับ');
                 result(document.getElementById('run-time').textContent === '1.25 s' &&
                   document.getElementById('result-meta').textContent.includes('turbo · ctranslate2 · th') &&
+                  document.getElementById('result-meta').textContent.includes('RTF: #0 RTF 0.240 · 5.00s audio · 1.20s inference') &&
                   document.getElementById('model-select').value === 'turbo' &&
                   document.getElementById('runtime-select').value === 'ctranslate2' &&
                   !window.__calls.some(call => call.path.endsWith('/models') && call.method === 'POST'), 'existing loaded-model adoption and WAV transcript are visible');
@@ -163,17 +174,26 @@ class FeaturePageHandler(BaseHTTPRequestHandler):
               document.getElementById('start-mic').click();
               await wait(() => document.getElementById('stop-mic').classList.contains('hidden') === false);
               document.getElementById('stop-mic').click();
-              await wait(() => window.__calls.some(call => call.path.endsWith('/sessions/simulated-source/stop')));
+              await wait(() => window.__calls.some(call => call.path.endsWith('/sessions/simulated-source') && call.method === 'DELETE') ||
+                window.__calls.some(call => call.path.endsWith('/sessions/simulated-source/stop')));
               const stream = window.__eventSource;
+              stream.deliver('measurement', 0, {{sequence: 0, rtf: 0.5, audio_seconds: 2, inference_seconds: 1, status: 'completed'}});
               stream.deliver('transcript', 1, {{text: 'simulated Thai transcript'}});
               stream.deliver('error', 2, {{message: 'simulated chunk warning'}});
               stream.deliver('completed', 3, {{status: 'stopped'}});
               await wait(() => document.getElementById('transcript-output').textContent.includes('simulated Thai transcript') &&
                 document.getElementById('event-list').textContent.includes('completed'));
               const log = [...document.querySelectorAll('#event-list .event-type')].map(node => node.textContent);
+              const measurementIndex = log.indexOf('measurement');
               const transcriptIndex = log.indexOf('transcript'); const errorIndex = log.indexOf('error'); const completedIndex = log.indexOf('completed');
-              result(window.__calls.some(call => call.path.endsWith('/sessions/simulated-source/stop') && call.method === 'POST') &&
-                transcriptIndex >= 0 && completedIndex >= 0 && completedIndex < errorIndex && errorIndex < transcriptIndex &&
+              const measurementVisible = document.getElementById('event-list').textContent.includes('RTF 0.500 · 2.00s audio · 1.00s inference');
+              const stopRoutedCorrectly = scenario === 'host-bridge'
+                ? window.__calls.some(call => call.bridge && call.path.endsWith('/sessions/simulated-source') && call.method === 'DELETE') &&
+                  !window.__calls.some(call => !call.bridge && call.path.endsWith('/sessions/simulated-source/stop')) &&
+                  document.getElementById('start-process').disabled
+                : window.__calls.some(call => !call.bridge && call.path.endsWith('/sessions/simulated-source/stop') && call.method === 'POST');
+              result(stopRoutedCorrectly &&
+                measurementVisible && measurementIndex >= 0 && transcriptIndex >= 0 && completedIndex >= 0 && completedIndex < errorIndex && errorIndex < transcriptIndex &&
                 document.getElementById('start-mic').classList.contains('hidden') === false &&
                 document.getElementById('stop-mic').classList.contains('hidden') &&
                 document.getElementById('input-state').textContent === 'Waiting for audio' && stream.closed &&
@@ -224,6 +244,10 @@ def test_browser_renders_catalog_and_model_load_errors(scenario):
 
 def test_browser_renders_simulated_microphone_events_and_stop_lifecycle():
     run_browser("microphone")
+
+
+def test_browser_routes_mac_docker_microphone_lifecycle_through_host_bridge():
+    run_browser("host-bridge")
 
 
 def test_browser_renders_disconnected_service_state():

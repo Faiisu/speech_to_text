@@ -10,7 +10,7 @@ Create a local environment and install the test and control-center dependencies:
 
 ```bash
 uv venv .venv
-uv pip install --python .venv/bin/python -e '.[control-center,telemetry,test]'
+uv pip install --python .venv/bin/python -e '.[control-center,test]'
 ```
 
 Install optional model or microphone packages only when needed for the work. See [Getting Started](getting-started.md#add-a-model-runtime-and-microphone-support).
@@ -27,11 +27,10 @@ The suites are organized by boundary:
 
 - `tests/feature_01/` verifies model, clip, microphone, runtime, and process-topology contracts.
 - `tests/control_center/` verifies API lifecycle and browser integration.
-- `tests/system_observability/` verifies telemetry serialization, database writer behavior, sampling, and dashboard provisioning.
 
 Tests marked `hardware` are skipped unless explicitly enabled. Real model proof requires the reference audio and verified transcript settings described in `tests/feature_01/test_hardware_proof.py`. A physical microphone proof also requires a connected, named input device. Keep injected-boundary test results distinct from target hardware evidence.
 
-When changing observability deployment behavior, run the live smoke check described in [Deployment](deployment.md#database-and-grafana) if the local Compose services are available.
+Clip, microphone, and process-group contracts include per-chunk measurement outputs. There is no separate database deployment smoke check; see the [Feature 01 measurement contract](../.scratch/new-speech-to-text/spec.md#per-chunk-performance-measurement).
 
 ## Documentation and feature changes
 

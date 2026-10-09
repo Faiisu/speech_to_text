@@ -101,8 +101,12 @@ def collect_until_completed(session, *, timeout=3):
             raise AssertionError("Session did not emit its terminal completed event") from None
         assert isinstance(event, dict)
         assert isinstance(event["source_id"], str)
-        assert event["type"] in {"transcript", "error", "completed"}
-        if event["type"] == "transcript":
+        assert event["type"] in {"measurement", "transcript", "error", "completed"}
+        if event["type"] == "measurement":
+            assert {"completed_at", "pid", "sequence", "source_id", "audio_seconds",
+                    "inference_seconds", "rtf", "status"} <= event.keys()
+            assert event["status"] in {"completed", "failed"}
+        elif event["type"] == "transcript":
             assert isinstance(event["sequence"], int)
             assert isinstance(event["text"], str)
         elif event["type"] == "error":

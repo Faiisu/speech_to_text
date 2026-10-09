@@ -4,19 +4,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .registry import FeatureContribution, FeatureRegistry
 from ..features.feature_01_control import create_router
-from ..features.feature_01_control.api import persisted_measurements, observation_processes
-from ..features.system_observability import TelemetryWriter
-from ..features.system_observability.sampler import ObservationSampler
 
 STATIC_DIR = Path(__file__).with_name("static")
 
 
-def default_registry(*, measurement_writer=None, **feature_options):
+def default_registry(**feature_options):
     return FeatureRegistry((FeatureContribution(
         id="feature-01-model-deployment",
         name="Model deployment & audio-to-text",
@@ -25,45 +23,29 @@ def default_registry(*, measurement_writer=None, **feature_options):
         page_module="/assets/features/feature-01/page.js",
         page_template="/assets/features/feature-01/page.html",
         page_stylesheet="/assets/features/feature-01/page.css",
-        router_factory=lambda: create_router(**feature_options, measurement_writer=measurement_writer),
+        router_factory=lambda: create_router(**feature_options),
         implementation_status="implemented",
         verification_status="injected-passed; browser-passed; hardware-pending",
-        process_provider=observation_processes,
-        measurement_provider=persisted_measurements,
     ),))
 
 
-def create_app(*, registry=None, feature_options=None, telemetry_writer=None, observation_options=None):
-    telemetry_writer = telemetry_writer or TelemetryWriter.from_environment()
-    observation_options = dict(observation_options or {})
-    sampler = ObservationSampler(telemetry_writer, **observation_options) if telemetry_writer else None
-    registry = registry or default_registry(measurement_writer=telemetry_writer, **(feature_options or {}))
+def create_app(*, registry=None, feature_options=None):
+    registry = registry or default_registry(**(feature_options or {}))
     owned = {}
 
     @asynccontextmanager
     async def lifespan(_app):
-        if telemetry_writer:
-            telemetry_writer.start()
-        if sampler:
-            sampler.providers = tuple((feature.id, owned.get(feature.id), feature.process_provider)
-                                      for feature in registry.list() if feature.process_provider)
-            sampler.measurement_providers = tuple((feature.id, owned.get(feature.id), feature.measurement_provider)
-                                                  for feature in registry.list() if feature.measurement_provider)
-            sampler.start()
         try:
             yield
         finally:
             for feature_state in owned.values():
                 feature_state.close_all()
-            if sampler:
-                sampler.stop()
-        if telemetry_writer:
-            telemetry_writer.close()
 
     app = FastAPI(title="Speech-to-Text Control Center", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False,
+                       allow_methods=["*"], allow_headers=["*"])
     app.state.feature_registry = registry
     app.state.feature_state = owned
-    app.state.telemetry_writer = telemetry_writer
     app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
 
     @app.get("/", include_in_schema=False)

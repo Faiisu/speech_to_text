@@ -12,8 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HOME=/home/speech/.cache/huggingface \
     XDG_CACHE_HOME=/home/speech/.cache \
     XDG_RUNTIME_DIR=/run/user/1001 \
-    SPEECH_TO_TEXT_MODELS_DIR=/app/models \
-    SPEECH_TO_TEXT_MODEL_VOLUME_PATH=/app/models
+    SPEECH_TO_TEXT_MODELS_DIR=/app/models
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -41,7 +40,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install --upgrade pip \
     && python -m pip install --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple \
         'torch==2.14.1+cpu' 'torchvision==0.29.1+cpu' \
-    && python -m pip install --constraint deploy/container-constraints.txt -e '.[control-center,telemetry,microphone,openvino]'
+    && python -m pip install --constraint deploy/container-constraints.txt -e '.[control-center,microphone,openvino]'
 
 RUN chown "${APP_UID}:${APP_GID}" /home/speech
 

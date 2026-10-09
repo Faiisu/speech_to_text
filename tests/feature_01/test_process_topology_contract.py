@@ -69,19 +69,14 @@ def test_spawned_capture_and_model_processes_route_ordered_partial_chunks(api):
         assert texts(events) == ["frames-1600", "frames-400"], (topology, events, session.process.exitcode)
         assert [event["sequence"] for event in events if event["type"] == "transcript"] == [0, 1]
         assert events[-1]["status"] == "stopped"
-        measurements = []
-        deadline = time.monotonic() + 1
-        while time.monotonic() < deadline:
-            try:
-                measurements.append(group.measurement_queue.get(timeout=.05))
-            except Empty:
-                break
+        measurements = [event for event in events if event["type"] == "measurement"]
         assert [record["sequence"] for record in measurements] == [0, 1]
         assert all(record["source_id"] == session.source_id for record in measurements)
         inference_pid = group._model_process.pid if group._model_process is not None else session.process.pid
         assert all(record["pid"] == inference_pid for record in measurements)
         assert all(record["rtf"] >= 0 and record["completed_at"].endswith("+00:00") for record in measurements)
         assert [record["audio_seconds"] for record in measurements] == pytest.approx([.1, .025])
+        assert events.index(measurements[-1]) < next(i for i, event in enumerate(events) if event["type"] == "completed")
 
 
 def test_shared_ipc_routes_two_spawned_sources_independently(api):

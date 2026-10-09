@@ -2,7 +2,8 @@ let FEATURE = '';
 let emitEvent = () => {};
 let refreshSystem = async () => {};
 const $ = (id) => document.getElementById(id);
-const state = {handleId: null, source: null, activeSource: null, groupId: null, eventIndex: 0, models: [], currentTab: 'clip'};
+const BRIDGE_DEFAULT = 'http://127.0.0.1:18767/api';
+const state = {handleId: null, source: null, activeSource: null, groupId: null, eventIndex: 0, models: [], currentTab: 'clip', hostBridge: false, bridgeUrl: BRIDGE_DEFAULT};
 
 function logEvent(type, message, source = 'control-center', tone = '') {
   emitEvent(type, message, source, tone);
@@ -17,12 +18,18 @@ async function request(path, options = {}) {
   }
   return body;
 }
+async function bridgeRequest(path, options = {}) {
+  const response = await fetch(`${state.bridgeUrl}${path}`, options);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || `Mac microphone bridge request failed (${response.status})`);
+  return body;
+}
 
 function selectedModel() { return state.models.find((model) => model.key === $('model-select').value); }
 function selectedRuntime() { return selectedModel()?.runtimes.find((runtime) => runtime.key === $('runtime-select').value); }
 function refreshActionState() {
   const canRun = Boolean(state.handleId);
-  const canStartProcesses = Boolean(selectedModel() && selectedRuntime()?.compatible && $('precision-select').value);
+  const canStartProcesses = !state.hostBridge && Boolean(selectedModel() && selectedRuntime()?.compatible && $('precision-select').value);
   $('transcribe-clip').disabled = !canRun;
   $('start-mic').disabled = !canRun;
   $('start-process').disabled = !canStartProcesses;
@@ -50,9 +57,23 @@ async function loadCatalog() {
     if (models.some((model) => model.key === 'turbo')) modelSelect.value = 'turbo';
     if (!models.length) modelSelect.add(new Option('No catalog entries', ''));
     updateRuntimeOptions();
-    const {devices, unavailable_reason} = await request('/devices');
-    for (const device of devices) $('device-select').add(new Option(`${device.name}${device.default ? ' · default' : ''}`, device.name));
-    if (unavailable_reason) logEvent('Input devices unavailable', unavailable_reason, 'capture boundary', 'warning');
+    const {host_bridge: hostBridge = false, host_bridge_url: bridgeUrl = BRIDGE_DEFAULT} = await request('/capture-capabilities');
+    state.hostBridge = hostBridge; state.bridgeUrl = bridgeUrl;
+    if (hostBridge) {
+      $('device-select').replaceChildren(new Option('OS selected input', ''));
+      $('mic-capture-note').textContent = 'Capture runs on the Mac through the host bridge. Start the bridge in a Mac terminal, then allow microphone access when macOS prompts.';
+      $('process-note').textContent = 'Process groups and capacity checks use direct container microphone capture and are unavailable in the Mac Docker profile.';
+      try {
+        const {devices} = await bridgeRequest('/devices');
+        for (const device of devices) $('device-select').add(new Option(`${device.name}${device.default ? ' · default' : ''}`, device.name));
+      } catch (error) { logEvent('Mac microphone bridge unavailable', error.message, 'capture boundary', 'warning'); }
+    } else {
+      $('process-note').textContent = 'Process groups and capacity runs load a separate process-owned model from the selection above. They do not use the single model handle from the WAV and microphone tabs.';
+      const {devices, unavailable_reason} = await request('/devices');
+      for (const device of devices) $('device-select').add(new Option(`${device.name}${device.default ? ' · default' : ''}`, device.name));
+      if (unavailable_reason) logEvent('Input devices unavailable', unavailable_reason, 'capture boundary', 'warning');
+      $('mic-capture-note').textContent = 'Capture runs on this computer through the selected host input. Browser microphone permission is not used.';
+    }
     logEvent('Catalog refreshed', `${models.length} model option${models.length === 1 ? '' : 's'} discovered`, 'Feature 01');
   } catch (error) { logEvent('Catalog failed', error.message, 'Feature 01', 'error'); }
 }
@@ -134,6 +155,10 @@ function characterErrorRate(reference, hypothesis) {
   return a.length ? row[b.length] / a.length : (b.length ? 1 : 0);
 }
 
+function measurementSummary(measurement) {
+  return `#${measurement.sequence} RTF ${measurement.rtf.toFixed(3)} · ${measurement.audio_seconds.toFixed(2)}s audio · ${measurement.inference_seconds.toFixed(2)}s inference`;
+}
+
 async function transcribeClip(event) {
   event.preventDefault(); const file = $('clip-file').files[0];
   if (!file) return;
@@ -149,19 +174,27 @@ async function transcribeClip(event) {
     $('run-time').textContent = `${result.elapsed_seconds.toFixed(2)} s`;
     let accuracy = 'Accuracy: not measured';
     if (reference && $('reference-verified').checked) accuracy = `User-verified reference CER: ${(characterErrorRate(reference, result.transcript) * 100).toFixed(1)}%`;
-    $('result-meta').replaceChildren(document.createTextNode(`Configuration: ${result.configuration.model} · ${result.configuration.runtime} · ${result.configuration.language}`), document.createTextNode(accuracy));
-    updateSpine('WAV selected', 'Transcript ready'); logEvent('Transcription complete', `${result.transcript.length} characters · ${result.elapsed_seconds.toFixed(2)} seconds`, 'finite audio');
+    const measurements = result.measurements || [];
+    const measurementText = measurements.length ? `RTF: ${measurements.map(measurementSummary).join(' · ')}` : 'RTF: no eligible audio chunks';
+    $('result-meta').replaceChildren(document.createTextNode(`Configuration: ${result.configuration.model} · ${result.configuration.runtime} · ${result.configuration.language}`), document.createTextNode(measurementText), document.createTextNode(accuracy));
+    updateSpine('WAV selected', 'Transcript ready'); logEvent('Transcription complete', `${result.transcript.length} characters · ${result.elapsed_seconds.toFixed(2)} seconds · ${measurements.map((item) => `RTF ${item.rtf.toFixed(3)}`).join(', ') || 'no eligible chunks'}`, 'finite audio');
   } catch (error) { $('transcript-output').textContent = `Transcription failed: ${error.message}`; $('run-time').textContent = 'FAILED'; updateSpine('WAV selected', 'No transcript'); logEvent('Transcription failed', error.message, 'finite audio', 'error'); }
 }
 
 async function startMicrophone() {
+  if (state.micStarting || state.activeSource) return;
+  state.micStarting = true; $('start-mic').disabled = true;
   try {
-    const result = await request('/microphones', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({handle_id: state.handleId,
-      device: $('device-select').value || null, flow_config: {...flowSettings('mic'), source_id: $('mic-source-id').value.trim() || undefined}})});
+    const payload = {handle_id: state.handleId, device: $('device-select').value || null,
+      flow_config: {...flowSettings('mic'), source_id: $('mic-source-id').value.trim() || undefined}};
+    const result = state.hostBridge
+      ? await bridgeRequest('/sessions', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)})
+      : await request('/microphones', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
     state.activeSource = result.source_id; $('start-mic').classList.add('hidden'); $('stop-mic').classList.remove('hidden');
     updateSpine('Listening', 'Waiting for speech'); $('transcript-output').textContent = 'Microphone is listening. Speech events will appear here.';
     logEvent('Microphone started', $('device-select').value || 'OS selected input', result.source_id); followEvents(result.source_id);
   } catch (error) { logEvent('Microphone failed', error.message, 'capture boundary', 'error'); }
+  finally { state.micStarting = false; if (!state.activeSource) $('start-mic').disabled = !state.handleId; }
 }
 async function startProcessGroup() {
   const devices = $('process-devices').value.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -242,17 +275,25 @@ async function runCapacity() {
 async function followEvents(sourceId) {
   const events = new EventSource(`${FEATURE}/events/${encodeURIComponent(sourceId)}`); state.source = events;
   events.onmessage = (message) => {
-    const event = JSON.parse(message.data); const detail = event.type === 'transcript' ? event.text : event.message || event.status || '';
+    const event = JSON.parse(message.data); const detail = event.type === 'transcript' ? event.text : event.type === 'measurement' ? measurementSummary(event) : event.message || event.status || '';
     logEvent(event.type, `${event.sequence !== undefined ? `#${event.sequence} · ` : ''}${detail}`, `${event.source_id} · event ${event.event_sequence}`, event.type === 'error' ? 'error' : '');
     if (event.type === 'transcript') { $('transcript-output').textContent = `${$('transcript-output').textContent === 'Microphone is listening. Speech events will appear here.' ? '' : `${$('transcript-output').textContent}\n`}${event.text}`; updateSpine('Listening', 'Transcript ready'); }
     if (event.type === 'error') { updateSpine('Listening', 'Input error'); }
-    if (event.type === 'completed') { events.close(); state.source = null; if (state.activeSource === sourceId) { state.activeSource = null; $('start-mic').classList.remove('hidden'); $('stop-mic').classList.add('hidden'); updateSpine('Waiting for audio', $('transcript-state').textContent); } }
+    if (event.type === 'completed') {
+      events.close(); state.source = null;
+      if (state.hostBridge) bridgeRequest(`/sessions/${encodeURIComponent(sourceId)}`, {method: 'DELETE'}).catch(() => {});
+      if (state.activeSource === sourceId) { state.activeSource = null; $('start-mic').classList.remove('hidden'); $('start-mic').disabled = !state.handleId; $('stop-mic').classList.add('hidden'); updateSpine('Waiting for audio', $('transcript-state').textContent); }
+    }
   };
   events.onerror = () => { if (events.readyState === EventSource.CLOSED) logEvent('Event stream closed', 'Reconnect or restart the input to receive events.', sourceId, 'warning'); };
 }
 async function stopMicrophone() {
   if (!state.activeSource) return;
-  try { await request(`/sessions/${encodeURIComponent(state.activeSource)}/stop`, {method: 'POST'}); logEvent('Microphone stop requested', 'Flushing accepted audio before completion.', state.activeSource); }
+  try {
+    if (state.hostBridge) await bridgeRequest(`/sessions/${encodeURIComponent(state.activeSource)}`, {method: 'DELETE'});
+    else await request(`/sessions/${encodeURIComponent(state.activeSource)}/stop`, {method: 'POST'});
+    logEvent('Microphone stop requested', 'Flushing accepted audio before completion.', state.activeSource);
+  }
   catch (error) { logEvent('Microphone stop failed', error.message, state.activeSource, 'error'); }
 }
 async function stopProcessGroup() {

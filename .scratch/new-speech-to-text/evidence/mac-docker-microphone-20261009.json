@@ -1,0 +1,103 @@
+{
+  "verified_at": "2026-10-09T10:47:28.187611+00:00",
+  "device": "MacBook Air Microphone",
+  "source_id": "mac-hardware-bridge-2ccfd2cb",
+  "model": {
+    "handle_id": "2e06060fd41d4432b7f3c13000f2b03a",
+    "model": "turbo",
+    "runtime": "ctranslate2",
+    "precision": "int8",
+    "state": "ready"
+  },
+  "start": {
+    "source_id": "mac-hardware-bridge-2ccfd2cb",
+    "state": "running"
+  },
+  "stop": {
+    "source_id": "mac-hardware-bridge-2ccfd2cb",
+    "state": "stopped"
+  },
+  "events": [
+    {
+      "type": "transcript",
+      "source_id": "mac-hardware-bridge-2ccfd2cb",
+      "sequence": 0,
+      "text": "อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า อ่า",
+      "event_sequence": 0
+    },
+    {
+      "type": "transcript",
+      "source_id": "mac-hardware-bridge-2ccfd2cb",
+      "sequence": 1,
+      "text": "ขอบคุณค่ะ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผู้ชมครับ คุณผ",
+      "event_sequence": 1
+    },
+    {
+      "type": "completed",
+      "source_id": "mac-hardware-bridge-2ccfd2cb",
+      "status": "stopped",
+      "last_sequence": 1,
+      "event_sequence": 2
+    }
+  ],
+  "limitations": [
+    "Ambient microphone audio; recognition accuracy not verified",
+    "Mac microphone host capture feeds Linux VM container; VM resource samples do not describe native Mac host resources",
+    "Mac multi-process microphone topology/capacity unsupported by this bridge"
+  ],
+  "measurements": [
+    {
+      "recorded_at": "2026-10-09 10:47:21.386613+00:00",
+      "pid": 7,
+      "source_id": "mac-hardware-bridge-2ccfd2cb",
+      "sequence": 0,
+      "audio_seconds": 5.0,
+      "inference_seconds": 8.060051462000047,
+      "rtf": 1.6120102924000093,
+      "status": "completed"
+    },
+    {
+      "recorded_at": "2026-10-09 10:47:28.181034+00:00",
+      "pid": 7,
+      "source_id": "mac-hardware-bridge-2ccfd2cb",
+      "sequence": 1,
+      "audio_seconds": 1.293375,
+      "inference_seconds": 6.7943323780000355,
+      "rtf": 5.253180537740436,
+      "status": "completed"
+    }
+  ],
+  "grafana_real_microphone_rtf_query": "passed",
+  "bridge_pid": 15688,
+  "capture_seconds": 6.3,
+  "silence_threshold": 0,
+  "chunk_seconds": 5,
+  "software_tests": {
+    "passed": 112,
+    "skipped": 2,
+    "skip_reason": "opt-in hardware proofs"
+  },
+  "browser_verification": {
+    "device_options": [
+      "Cotton AirPod",
+      "Faiisu Microphone",
+      "MacBook Air Microphone",
+      "Microsoft Teams Audio"
+    ],
+    "process_actions_disabled": true,
+    "proof": "actual Chrome DOM and bridge CORS response"
+  },
+  "image_id": "sha256:1b6603dcb9b03311df8a572a5a93f99c6ea1e639240038953f4b8d054bde929a",
+  "wildcard_origin_verification": {
+    "verified_at": "2026-10-09T10:57:37.010187+00:00",
+    "frontend_origin": "http://localhost:18766",
+    "access_control_allow_origin": "*",
+    "before_fix": "HTTP 403 on device catalog and microphone start",
+    "after_fix": "Passed live device listing, physical microphone start/stop, OPTIONS 204, and actual Chrome device options",
+    "bridge_pid": 17509,
+    "targeted_tests": {
+      "passed": 104,
+      "skipped": 2
+    }
+  }
+}

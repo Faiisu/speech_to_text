@@ -1,0 +1,155 @@
+{
+  "recorded_at": "2026-10-09T11:25:58.488120+00:00",
+  "target": "Linux",
+  "compose_project": "speech-feature-01",
+  "compose_file": "compose.speech-service.yml",
+  "service": {
+    "image_id": "sha256:a5a5f0717781075fe757697335513be7715f6464e5ab22451acefe04e08c12f5",
+    "health": "healthy",
+    "source_app_sha256": "e2641eedcc4a7a0db8971a802797aebf65458a313632d374f6a97f8564100cca",
+    "system": {
+      "service": "ready",
+      "features": 1,
+      "loaded_models": 1,
+      "active_sessions": [],
+      "recent_errors": []
+    },
+    "systemd_unit": {
+      "active_state": "inactive",
+      "unit_file_state": "disabled"
+    }
+  },
+  "cors": {
+    "get_api_system": [
+      {
+        "origin": "http://localhost:8765",
+        "status": 200,
+        "allow_origin": "*"
+      },
+      {
+        "origin": "https://external.example",
+        "status": 200,
+        "allow_origin": "*"
+      }
+    ],
+    "preflight_models_post": {
+      "status": 200,
+      "allow_origin": "*",
+      "allow_methods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT, QUERY",
+      "allow_headers": "content-type,authorization"
+    }
+  },
+  "runtime_dependencies": {
+    "database_or_telemetry_env_keys": [],
+    "psycopg_installed": false,
+    "system_observability_module_present": false
+  },
+  "containers": {
+    "speech_feature_01": [
+      "speech-feature-01-speech-service-1 healthy"
+    ],
+    "preserved_other_project": [
+      "speech_to_text-backend-1",
+      "speech_to_text-timescaledb-1 healthy"
+    ]
+  },
+  "preserved_volumes": [
+    "speech-feature-01_telemetry-database",
+    "speech-feature-01_telemetry-grafana"
+  ],
+  "clip": {
+    "file": "clip_20260903_160233.wav",
+    "audio_seconds": 21.129375,
+    "model": "turbo",
+    "runtime": "openvino-gpu",
+    "precision": "source",
+    "language": "th",
+    "chunk_seconds": 5.0,
+    "silence_threshold": 0.005,
+    "elapsed_seconds": 11.80161345237866,
+    "source_id": "0e0fd6113a0c44b688d99a7d34f0fabf",
+    "transcript": "ฮัลโหลโหลโหเทส หนึ่งสองสามสี่ สวัสดีครับ สวัสดีครับสวัสดีครับสวัสดีครับฮัลโหลเทสสวัสดีครับ การละครั้งหนึ่งงานมาแล้วอันวินเทคไทยแลนด์ เออ ใช่ไหม",
+    "measurements": [
+      {
+        "type": "measurement",
+        "feature_id": "feature-01-model-deployment",
+        "operation": "finite-clip",
+        "pid": 3312639,
+        "completed_at": "2026-10-09T11:25:06.211333+00:00",
+        "source_id": "0e0fd6113a0c44b688d99a7d34f0fabf",
+        "sequence": 0,
+        "elapsed_seconds": 2.996838143095374,
+        "audio_seconds": 5.0,
+        "inference_seconds": 2.996838143095374,
+        "rtf": 0.5993676286190748,
+        "status": "completed",
+        "error": null
+      },
+      {
+        "type": "measurement",
+        "feature_id": "feature-01-model-deployment",
+        "operation": "finite-clip",
+        "pid": 3312639,
+        "completed_at": "2026-10-09T11:25:09.005650+00:00",
+        "source_id": "0e0fd6113a0c44b688d99a7d34f0fabf",
+        "sequence": 1,
+        "elapsed_seconds": 2.7940774182789028,
+        "audio_seconds": 5.0,
+        "inference_seconds": 2.7940774182789028,
+        "rtf": 0.5588154836557806,
+        "status": "completed",
+        "error": null
+      },
+      {
+        "type": "measurement",
+        "feature_id": "feature-01-model-deployment",
+        "operation": "finite-clip",
+        "pid": 3312639,
+        "completed_at": "2026-10-09T11:25:11.497406+00:00",
+        "source_id": "0e0fd6113a0c44b688d99a7d34f0fabf",
+        "sequence": 2,
+        "elapsed_seconds": 2.4915966666303575,
+        "audio_seconds": 5.0,
+        "inference_seconds": 2.4915966666303575,
+        "rtf": 0.4983193333260715,
+        "status": "completed",
+        "error": null
+      },
+      {
+        "type": "measurement",
+        "feature_id": "feature-01-model-deployment",
+        "operation": "finite-clip",
+        "pid": 3312639,
+        "completed_at": "2026-10-09T11:25:13.219653+00:00",
+        "source_id": "0e0fd6113a0c44b688d99a7d34f0fabf",
+        "sequence": 3,
+        "elapsed_seconds": 1.722037152852863,
+        "audio_seconds": 5.0,
+        "inference_seconds": 1.722037152852863,
+        "rtf": 0.3444074305705726,
+        "status": "completed",
+        "error": null
+      },
+      {
+        "type": "measurement",
+        "feature_id": "feature-01-model-deployment",
+        "operation": "finite-clip",
+        "pid": 3312639,
+        "completed_at": "2026-10-09T11:25:15.015116+00:00",
+        "source_id": "0e0fd6113a0c44b688d99a7d34f0fabf",
+        "sequence": 4,
+        "elapsed_seconds": 1.795280006248504,
+        "audio_seconds": 1.129375,
+        "inference_seconds": 1.795280006248504,
+        "rtf": 1.5896225843926985,
+        "status": "completed",
+        "error": null
+      }
+    ]
+  },
+  "limitations": [
+    "Transcript accuracy is unverified against an independent reference",
+    "The final partial chunk has RTF greater than 1; this run does not prove every chunk meets real-time deadlines",
+    "This deployment proof does not establish multi-microphone capacity"
+  ]
+}

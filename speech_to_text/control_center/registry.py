@@ -14,8 +14,6 @@ class FeatureContribution:
     page_template: str
     page_stylesheet: str
     router_factory: Callable[[], object]
-    process_provider: Callable[[object], object] | None = None
-    measurement_provider: Callable[[object], object] | None = None
     implementation_status: str = "implemented"
     verification_status: str = "unverified"
 

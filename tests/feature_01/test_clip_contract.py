@@ -60,6 +60,17 @@ def test_failed_chunk_is_reported_and_later_text_is_kept(api):
         handle.close()
 
 
+def test_measurement_callback_failure_does_not_change_clip_transcript(api):
+    runtime = ScriptedRuntime(["still recognized"])
+    handle = api.load_model({}, runtime_factory=RuntimeFactory(runtime))
+    try:
+        result = api.transcribe_clip(wav_bytes([10000] * 1600), handle, {"chunk_seconds": 0.1},
+            measurement_sink=lambda _record: (_ for _ in ()).throw(OSError("local callback failed")))
+        assert result == "still recognized"
+    finally:
+        handle.close()
+
+
 def test_silence_gate_skips_quiet_audio_without_inventing_text(api):
     runtime = ScriptedRuntime(["speech"])
     handle = api.load_model({}, runtime_factory=RuntimeFactory(runtime))

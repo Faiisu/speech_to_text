@@ -16,7 +16,7 @@ from .audio import StreamingResampler, TARGET_RATE
 from .capture import SoundDeviceSource
 from .config import flow_config
 from .errors import AudioInputError, ConfigurationError
-from .telemetry import publish_inference_measurement, publish_service_event
+from .measurements import publish_inference_measurement
 
 
 def _event(kind, source_id, **fields):
@@ -60,8 +60,6 @@ class TranscriptionSession:
                 raise AudioInputError("Microphone source channels must be 1 or 2")
             self._resampler = StreamingResampler(self.source.sample_rate)
             self.source.start()
-            publish_service_event(model_handle._event_sink, event_name="microphone_session_started",
-                source_id=self.source_id, attributes={"state": "running"})
         except Exception:
             self._active = False
             try:
@@ -111,8 +109,6 @@ class TranscriptionSession:
             self._active = False
             self._fatal_error = True
             self.result_queue.put(_event("error", self.source_id, code=code, message=str(message), sequence=None, fatal=True))
-            publish_service_event(self.model_handle._event_sink, event_name="microphone_session_error",
-                severity="error", source_id=self.source_id, attributes={"code": code, "state": "failed"})
         try:
             self.source.stop()
         except Exception:
@@ -170,8 +166,6 @@ class TranscriptionSession:
             self._terminal = True
             self.result_queue.put(_event("completed", self.source_id, status=status,
                                          last_sequence=self._last_sequence if self._last_sequence >= 0 else None))
-            publish_service_event(self.model_handle._event_sink, event_name="microphone_session_completed",
-                source_id=self.source_id, attributes={"status": status, "state": status})
             self._condition.notify_all()
         self.model_handle._sessions.discard(self)
 
@@ -268,26 +262,22 @@ def model_worker(handle):
             if session._active:
                 inference_started = time.perf_counter()
                 inference_error = None
+                transcript = None
                 try:
                     transcript = handle._transcribe(audio, session.settings)
                     transcript = str(transcript).strip()
-                    session._complete_work(sequence, transcript=transcript if transcript else None)
                 except Exception as exc:
                     inference_error = exc
-                    session._complete_work(sequence, error=exc)
                 finally:
                     elapsed = max(0.0, time.perf_counter() - inference_started)
                     measurement_sink = getattr(handle, "_measurement_sink", None)
-                    publish_inference_measurement(measurement_sink,
+                    record = publish_inference_measurement(measurement_sink,
                         operation=getattr(handle, "_measurement_operation", "microphone-session"),
                         source_id=session.source_id, sequence=sequence,
                         audio_seconds=len(audio) / TARGET_RATE, inference_seconds=elapsed,
-                        status="failed" if inference_error else "completed")
-                    if inference_error is not None:
-                        publish_service_event(getattr(handle, "_event_sink", None),
-                            event_name="inference_chunk_failed", severity="error", source_id=session.source_id,
-                            attributes={"code": "CHUNK_INFERENCE_FAILED",
-                                        "operation": getattr(handle, "_measurement_operation", "microphone-session")})
+                        status="failed" if inference_error else "completed", error=inference_error)
+                    if session._active:
+                        session.result_queue.put(record)
                     sink = getattr(handle, "_telemetry_sink", None)
                     if sink is not None:
                         duration = len(audio) / TARGET_RATE
@@ -295,6 +285,8 @@ def model_worker(handle):
                             "queue_wait_seconds": max(0, inference_started - queued_at),
                             "inference_seconds": elapsed, "chunk_duration_seconds": duration,
                             "rtf": elapsed / max(duration, 1e-9), "pid": os.getpid()})
+                session._complete_work(sequence, transcript=transcript if transcript else None,
+                                       error=inference_error)
             else:
                 session._complete_work(sequence)
         finally:

@@ -13,37 +13,6 @@ from speech_to_text.control_center.registry import FeatureContribution, FeatureR
 from tests.feature_01.support import ManualAudioSource, RuntimeFactory, ScriptedRuntime, wav_bytes
 
 
-class CollectingTelemetryWriter:
-    def __init__(self, *, fail=False):
-        self.records = []
-        self.fail = fail
-        self.dropped_count = 0
-        self.write_failures = 0
-        self.last_error = None
-        self.queue_depth = 0
-
-    def start(self):
-        pass
-
-    def close(self):
-        pass
-
-    def publish_event(self, record):
-        if self.fail and record.get("feature_id") == "feature-01-model-deployment":
-            raise OSError("injected writer failure")
-        self.records.append(dict(record))
-        return True
-
-    def publish_measurement(self, record):
-        if self.fail:
-            raise OSError("injected writer failure")
-        self.records.append(dict(record))
-        return True
-
-    def publish_sample(self, _kind, _record):
-        return True
-
-
 def app_with(runtime_factory=None, audio_source_factory=None):
     return create_app(feature_options={"runtime_factory": runtime_factory,
                                        "audio_source_factory": audio_source_factory})
@@ -162,6 +131,12 @@ def test_catalog_model_lifecycle_and_wav_clip_use_feature_public_api():
             files={"file": ("input.wav", audio, "audio/wav")})
         assert result.status_code == 200, result.text
         assert result.json()["transcript"] == "recognized speech"
+        measurement, = result.json()["measurements"]
+        assert measurement["type"] == "measurement"
+        assert measurement["status"] == "completed"
+        assert measurement["rtf"] == pytest.approx(
+            measurement["inference_seconds"] / measurement["audio_seconds"])
+        assert measurement["source_id"] == result.json()["source_id"]
         assert result.json()["configuration"]["runtime"] == "ctranslate2"
         assert len(factory.configs) == 1
         closed = client.delete(f"/api/features/feature-01-model-deployment/models/{handle_id}")
@@ -169,150 +144,55 @@ def test_catalog_model_lifecycle_and_wav_clip_use_feature_public_api():
         assert runtime.closed
 
 
-def test_telemetry_events_persist_lifecycle_and_terminal_without_sse_reads():
-    writer = CollectingTelemetryWriter()
-    runtime = ScriptedRuntime(["private transcript"])
-    source = ManualAudioSource()
-    app = create_app(feature_options={"runtime_factory": RuntimeFactory(runtime),
-        "audio_source_factory": source}, telemetry_writer=writer)
-    with TestClient(app) as client:
+def test_control_center_does_not_read_database_configuration(monkeypatch):
+    monkeypatch.setenv("SPEECH_TO_TEXT_TELEMETRY_DATABASE_URL", "postgresql://invalid.invalid/unavailable")
+    monkeypatch.setenv("SPEECH_TO_TEXT_TELEMETRY_MIGRATION_DATABASE_URL", "postgresql://invalid.invalid/unavailable")
+    with TestClient(create_app()) as client:
+        assert client.get("/api/system").status_code == 200
+        assert not hasattr(client.app.state, "telemetry_writer")
+
+
+@pytest.mark.parametrize("origin", ["http://localhost:18767", "https://arbitrary.example"])
+def test_control_center_allows_wildcard_cors_for_api_get(origin):
+    with TestClient(create_app()) as client:
+        response = client.get("/api/system", headers={"Origin": origin})
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "*"
+
+
+def test_control_center_allows_audio_post_cors_preflight_without_credentials():
+    with TestClient(create_app()) as client:
+        response = client.options(
+            "/api/features/feature-01-model-deployment/sessions/source/audio",
+            headers={"Origin": "https://arbitrary.example",
+                     "Access-Control-Request-Method": "POST",
+                     "Access-Control-Request-Headers": "authorization,content-type"},
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "*"
+        assert "POST" in response.headers["access-control-allow-methods"]
+        allowed_headers = response.headers["access-control-allow-headers"].lower()
+        assert "authorization" in allowed_headers and "content-type" in allowed_headers
+        assert "access-control-allow-credentials" not in response.headers
+
+
+def test_clip_response_keeps_failed_chunk_measurement_and_later_transcript():
+    runtime = ScriptedRuntime([RuntimeError("injected inference failure"), "recovered"])
+    with TestClient(app_with(RuntimeFactory(runtime))) as client:
         prefix = "/api/features/feature-01-model-deployment"
         model = client.post(f"{prefix}/models", json={"model": "turbo", "runtime": "ctranslate2",
             "precision": "int8"}).json()
-        started = client.post(f"{prefix}/microphones", json={"handle_id": model["handle_id"],
-            "flow_config": {"source_id": "persisted-session", "language": "en", "chunk_seconds": .1}})
-        assert started.status_code == 200
-        source.push(np.full(1600, .4, dtype=np.float32))
-        stopped = client.post(f"{prefix}/sessions/persisted-session/stop")
-        assert stopped.status_code == 200
-        client.delete(f"{prefix}/models/{model['handle_id']}")
-
-    events = [record for record in writer.records if record.get("kind") == "event"]
-    names = [record["event_name"] for record in events]
-    assert names.count("model_loaded") == 1
-    assert names.count("model_closed") == 1
-    assert names.count("microphone_session_started") == 1
-    assert names.count("microphone_session_completed") == 1
-    assert any(record.get("source_id") == "persisted-session" for record in events)
-    assert "private transcript" not in repr(writer.records)
-    assert sum(record["event_name"] == "microphone_session_completed" for record in events) == 1
-
-
-def test_microphone_failure_persists_stable_error_code_without_exception_text():
-    writer = CollectingTelemetryWriter()
-    source = ManualAudioSource()
-    app = create_app(feature_options={"runtime_factory": RuntimeFactory(ScriptedRuntime([])),
-        "audio_source_factory": source}, telemetry_writer=writer)
-    with TestClient(app) as client:
-        prefix = "/api/features/feature-01-model-deployment"
-        model = client.post(f"{prefix}/models", json={"model": "turbo", "runtime": "ctranslate2",
-            "precision": "int8"}).json()
-        started = client.post(f"{prefix}/microphones", json={"handle_id": model["handle_id"],
-            "flow_config": {"source_id": "capture-error-source", "language": "en"}})
-        assert started.status_code == 200
-        source.on_error(RuntimeError("private device diagnostic"))
-        session = app.state.feature_state["feature-01-model-deployment"].sessions["capture-error-source"]
-        deadline = time.monotonic() + 2
-        while not session._terminal and time.monotonic() < deadline:
-            time.sleep(.01)
-        assert session._terminal
-
-    events = [record for record in writer.records if record.get("kind") == "event"]
-    errors = [record for record in events if record["event_name"] == "microphone_session_error"]
-    assert len(errors) == 1
-    assert errors[0]["source_id"] == "capture-error-source"
-    assert errors[0]["severity"] == "error"
-    assert errors[0]["attributes"]["code"] == "CAPTURE_FAILED"
-    assert "private device diagnostic" not in repr(writer.records)
-    assert sum(record["event_name"] == "microphone_session_completed" for record in events) == 1
-
-
-def test_disabled_or_failing_telemetry_never_changes_transcription_or_shutdown():
-    runtime = ScriptedRuntime(["still transcribes"])
-    source = ManualAudioSource()
-    writer = CollectingTelemetryWriter(fail=True)
-    app = create_app(feature_options={"runtime_factory": RuntimeFactory(runtime),
-        "audio_source_factory": source}, telemetry_writer=writer)
-    with TestClient(app) as client:
-        prefix = "/api/features/feature-01-model-deployment"
-        loaded = client.post(f"{prefix}/models", json={"model": "turbo", "runtime": "ctranslate2",
-            "precision": "int8"})
-        assert loaded.status_code == 200, loaded.text
-        session = client.post(f"{prefix}/microphones", json={"handle_id": loaded.json()["handle_id"],
-            "flow_config": {"source_id": "writer-failure-session", "language": "en", "chunk_seconds": .1}})
-        assert session.status_code == 200, session.text
-        source.push(np.full(1600, .4, dtype=np.float32))
-        assert client.post(f"{prefix}/sessions/writer-failure-session/stop").status_code == 200
-    assert runtime.closed
-    assert len(runtime.audio) == 1
-
-
-def test_failing_telemetry_does_not_change_finite_clip_result():
-    runtime = ScriptedRuntime([RuntimeError("decode failed")])
-    writer = CollectingTelemetryWriter(fail=True)
-    app = create_app(feature_options={"runtime_factory": RuntimeFactory(runtime)}, telemetry_writer=writer)
-    with TestClient(app) as client:
-        prefix = "/api/features/feature-01-model-deployment"
-        model = client.post(f"{prefix}/models", json={"model": "turbo", "runtime": "ctranslate2",
-            "precision": "int8"}).json()
-        with pytest.warns(ChunkInferenceWarning, match="decode failed"):
-            response = client.post(f"{prefix}/clips", data={"handle_id": model["handle_id"], "language": "en",
-                "chunk_seconds": ".1", "silence_threshold": "0"},
-                files={"file": ("input.wav", wav_bytes(np.full(1600, 10000, dtype=np.int16)), "audio/wav")})
+        with pytest.warns(ChunkInferenceWarning):
+            response = client.post(f"{prefix}/clips", data={"handle_id": model["handle_id"],
+                "language": "en", "chunk_seconds": "0.1", "silence_threshold": "0"},
+                files={"file": ("input.wav", wav_bytes(np.full(3200, 10000, dtype=np.int16)), "audio/wav")})
         assert response.status_code == 200, response.text
-        assert response.json()["transcript"] == ""
-
-
-@pytest.mark.parametrize("topology", ["shared-model", "per-input-model"])
-def test_process_group_terminal_events_persist_once_without_result_consumer(topology):
-    writer = CollectingTelemetryWriter()
-    app = create_app(feature_options={"runtime_factory": ProcessBoundaryRuntimeFactory(),
-        "process_audio_source_factory": ProcessBoundaryAudioSource}, telemetry_writer=writer)
-    with TestClient(app) as client:
-        prefix = "/api/features/feature-01-model-deployment"
-        started = client.post(f"{prefix}/process-groups", json={"devices": ["event-source"],
-            "topology": topology, "model_config": {"model": "turbo", "runtime": "ctranslate2",
-            "precision": "int8"}, "flow_config": {"source_id": "group-event-source", "language": "en",
-            "chunk_seconds": .1, "silence_threshold": 0}})
-        assert started.status_code == 200, started.text
-        group_id = started.json()["group_id"]
-        assert client.post(f"{prefix}/process-groups/{group_id}/stop").status_code == 200
-        assert client.post(f"{prefix}/process-groups/{group_id}/stop").status_code == 200
-
-    events = [record for record in writer.records if record.get("kind") == "event"]
-    completed = [record for record in events if record["event_name"] == "microphone_session_completed"]
-    assert len(completed) == 1
-    assert completed[0]["source_id"] == "group-event-source"
-    assert completed[0]["attributes"]["topology"] == topology
-    assert completed[0]["pid"] != __import__("os").getpid()
-    assert sum(record["event_name"] == "process_group_started" for record in events) == 1
-    assert sum(record["event_name"] == "process_group_stopped" for record in events) == 1
-    measurements = [record for record in writer.records if record.get("feature_id") == "feature-01-model-deployment"
-                    and "inference_seconds" in record]
-    assert measurements
-    assert all(record["source_id"] == "group-event-source" for record in measurements)
-    assert all(record["pid"] != __import__("os").getpid() for record in measurements)
-    assert all(record["rtf"] is not None for record in measurements)
-
-
-def test_shutdown_persists_model_and_group_closure_without_explicit_stop_calls():
-    writer = CollectingTelemetryWriter()
-    app = create_app(feature_options={"runtime_factory": ProcessBoundaryRuntimeFactory(),
-        "process_audio_source_factory": ProcessBoundaryAudioSource}, telemetry_writer=writer)
-    with TestClient(app) as client:
-        prefix = "/api/features/feature-01-model-deployment"
-        model = client.post(f"{prefix}/models", json={"model": "turbo", "runtime": "ctranslate2",
-            "precision": "int8"}).json()
-        group = client.post(f"{prefix}/process-groups", json={"devices": ["shutdown-source"],
-            "topology": "shared-model", "model_config": {"model": "turbo", "runtime": "ctranslate2",
-            "precision": "int8"}, "flow_config": {"source_id": "shutdown-group-source", "language": "en",
-            "chunk_seconds": .1, "silence_threshold": 0}}).json()
-
-    events = [record for record in writer.records if record.get("kind") == "event"]
-    assert sum(record["event_name"] == "model_closed" and record["source_id"] == model["handle_id"]
-               for record in events) == 1
-    assert sum(record["event_name"] == "process_group_stopped" and record["source_id"] == group["group_id"]
-               for record in events) == 1
+        result = response.json()
+        assert result["transcript"] == "recovered"
+        measurements = result["measurements"]
+        assert [record["sequence"] for record in measurements] == [0, 1]
+        assert [record["status"] for record in measurements] == ["failed", "completed"]
+        assert all(record["rtf"] >= 0 for record in measurements)
 
 
 def test_microphone_api_streams_ordered_feature_events_and_stops_cleanly():
@@ -332,10 +212,70 @@ def test_microphone_api_streams_ordered_feature_events_and_stops_cleanly():
         response = client.get(f"{prefix}/events/api-test-source")
         events = [__import__("json").loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
         assert [event["event_sequence"] for event in events] == list(range(len(events)))
-        assert [event["type"] for event in events] == ["transcript", "transcript", "completed"]
-        assert [event["text"] for event in events[:2]] == ["first chunk", "tail"]
+        assert [event["text"] for event in events if event["type"] == "transcript"] == ["first chunk", "tail"]
+        measurements = [event for event in events if event["type"] == "measurement"]
+        assert [event["sequence"] for event in measurements] == [0, 1]
+        assert all(event["source_id"] == "api-test-source" and event["rtf"] >= 0 for event in measurements)
+        completed_index = next(i for i, event in enumerate(events) if event["type"] == "completed")
+        assert max(i for i, event in enumerate(events) if event["type"] == "measurement") < completed_index
         assert events[-1]["status"] == "stopped"
         assert source.stopped
+
+
+def test_host_bridge_audio_requires_session_token_and_uses_feature_session_pipeline(monkeypatch):
+    monkeypatch.setenv("SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE", "1")
+    runtime = ScriptedRuntime(["remote-one", "remote-two", "remote-three"])
+    prefix = "/api/features/feature-01-model-deployment"
+    with TestClient(app_with(RuntimeFactory(runtime))) as client:
+        assert client.get(f"{prefix}/capture-capabilities").json() == {
+            "host_bridge": True, "host_bridge_url": "http://127.0.0.1:18767/api"}
+        model = client.post(f"{prefix}/models", json={"model": "turbo", "runtime": "ctranslate2",
+                                                        "precision": "int8"}).json()
+        started = client.post(f"{prefix}/microphones", json={"handle_id": model["handle_id"],
+            "capture_mode": "host-bridge", "sample_rate": 48000,
+            "flow_config": {"source_id": "host-bridge-contract", "chunk_seconds": 0.1,
+                            "silence_threshold": 0}}).json()
+        duplicate = client.post(f"{prefix}/microphones", json={"handle_id": model["handle_id"],
+            "capture_mode": "host-bridge", "sample_rate": 48000,
+            "flow_config": {"source_id": "host-bridge-contract"}})
+        assert duplicate.status_code == 400
+        samples = np.full(14400, 0.2, dtype="<f4").tobytes()
+        audio_url = f"{prefix}/sessions/{started['source_id']}/audio"
+        assert client.post(audio_url, content=samples,
+                          headers={"Content-Type": "application/octet-stream", "Authorization": "Bearer wrong"}).status_code == 403
+        assert client.post(audio_url, content=samples,
+                          headers={"Content-Type": "application/octet-stream",
+                                   "Authorization": f"Bearer {started['ingest_token']}"}).status_code == 200
+        assert client.post(f"{prefix}/sessions/{started['source_id']}/stop").status_code == 200
+        response = client.get(f"{prefix}/events/{started['source_id']}")
+        events = [__import__("json").loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+        assert [event["text"] for event in events if event["type"] == "transcript"] == [
+            "remote-one", "remote-two", "remote-three"]
+        assert events[-1]["status"] == "stopped"
+
+
+def test_host_bridge_capture_failure_requires_token_and_fails_feature_session(monkeypatch):
+    monkeypatch.setenv("SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE", "1")
+    runtime = ScriptedRuntime([])
+    prefix = "/api/features/feature-01-model-deployment"
+    with TestClient(app_with(RuntimeFactory(runtime))) as client:
+        model = client.post(f"{prefix}/models", json={"model": "turbo", "runtime": "ctranslate2",
+                                                        "precision": "int8"}).json()
+        started = client.post(f"{prefix}/microphones", json={"handle_id": model["handle_id"],
+            "capture_mode": "host-bridge", "sample_rate": 48000,
+            "flow_config": {"source_id": "host-bridge-failure"}}).json()
+        error_url = f"{prefix}/sessions/{started['source_id']}/capture-error"
+        payload = {"message": "Mac microphone callback overflowed"}
+        assert client.post(error_url, json=payload,
+                          headers={"Authorization": "Bearer wrong"}).status_code == 403
+        assert client.post(error_url, json=payload,
+                          headers={"Authorization": f"Bearer {started['ingest_token']}"}).status_code == 200
+        response = client.get(f"{prefix}/events/{started['source_id']}")
+        events = [__import__("json").loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+        assert events[0]["type"] == "error"
+        assert events[0]["code"] == "CAPTURE_FAILED"
+        assert events[-1]["type"] == "completed"
+        assert events[-1]["status"] == "failed"
 
 
 def test_model_load_error_remains_actionable_and_never_claims_ready():

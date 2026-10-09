@@ -3,11 +3,16 @@
 import asyncio
 import json
 import queue
+import secrets
+import hmac
+import os
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -15,64 +20,27 @@ from fastapi.responses import StreamingResponse
 from ..model_deployment import (list_available_models, load_model, start_microphone_flow,
                                 start_multiprocess_microphone_flows, transcribe_clip)
 from ..model_deployment.capacity import run_benchmark
-from ..model_deployment.telemetry import publish_service_event
-from ..system_observability.sampler import ProcessDescriptor
-from ..system_observability.writer import make_event
-
-
-def observation_processes(state):
-    """Return child process IDs explicitly owned by Feature 01 process groups."""
-    descriptors = []
-    for group_id, group in tuple(state.groups.items()):
-        model_process = getattr(group, "_model_process", None)
-        if model_process is not None and model_process.pid:
-            descriptors.append(ProcessDescriptor("feature-01-model-deployment", "model-worker",
-                                                 f"process-group:{group_id}", model_process.pid))
-        for session in tuple(getattr(group, "sessions", ())):
-            process = getattr(session, "process", None)
-            if process is not None and process.pid:
-                role = "capture-worker" if model_process is not None else "capture-model-worker"
-                descriptors.append(ProcessDescriptor("feature-01-model-deployment", role,
-                                                     f"source:{session.source_id}", process.pid))
-    return descriptors
-
-
-def persisted_measurements(state):
-    """Drain records from explicitly owned Feature 01 process groups."""
-    records = []
-    for group in tuple(state.groups.values()):
-        dropped_counter = getattr(group, "measurement_drop_counter", None)
-        if dropped_counter is not None and state.measurement_writer is not None:
-            dropped_now = int(dropped_counter.value)
-            dropped_before = getattr(group, "_reported_measurement_drops", 0)
-            if dropped_now > dropped_before:
-                state.measurement_writer.publish_event(make_event(event_name="feature_measurement_queue_saturated",
-                    severity="warning", feature_id="feature-01-model-deployment",
-                    attributes={"dropped_count": dropped_now - dropped_before,
-                                "role": getattr(group, "topology", "process-group")}))
-                group._reported_measurement_drops = dropped_now
-        source = getattr(group, "measurement_queue", None)
-        if source is None:
-            continue
-        while True:
-            try:
-                records.append(source.get_nowait())
-            except (queue.Empty, OSError, ValueError):
-                break
-    return records
+from ..model_deployment.remote_audio import RemoteAudioSource
+from ..model_deployment.errors import AudioInputError
 
 
 class FeatureState:
     def __init__(self, *, runtime_factory=None, audio_source_factory=None, process_audio_source_factory=None,
-                 measurement_writer=None):
+                 ):
         self.runtime_factory = runtime_factory
         self.audio_source_factory = audio_source_factory
         self.process_audio_source_factory = process_audio_source_factory
-        self.measurement_writer = measurement_writer
         self.models = {}
         self.sessions = {}
+        self.session_start_lock = threading.Lock()
         self.groups = {}
         self.recent_errors = []
+        self.host_bridge_enabled = os.environ.get("SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE", "").lower() in {"1", "true", "yes"}
+        self.host_bridge_url = os.environ.get("SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE_URL", "http://127.0.0.1:18767/api").rstrip("/")
+        bridge_url = urlsplit(self.host_bridge_url)
+        if (bridge_url.scheme != "http" or bridge_url.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or bridge_url.username or bridge_url.password or bridge_url.path != "/api"):
+            raise ValueError("SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE_URL must use local HTTP at /api")
 
     def close_all(self):
         for session in list(self.sessions.values()):
@@ -92,40 +60,17 @@ class FeatureState:
         for handle_id, handle in list(self.models.items()):
             try:
                 handle.close(timeout=5)
-                self.publish_event("model_closed", source_id=handle_id,
-                                   attributes={"state": "closed", "operation": "service_shutdown"})
             except Exception as exc:
                 self.record_error(str(exc))
 
     def record_error(self, message):
         self.recent_errors.append({"at": time.time(), "message": message})
         self.recent_errors[:] = self.recent_errors[-20:]
-        publish_service_event(self.measurement_writer, event_name="feature_operation_failed", severity="error",
-                              attributes={"code": "operation_failed"})
-
-    def publish_event(self, event_name, *, severity="info", source_id=None, attributes=None, pid=None):
-        return publish_service_event(self.measurement_writer, event_name=event_name, severity=severity,
-                                     source_id=source_id, attributes=attributes, pid=pid)
 
     def stop_process_group(self, group_id, *, timeout=30):
         group = self.groups[group_id]
         group.stop(timeout=timeout)
-        if not getattr(group, "_telemetry_stopped", False):
-            self.publish_event("process_group_stopped", source_id=group_id,
-                attributes={"state": "stopped", "topology": getattr(group, "topology", "process-group")})
-            group._telemetry_stopped = True
         return group
-
-    def publish_measurement(self, record):
-        if self.measurement_writer is None:
-            return False
-        published = self.measurement_writer.publish_measurement(record)
-        if record.get("status") == "failed" and record.get("operation") == "finite-clip":
-            self.measurement_writer.publish_event(make_event(event_name="inference_chunk_failed", severity="error",
-                feature_id=record.get("feature_id", "feature-01-model-deployment"),
-                pid=record.get("pid"), source_id=record.get("source_id"),
-                attributes={"operation": record.get("operation", "inference")}))
-        return published
 
     def session_summaries(self, feature_id):
         rows = []
@@ -143,10 +88,9 @@ def _http_error(exc):
 
 
 def create_router(*, state=None, runtime_factory=None, audio_source_factory=None,
-                  process_audio_source_factory=None, measurement_writer=None):
+                  process_audio_source_factory=None):
     state = state or FeatureState(runtime_factory=runtime_factory, audio_source_factory=audio_source_factory,
-                                  process_audio_source_factory=process_audio_source_factory,
-                                  measurement_writer=measurement_writer)
+                                  process_audio_source_factory=process_audio_source_factory)
     router = APIRouter()
     router.state = state
 
@@ -181,26 +125,19 @@ def create_router(*, state=None, runtime_factory=None, audio_source_factory=None
                         device["default"] = device["name"] == default_name
             except Exception:
                 pass
-            return {"devices": result, "default": "OS selected input"}
+            return {"devices": result, "default": "OS selected input", "capture_mode": "native"}
         except Exception as exc:
-            return {"devices": [], "default": "OS selected input", "unavailable_reason": str(exc)}
+            return {"devices": [], "default": "OS selected input", "capture_mode": "native", "unavailable_reason": str(exc)}
 
     @router.post("/models")
     def load(payload: dict):
         try:
             handle = load_model(payload, runtime_factory=state.runtime_factory)
-            if state.measurement_writer is not None:
-                handle._measurement_sink = state.publish_measurement
-            handle._event_sink = state.measurement_writer
             handle_id = uuid.uuid4().hex
             state.models[handle_id] = handle
-            state.publish_event("model_loaded", source_id=handle_id,
-                                attributes={"state": "ready", "operation": "load_model"})
             return {"handle_id": handle_id, "model": handle.model, "runtime": handle.runtime,
                     "precision": handle.precision, "state": handle.state}
         except Exception as exc:
-            state.publish_event("model_load_failed", severity="error",
-                                attributes={"code": type(exc).__name__, "operation": "load_model"})
             state.record_error(str(exc))
             raise _http_error(exc)
 
@@ -212,8 +149,6 @@ def create_router(*, state=None, runtime_factory=None, audio_source_factory=None
         try:
             handle.close()
             del state.models[handle_id]
-            state.publish_event("model_closed", source_id=handle_id,
-                                attributes={"state": "closed", "operation": "close_model"})
             return {"handle_id": handle_id, "state": "closed"}
         except Exception as exc:
             state.record_error(str(exc))
@@ -232,12 +167,14 @@ def create_router(*, state=None, runtime_factory=None, audio_source_factory=None
                 temp.flush()
                 started = time.perf_counter()
                 source_id = uuid.uuid4().hex
+                measurements = []
                 transcript = transcribe_clip(Path(temp.name), handle, _flow_form(form),
-                    measurement_sink=state.publish_measurement if state.measurement_writer else None,
+                    measurement_sink=measurements.append,
                     source_id=source_id)
                 elapsed = time.perf_counter() - started
             result = {"transcript": transcript, "elapsed_seconds": elapsed,
                       "source_id": source_id,
+                      "measurements": measurements,
                       "configuration": {"model": handle.model, "runtime": handle.runtime,
                                          "precision": handle.precision, "language": form.get("language", "th"),
                                          "chunk_seconds": float(form.get("chunk_seconds", 5)),
@@ -255,13 +192,74 @@ def create_router(*, state=None, runtime_factory=None, audio_source_factory=None
         if handle is None:
             raise HTTPException(400, detail="Load a model before starting a microphone")
         try:
-            session = start_microphone_flow(payload.get("device") or None, handle, payload.get("flow_config", {}),
-                                            audio_source_factory=state.audio_source_factory)
-            state.sessions[session.source_id] = session
-            return {"session_id": session.source_id, "source_id": session.source_id, "state": "running"}
+            bridge = payload.get("capture_mode") == "host-bridge"
+            if bridge and not state.host_bridge_enabled:
+                raise ValueError("Host microphone bridge capture is disabled")
+            sample_rate = payload.get("sample_rate")
+            if bridge and (isinstance(sample_rate, bool) or not isinstance(sample_rate, int)):
+                raise ValueError("Host bridge capture requires an integer sample_rate")
+            source_factory = (lambda **kwargs: RemoteAudioSource(sample_rate=sample_rate, **kwargs)) if bridge else state.audio_source_factory
+            flow = payload.get("flow_config", {})
+            requested_source_id = flow.get("source_id") if isinstance(flow, dict) else None
+            with state.session_start_lock:
+                existing = state.sessions.get(requested_source_id) if requested_source_id else None
+                if existing is not None and not existing._terminal:
+                    raise ValueError(f"Microphone source_id {requested_source_id!r} is already active")
+                session = start_microphone_flow(payload.get("device") or None, handle, flow,
+                                                audio_source_factory=source_factory)
+                state.sessions[session.source_id] = session
+            if bridge:
+                session.source.ingest_token = secrets.token_urlsafe(32)
+            return {"session_id": session.source_id, "source_id": session.source_id, "state": "running",
+                    **({"ingest_token": session.source.ingest_token} if bridge else {})}
         except Exception as exc:
             state.record_error(str(exc))
             raise _http_error(exc)
+
+    @router.get("/capture-capabilities")
+    def capture_capabilities():
+        return {"host_bridge": state.host_bridge_enabled, "host_bridge_url": state.host_bridge_url}
+
+    @router.post("/sessions/{source_id}/audio")
+    async def push_session_audio(source_id: str, request: Request):
+        session = state.sessions.get(source_id)
+        if session is None or not isinstance(getattr(session, "source", None), RemoteAudioSource):
+            raise HTTPException(404, detail="Remote microphone session was not found")
+        expected = session.source.ingest_token
+        supplied = request.headers.get("authorization", "")
+        if not supplied.startswith("Bearer ") or not hmac.compare_digest(supplied[7:], expected):
+            raise HTTPException(403, detail="Audio ingest token is invalid")
+        length = request.headers.get("content-length")
+        if length is None or not length.isdigit() or not 0 < int(length) <= session.source.sample_rate * 4:
+            raise HTTPException(413, detail="Audio batch size must be between 1 sample and one second")
+        try:
+            session.source.feed(await request.body())
+            return {"accepted": True}
+        except Exception as exc:
+            session.source._on_error(exc)
+            state.record_error(str(exc))
+            raise _http_error(exc)
+
+    @router.post("/sessions/{source_id}/capture-error")
+    async def fail_remote_session(source_id: str, request: Request):
+        session = state.sessions.get(source_id)
+        if session is None or not isinstance(getattr(session, "source", None), RemoteAudioSource):
+            raise HTTPException(404, detail="Remote microphone session was not found")
+        supplied = request.headers.get("authorization", "")
+        if not supplied.startswith("Bearer ") or not hmac.compare_digest(supplied[7:], session.source.ingest_token):
+            raise HTTPException(403, detail="Audio ingest token is invalid")
+        length = request.headers.get("content-length")
+        if length is None or not length.isdigit() or not 0 < int(length) <= 1024:
+            raise HTTPException(413, detail="Capture failure body must not exceed 1 KiB")
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise HTTPException(400, detail="Capture failure must be a JSON object") from exc
+        message = payload.get("message") if isinstance(payload, dict) else None
+        if not isinstance(message, str) or not message.strip() or len(message) > 500:
+            raise HTTPException(400, detail="Capture failure message must contain 1 to 500 characters")
+        session.source._on_error(AudioInputError(message))
+        return {"accepted": True}
 
     @router.post("/process-groups")
     def start_process_group(payload: dict):
@@ -271,14 +269,9 @@ def create_router(*, state=None, runtime_factory=None, audio_source_factory=None
                 topology=payload.get("topology", "shared-model"),
                 runtime_factory=state.runtime_factory,
                 audio_source_factory=state.process_audio_source_factory,
-                flow_configs=payload.get("flow_configs"), event_sink=state.measurement_writer)
+                flow_configs=payload.get("flow_configs"))
             group_id = uuid.uuid4().hex
             state.groups[group_id] = group
-            state.publish_event("process_group_started", source_id=group_id,
-                                attributes={"state": "running", "topology": group.topology})
-            for session in group.sessions:
-                state.publish_event("microphone_session_started", source_id=session.source_id,
-                    attributes={"state": "running", "topology": group.topology})
             return {"group_id": group_id, "topology": payload.get("topology", "shared-model"),
                     "sessions": [{"source_id": session.source_id, "state": "running"} for session in group.sessions]}
         except Exception as exc:
@@ -338,8 +331,6 @@ def create_router(*, state=None, runtime_factory=None, audio_source_factory=None
         if session is None:
             raise HTTPException(404, detail="Session was not found")
         try:
-            state.publish_event("microphone_session_stop_requested", source_id=source_id,
-                                attributes={"state": "stopping"})
             session.stop()
             return {"source_id": source_id, "state": "stopped"}
         except Exception as exc:
@@ -352,9 +343,6 @@ def create_router(*, state=None, runtime_factory=None, audio_source_factory=None
         if group is None:
             raise HTTPException(404, detail="Process group was not found")
         try:
-            state.publish_event("process_group_stop_requested",
-                                source_id=group_id,
-                                attributes={"state": "stopping", "topology": group.topology})
             state.stop_process_group(group_id)
             return {"group_id": group_id, "state": "stopped"}
         except Exception as exc:
