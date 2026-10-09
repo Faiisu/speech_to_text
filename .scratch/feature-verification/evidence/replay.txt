@@ -1,0 +1,62 @@
+{
+  "outcome": "FAIL",
+  "source": "replay",
+  "input": "audio/test_clip.wav",
+  "sample_rate": 16000,
+  "channels": 1,
+  "samples_delivered": 80000,
+  "model": "turbo",
+  "runtime": "ctranslate2",
+  "runtime_description": "CTranslate2 int8 on CPU",
+  "machine": "macOS-27.0.1-arm64-arm-64bit",
+  "language": "th",
+  "clip_identity": {
+    "path": "/Volumes/Mac_storage/projects.nosync/speech_to_text/audio/test_clip.wav",
+    "sha256": "6ee9440a83ce94a6768dce80b0591e2252cee7f646f4774cf9e0dc06730760ae",
+    "duration_seconds": 6.0
+  },
+  "chunk_seconds": 5.0,
+  "overlap_seconds": 1.0,
+  "keywords": [
+    "สวัสดี"
+  ],
+  "transcript": "เกม สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน",
+  "detection_timeline": [],
+  "local_collector_reports": [],
+  "health": {
+    "station_id": "proof-station",
+    "label": "Real pipeline proof",
+    "session_id": "686d515f-7d1c-4468-972c-643a7bc2c3a3",
+    "chunks_done": 1,
+    "chunks_dropped": 0,
+    "chunks_silent": 0,
+    "keywords_found": 0,
+    "last_chunk_at": 1791522414.3125381,
+    "last_error": null,
+    "mean_rtf": 1.791,
+    "mean_latency": 8.956,
+    "demand": 2.239
+  },
+  "capture_exited": true,
+  "worker_threads_exited": true,
+  "queue_drained": true,
+  "errors": [],
+  "counts": {
+    "processed": 1,
+    "silent": 0,
+    "dropped": 0,
+    "submitted": 1
+  },
+  "checks": {
+    "runtime_loaded_and_inferred": "PASS",
+    "transcript_nonempty": "PASS",
+    "declared_targets_in_transcript": "FAIL",
+    "keyword_detection_events": "FAIL",
+    "backend_reporting": "SKIP",
+    "station_identity_on_chunks": "PASS",
+    "capture_stopped": "PASS",
+    "queue_drained": "PASS",
+    "worker_threads_stopped": "PASS",
+    "runtime_errors": "PASS"
+  }
+}

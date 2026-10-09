@@ -1,0 +1,197 @@
+{
+  "outcome": "PASS",
+  "database": "stt_feature_test",
+  "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809",
+  "input_sequence": [
+    {
+      "word": "proof-a-37ebb874",
+      "detected_at": "2026-10-09T05:06:42+00:00",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-seed",
+      "station": "Proof Line A-72eb68"
+    },
+    {
+      "word": "proof-a-37ebb874",
+      "detected_at": "2026-10-09T05:06:52+00:00",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-seed",
+      "station": "Proof Line A-72eb68"
+    },
+    {
+      "word": "proof-a-37ebb874",
+      "detected_at": "2026-10-09T05:06:32+00:00",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-seed-range",
+      "station": "Proof Line A-72eb68"
+    },
+    {
+      "word": "proof-a-37ebb874",
+      "detected_at": "2026-10-09T05:06:47+00:00",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-seed-station",
+      "station": "Proof Line B-17b16e"
+    },
+    {
+      "word": "proof-a-37ebb874",
+      "detected_at": "2026-10-09T05:07:02+00:00",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-seed-range",
+      "station": "Proof Line A-72eb68"
+    },
+    {
+      "word": "proof-b-51dcfe99",
+      "detected_at": "2026-10-09T05:06:47+00:00",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-seed-word",
+      "station": "Proof Line A-72eb68"
+    },
+    {
+      "word": "proof-b-51dcfe99",
+      "detected_at": "2026-10-09T05:07:02+00:00",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-seed-other",
+      "station": "Proof Line B-17b16e"
+    }
+  ],
+  "controlled_transcript_sequence": [
+    {
+      "transcript": "proof-c-0897f9b2",
+      "at": 0.0,
+      "expected": "emit"
+    },
+    {
+      "transcript": "proof-c-0897f9b2",
+      "at": 4.0,
+      "expected": "debounce"
+    },
+    {
+      "transcript": "proof-c-0897f9b2",
+      "at": 4.5,
+      "expected": "emit-boundary"
+    },
+    {
+      "transcript": "proof-c-0897f9b2",
+      "at": 10.0,
+      "expected": "emit-after-window"
+    }
+  ],
+  "ingest_status": [
+    201,
+    201,
+    201,
+    201,
+    201,
+    201,
+    201
+  ],
+  "count_evidence": {
+    "empty_unique_word": 0,
+    "delta_word": 5,
+    "station_and_word": 4,
+    "from_inclusive": 3,
+    "to_inclusive": 2,
+    "combined": 2,
+    "spotting_count_delta": 3,
+    "spotting_local_events": 3,
+    "spotting_http_reports": 3,
+    "session_isolation_events": 2,
+    "other_session_events": 1
+  },
+  "events": [
+    {
+      "word": "proof-a-37ebb874",
+      "detected_at": "2026-10-09T05:06:52Z",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-seed",
+      "station": "Proof Line A-72eb68"
+    },
+    {
+      "word": "proof-a-37ebb874",
+      "detected_at": "2026-10-09T05:06:42Z",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-seed",
+      "station": "Proof Line A-72eb68"
+    }
+  ],
+  "spotting_events": [
+    {
+      "word": "proof-c-0897f9b2",
+      "detected_at": "2026-10-09T05:06:45.102620Z",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-spot",
+      "station": "Proof Line C-67a336"
+    },
+    {
+      "word": "proof-c-0897f9b2",
+      "detected_at": "2026-10-09T05:06:45.090240Z",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-spot",
+      "station": "Proof Line C-67a336"
+    },
+    {
+      "word": "proof-c-0897f9b2",
+      "detected_at": "2026-10-09T05:06:45.076976Z",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-spot",
+      "station": "Proof Line C-67a336"
+    }
+  ],
+  "spotting_local_events": [
+    {
+      "type": "keyword",
+      "keyword": "proof-c-0897f9b2",
+      "time": 0.0,
+      "station": "Proof Line C-67a336"
+    },
+    {
+      "type": "keyword",
+      "keyword": "proof-c-0897f9b2",
+      "time": 4.5,
+      "station": "Proof Line C-67a336"
+    },
+    {
+      "type": "keyword",
+      "keyword": "proof-c-0897f9b2",
+      "time": 10.0,
+      "station": "Proof Line C-67a336"
+    }
+  ],
+  "spotting_http_reports": [
+    {
+      "word": "proof-c-0897f9b2",
+      "detected_at": "2026-10-09T05:06:45.076976+00:00",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-spot",
+      "station": "Proof Line C-67a336"
+    },
+    {
+      "word": "proof-c-0897f9b2",
+      "detected_at": "2026-10-09T05:06:45.090240+00:00",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-spot",
+      "station": "Proof Line C-67a336"
+    },
+    {
+      "word": "proof-c-0897f9b2",
+      "detected_at": "2026-10-09T05:06:45.102620+00:00",
+      "model": "turbo",
+      "session_id": "proof-dd4f62d9-1da7-4a26-b177-89a152117809-spot",
+      "station": "Proof Line C-67a336"
+    }
+  ],
+  "checks": {
+    "empty_word_count": "PASS",
+    "word_filter": "PASS",
+    "station_filter": "PASS",
+    "inclusive_from_and_to": "PASS",
+    "combined_filters": "PASS",
+    "spotting_count_delta": "PASS",
+    "debounce_suppresses_repeat": "PASS",
+    "session_filter": "PASS",
+    "seeded_metadata": "PASS",
+    "spotting_metadata": "PASS",
+    "ingest_http_status": "PASS",
+    "isolated_cleanup": "PASS"
+  },
+  "cleanup": "PASS"
+}

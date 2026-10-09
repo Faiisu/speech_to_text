@@ -1,0 +1,156 @@
+{
+  "outcome": "PASS",
+  "device": "MacBook Air Microphone",
+  "device_index": 0,
+  "station": "hardware-proof",
+  "duration": 1.0,
+  "health": {
+    "id": "hardware-proof",
+    "label": "Hardware proof",
+    "device": "MacBook Air Microphone",
+    "enabled": true,
+    "keywords": [],
+    "language": "th",
+    "running": true,
+    "buffered_seconds": 0.2,
+    "stream_errors": 0,
+    "station_id": "hardware-proof",
+    "session_id": "6bf2ba6d-edce-44a9-9eb5-a950a4893726",
+    "chunks_done": 3,
+    "chunks_dropped": 0,
+    "chunks_silent": 0,
+    "keywords_found": 0,
+    "last_chunk_at": 1791522416.318958,
+    "last_error": null,
+    "mean_rtf": 0.0,
+    "mean_latency": 0.0,
+    "demand": 0.0
+  },
+  "samples_delivered": 14445,
+  "restart": {
+    "stopped_cleanly": true,
+    "stopped_health": {
+      "id": "hardware-proof",
+      "label": "Hardware proof",
+      "device": "MacBook Air Microphone",
+      "enabled": true,
+      "keywords": [],
+      "language": "th",
+      "running": false,
+      "buffered_seconds": 0.0,
+      "stream_errors": 0,
+      "station_id": "hardware-proof",
+      "session_id": "6bf2ba6d-edce-44a9-9eb5-a950a4893726",
+      "chunks_done": 3,
+      "chunks_dropped": 0,
+      "chunks_silent": 0,
+      "keywords_found": 0,
+      "last_chunk_at": 1791522416.318958,
+      "last_error": null,
+      "mean_rtf": 0.0,
+      "mean_latency": 0.0,
+      "demand": 0.0
+    },
+    "capture_thread_exited": true,
+    "worker_threads_exited": true,
+    "reopened_same_device": true,
+    "received_chunks_after_restart": 1,
+    "samples_after_restart": 5235,
+    "outcome": "PASS"
+  },
+  "restart_samples": 5235,
+  "reconnect": {
+    "outcome": "SKIP",
+    "reason": "manual unplug/replug was not requested"
+  },
+  "events": [
+    {
+      "type": "service",
+      "state": "loading",
+      "model": "turbo",
+      "runtime": "ctranslate2"
+    },
+    {
+      "type": "station",
+      "state": "started",
+      "station_id": "hardware-proof",
+      "label": "Hardware proof",
+      "device": "MacBook Air Microphone"
+    },
+    {
+      "type": "service",
+      "state": "running",
+      "stations": [
+        "hardware-proof"
+      ]
+    },
+    {
+      "type": "chunk",
+      "station_id": "hardware-proof",
+      "label": "Hardware proof",
+      "time": 0.0,
+      "text": "",
+      "silent": false,
+      "latency": 0.0,
+      "rtf": 0.0,
+      "queue_depth": 0
+    },
+    {
+      "type": "chunk",
+      "station_id": "hardware-proof",
+      "label": "Hardware proof",
+      "time": 0.2,
+      "text": "",
+      "silent": false,
+      "latency": 0.0,
+      "rtf": 0.0,
+      "queue_depth": 0
+    },
+    {
+      "type": "chunk",
+      "station_id": "hardware-proof",
+      "label": "Hardware proof",
+      "time": 0.5,
+      "text": "",
+      "silent": false,
+      "latency": 0.0,
+      "rtf": 0.0,
+      "queue_depth": 0
+    },
+    {
+      "type": "service",
+      "state": "stopped"
+    },
+    {
+      "type": "service",
+      "state": "loading",
+      "model": "turbo",
+      "runtime": "ctranslate2"
+    },
+    {
+      "type": "station",
+      "state": "started",
+      "station_id": "hardware-proof",
+      "label": "Hardware proof",
+      "device": "MacBook Air Microphone"
+    },
+    {
+      "type": "service",
+      "state": "running",
+      "stations": [
+        "hardware-proof"
+      ]
+    },
+    {
+      "type": "chunk",
+      "station_id": "hardware-proof",
+      "label": "Hardware proof",
+      "time": 0.0,
+      "text": "",
+      "silent": false,
+      "latency": 0.0,
+      "rtf": 0.0,
+      "queue_depth": 0
+    }
+  ]
+}

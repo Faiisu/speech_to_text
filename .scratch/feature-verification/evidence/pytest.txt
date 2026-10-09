@@ -1,0 +1,12 @@
+.......x.......x........................................................ [ 70%]
+..............................                                           [100%]
+=============================== warnings summary ===============================
+tests/test_stations.py::test_benchmark_rejects_bad_requests[overrides0-at least one clip]
+  /Volumes/Mac_storage/projects.nosync/speech_to_text/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+XFAIL tests/keyword_spotting/test_spotting.py::test_non_success_backend_response_is_reported_as_not_persisted - AUDIT: report_event ignores HTTP non-success responses
+XFAIL tests/microphone/test_capture.py::test_active_input_stream_disconnect_is_detected_and_watchdog_reopens_same_station - AUDIT: inactive PortAudio stream remains invisible to capture watchdog
+100 passed, 2 xfailed, 1 warning in 4.31s
