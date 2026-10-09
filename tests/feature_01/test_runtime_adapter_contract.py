@@ -108,6 +108,119 @@ def test_openvino_precision_selects_requested_quantization(tmp_path, monkeypatch
     assert observed == {"device": "GPU", "quantization_config": ("quant", {"bits": 8})}
 
 
+def test_openvino_generation_budget_includes_whisper_decoder_prompt():
+    observed = {}
+
+    class Tokenizer:
+        def get_decoder_prompt_ids(self, *, task, language, no_timestamps):
+            assert (task, language, no_timestamps) == ("transcribe", "th", True)
+            return [(1, 10), (2, 11), (3, 12)]
+
+    class Processor:
+        tokenizer = Tokenizer()
+
+        def __call__(self, audio, **kwargs):
+            return SimpleNamespace(input_features="features")
+
+        def batch_decode(self, ids, *, skip_special_tokens):
+            return [" transcript "]
+
+    class Model:
+        config = SimpleNamespace(max_target_positions=448)
+
+        def generate(self, features, **kwargs):
+            observed.update(features=features, kwargs=kwargs)
+            return "ids"
+
+    adapter = OpenVINOAdapter.__new__(OpenVINOAdapter)
+    adapter.processor = Processor()
+    adapter.model = Model()
+
+    transcript = adapter.transcribe(
+        [0.0], language="th", decoding_options={
+            "beam_size": 1,
+            "temperature": 0.0,
+            "condition_on_previous_text": False,
+            "no_repeat_ngram_size": 0,
+            "repetition_penalty": 1.0,
+        }
+    )
+
+    assert transcript == "transcript"
+    assert observed["kwargs"]["max_new_tokens"] == 444
+
+
+def test_openvino_auto_language_budget_reserves_whisper_prompt_without_forced_ids():
+    observed = {}
+
+    class Processor:
+        def __call__(self, audio, **kwargs):
+            return SimpleNamespace(input_features="features")
+
+        def batch_decode(self, ids, *, skip_special_tokens):
+            return ["transcript"]
+
+    class Model:
+        config = SimpleNamespace()
+
+        def generate(self, features, **kwargs):
+            observed.update(kwargs)
+            return "ids"
+
+    adapter = OpenVINOAdapter.__new__(OpenVINOAdapter)
+    adapter.processor = Processor()
+    adapter.model = Model()
+
+    transcript = adapter.transcribe(
+        [0.0], language="auto", decoding_options={
+            "beam_size": 1,
+            "temperature": 0.0,
+            "condition_on_previous_text": False,
+            "no_repeat_ngram_size": 0,
+            "repetition_penalty": 1.0,
+        }
+    )
+
+    assert transcript == "transcript"
+    assert observed["max_new_tokens"] == 444
+
+
+def test_openvino_auto_language_budget_includes_unforced_timestamp_token():
+    observed = {}
+
+    class Processor:
+        def __call__(self, audio, **kwargs):
+            return SimpleNamespace(input_features="features")
+
+        def batch_decode(self, ids, *, skip_special_tokens):
+            return ["transcript"]
+
+    class Model:
+        config = SimpleNamespace(max_target_positions=448)
+        generation_config = SimpleNamespace(forced_decoder_ids=[(1, None), (2, 50359)])
+
+        def generate(self, features, **kwargs):
+            observed.update(kwargs)
+            return "ids"
+
+    adapter = OpenVINOAdapter.__new__(OpenVINOAdapter)
+    adapter.processor = Processor()
+    adapter.model = Model()
+
+    transcript = adapter.transcribe(
+        [0.0], language="auto", decoding_options={
+            "beam_size": 1,
+            "temperature": 0.0,
+            "condition_on_previous_text": False,
+            "no_repeat_ngram_size": 0,
+            "repetition_penalty": 1.0,
+        }
+    )
+
+    assert transcript == "transcript"
+    assert observed["max_new_tokens"] == 444
+
+
 def test_capacity_tool_reports_missing_prerequisites_without_fake_measurements(monkeypatch):
     monkeypatch.setattr(capacity, "start_multiprocess_microphone_flows",
                         lambda *args, **kwargs: (_ for _ in ()).throw(ModelLoadError("OpenVINO GPU unavailable")))

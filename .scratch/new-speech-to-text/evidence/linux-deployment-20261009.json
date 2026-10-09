@@ -1,0 +1,133 @@
+{
+  "base_commit": "46d6015",
+  "runtime_patch": "Whisper decoder token budget",
+  "timestamp": 1791539581.0019178,
+  "real_gpu_clips": [
+    {
+      "language": "auto",
+      "file": "clip_20260903_131130.wav",
+      "source_id": "141736289ae346e78a6ef91772dd734b",
+      "measurements": [
+        {
+          "recorded_at": "2026-10-09 09:52:18.685030+00:00",
+          "pid": 3244043,
+          "source_id": "141736289ae346e78a6ef91772dd734b",
+          "sequence": 0,
+          "audio_seconds": 6.2521875,
+          "inference_seconds": 18.80338985612616,
+          "rtf": 3.0074897555657376,
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "language": "th",
+      "file": "clip_20260903_160233.wav",
+      "source_id": "bca80e9f3bf74536a320e20b79e63170",
+      "measurements": [
+        {
+          "recorded_at": "2026-10-09 09:52:24.769030+00:00",
+          "pid": 3244043,
+          "source_id": "bca80e9f3bf74536a320e20b79e63170",
+          "sequence": 0,
+          "audio_seconds": 21.129375,
+          "inference_seconds": 6.074285368900746,
+          "rtf": 0.28748059840391615,
+          "status": "completed"
+        }
+      ]
+    }
+  ],
+  "microphone": {
+    "source_id": "5e338f7e623f4213a22726b0f6e1cebd",
+    "events": [
+      {
+        "event_name": "microphone_session_started",
+        "pid": 3240668,
+        "recorded_at": "2026-10-09 09:50:11.101213+00:00"
+      },
+      {
+        "event_name": "microphone_session_stop_requested",
+        "pid": 3240668,
+        "recorded_at": "2026-10-09 09:50:17.105057+00:00"
+      },
+      {
+        "event_name": "microphone_session_completed",
+        "pid": 3240668,
+        "recorded_at": "2026-10-09 09:50:17.117367+00:00"
+      }
+    ],
+    "speech_quality": "unverified; capture was silent"
+  },
+  "database_counts": {
+    "host_samples": 147,
+    "process_samples": 146,
+    "writer_health": 146,
+    "service_events": 16,
+    "operation_measurements": 8
+  },
+  "grafana_panels_passed": 9,
+  "linux_tests": "103 passed, 7 skipped",
+  "five_second_chunk_run": {
+    "source_id": "314b3b49ce2e4e4b812964c7bea2aee5",
+    "rows": [
+      [
+        "2026-10-09 09:48:55.060833+00:00",
+        3240668,
+        "314b3b49ce2e4e4b812964c7bea2aee5",
+        0,
+        5.0,
+        3.5236947326920927,
+        0.7047389465384185,
+        "completed"
+      ],
+      [
+        "2026-10-09 09:48:58.540602+00:00",
+        3240668,
+        "314b3b49ce2e4e4b812964c7bea2aee5",
+        1,
+        5.0,
+        3.479570040013641,
+        0.6959140080027282,
+        "completed"
+      ],
+      [
+        "2026-10-09 09:49:00.999970+00:00",
+        3240668,
+        "314b3b49ce2e4e4b812964c7bea2aee5",
+        2,
+        5.0,
+        2.458920924924314,
+        0.4917841849848628,
+        "completed"
+      ],
+      [
+        "2026-10-09 09:49:02.717137+00:00",
+        3240668,
+        "314b3b49ce2e4e4b812964c7bea2aee5",
+        3,
+        5.0,
+        1.7161429999396205,
+        0.3432285999879241,
+        "completed"
+      ],
+      [
+        "2026-10-09 09:49:04.530638+00:00",
+        3240668,
+        "314b3b49ce2e4e4b812964c7bea2aee5",
+        4,
+        1.129375,
+        1.8132468359544873,
+        1.6055312327211841,
+        "completed"
+      ]
+    ],
+    "aggregate_rtf": 0.6148584865157704
+  },
+  "limitations": [
+    "No independently verified transcript reference; CER unmeasured",
+    "Microphone capture was silent; live speech recognition unverified",
+    "Three-microphone capacity, both real-model process topologies, disconnect/reconnect, and overload not exercised",
+    "Auto-language short clip and final partial five-second chunk exceeded RTF 1"
+  ]
+}

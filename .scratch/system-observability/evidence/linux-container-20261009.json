@@ -1,0 +1,214 @@
+{
+  "verified_at": "2026-10-09",
+  "target": "UBX-330M Linux",
+  "image": "speech-to-text:local",
+  "image_id": "sha256:2ad42dc44ec27f4664748baac48c2e61c85f79772beccb78f34197d8299b6fba",
+  "runtime_uid_gid": "1001:1001",
+  "openvino_devices": [
+    "CPU",
+    "GPU"
+  ],
+  "default_audio_device_index": 13,
+  "host_memory_total_bytes": 16235941888,
+  "stage": {
+    "port": 8767,
+    "chunk_seconds": 5,
+    "model": {
+      "handle_id": "b2f4f2bd2a3f49109badd8e608d37ca5",
+      "model": "turbo",
+      "runtime": "openvino-gpu",
+      "precision": "source",
+      "state": "ready"
+    },
+    "clip": {
+      "transcript": "ฮัลโหลโหลโหเทส หนึ่งสองสามสี่ สวัสดีครับ สวัสดีครับสวัสดีครับสวัสดีครับฮัลโหลเทสสวัสดีครับ การละครั้งหนึ่งงานมาแล้วอันวินเทคไทยแลนด์ เออ ใช่ไหม",
+      "elapsed_seconds": 11.728613858111203,
+      "source_id": "b1a7aa3477cc4b598785b58e1a4b4c81",
+      "configuration": {
+        "model": "turbo",
+        "runtime": "openvino-gpu",
+        "precision": "source",
+        "language": "th",
+        "chunk_seconds": 5.0,
+        "silence_threshold": 0.0
+      }
+    },
+    "measurements": [
+      {
+        "recorded_at": "2026-10-09 10:07:35.303565+00:00",
+        "pid": 3259434,
+        "source_id": "b1a7aa3477cc4b598785b58e1a4b4c81",
+        "sequence": 0,
+        "audio_seconds": 5.0,
+        "inference_seconds": 3.0263704750686884,
+        "rtf": 0.6052740950137376,
+        "status": "completed"
+      },
+      {
+        "recorded_at": "2026-10-09 10:07:38.069618+00:00",
+        "pid": 3259434,
+        "source_id": "b1a7aa3477cc4b598785b58e1a4b4c81",
+        "sequence": 1,
+        "audio_seconds": 5.0,
+        "inference_seconds": 2.7657273560762405,
+        "rtf": 0.5531454712152482,
+        "status": "completed"
+      },
+      {
+        "recorded_at": "2026-10-09 10:07:40.468750+00:00",
+        "pid": 3259434,
+        "source_id": "b1a7aa3477cc4b598785b58e1a4b4c81",
+        "sequence": 2,
+        "audio_seconds": 5.0,
+        "inference_seconds": 2.39886009413749,
+        "rtf": 0.479772018827498,
+        "status": "completed"
+      },
+      {
+        "recorded_at": "2026-10-09 10:07:42.187756+00:00",
+        "pid": 3259434,
+        "source_id": "b1a7aa3477cc4b598785b58e1a4b4c81",
+        "sequence": 3,
+        "audio_seconds": 5.0,
+        "inference_seconds": 1.7187596028670669,
+        "rtf": 0.34375192057341336,
+        "status": "completed"
+      },
+      {
+        "recorded_at": "2026-10-09 10:07:43.994609+00:00",
+        "pid": 3259434,
+        "source_id": "b1a7aa3477cc4b598785b58e1a4b4c81",
+        "sequence": 4,
+        "audio_seconds": 1.129375,
+        "inference_seconds": 1.80658826418221,
+        "rtf": 1.5996354303771643,
+        "status": "completed"
+      }
+    ],
+    "aggregate_rtf": 0.5545031877342181,
+    "microphone_source": "9a687e37a7ce4e49a5a819763167968f",
+    "microphone_completion": {
+      "type": "completed",
+      "source_id": "9a687e37a7ce4e49a5a819763167968f",
+      "status": "stopped",
+      "last_sequence": null,
+      "event_sequence": 0
+    },
+    "microphone_events": [
+      {
+        "recorded_at": "2026-10-09 10:07:44.285910+00:00",
+        "pid": 3259434,
+        "event_name": "microphone_session_started"
+      },
+      {
+        "recorded_at": "2026-10-09 10:07:46.289297+00:00",
+        "pid": 3259434,
+        "event_name": "microphone_session_stop_requested"
+      },
+      {
+        "recorded_at": "2026-10-09 10:07:46.302830+00:00",
+        "pid": 3259434,
+        "event_name": "microphone_session_completed"
+      }
+    ],
+    "owned_process_sample": {
+      "pid": 3259434,
+      "rss_bytes": 917561344,
+      "lifecycle_state": "sleeping"
+    },
+    "microphone_speech_quality": "unverified"
+  },
+  "production": {
+    "port": 8765,
+    "chunk_seconds": 30.0,
+    "model": {
+      "handle_id": "a66a5a7ef12c40b2818fa6cd1ff7a595",
+      "model": "turbo",
+      "runtime": "openvino-gpu",
+      "precision": "source",
+      "state": "ready"
+    },
+    "clip": {
+      "transcript": "ฮัลโหล ฮัลโหล เทส หนึ่ง สอง สาม สี่ สวัสดีครับ สวัสดีครับ สวัสดีครับ สวัสดีครับ ฮัลโหล เทส สวัสดีครับ การละครั้งหนึ่งนานมาแล้ว อันวินเทคไทยแลนด์ ค่ะ เออ",
+      "elapsed_seconds": 5.470890259835869,
+      "source_id": "816a20814ddc4386b67db5f4a95a17b1",
+      "configuration": {
+        "model": "turbo",
+        "runtime": "openvino-gpu",
+        "precision": "source",
+        "language": "th",
+        "chunk_seconds": 30.0,
+        "silence_threshold": 0.0
+      }
+    },
+    "measurements": [
+      {
+        "recorded_at": "2026-10-09 10:10:56.369054+00:00",
+        "pid": 3263126,
+        "source_id": "816a20814ddc4386b67db5f4a95a17b1",
+        "sequence": 0,
+        "audio_seconds": 21.129375,
+        "inference_seconds": 5.4655041680671275,
+        "rtf": 0.2586685203924455,
+        "status": "completed"
+      }
+    ],
+    "aggregate_rtf": 0.2586685203924455,
+    "microphone_source": "a4a516ea64d645eda8483964fd0afd66",
+    "microphone_completion": {
+      "type": "completed",
+      "source_id": "a4a516ea64d645eda8483964fd0afd66",
+      "status": "stopped",
+      "last_sequence": null,
+      "event_sequence": 0
+    },
+    "microphone_events": [
+      {
+        "recorded_at": "2026-10-09 10:10:56.648590+00:00",
+        "pid": 3263126,
+        "event_name": "microphone_session_started"
+      },
+      {
+        "recorded_at": "2026-10-09 10:10:58.651710+00:00",
+        "pid": 3263126,
+        "event_name": "microphone_session_stop_requested"
+      },
+      {
+        "recorded_at": "2026-10-09 10:10:58.663650+00:00",
+        "pid": 3263126,
+        "event_name": "microphone_session_completed"
+      }
+    ],
+    "owned_process_sample": {
+      "pid": 3263126,
+      "rss_bytes": 2529210368,
+      "lifecycle_state": "sleeping"
+    },
+    "microphone_speech_quality": "unverified"
+  },
+  "cutover": {
+    "port": 8765,
+    "container_health": "healthy",
+    "rollback_exercised": true,
+    "retained_host_unit": "speech-feature-01.service",
+    "host_unit_active": false,
+    "host_unit_autostart": false,
+    "database_volume": "speech-feature-01_telemetry-database",
+    "grafana_volume": "speech-feature-01_telemetry-grafana"
+  },
+  "boundary_verification": {
+    "nonroot": true,
+    "privileged": false,
+    "admin_credentials_absent": true,
+    "source_env_and_git_absent": true,
+    "writable_home": true
+  },
+  "observability_smoke": "passed after cutover",
+  "limitations": [
+    "Microphone samples were silent; live speech quality unverified",
+    "Three microphone capacity and both real-model process topologies remain unverified",
+    "Final partial five-second chunk exceeded RTF 1; aggregate RTF is not a per-chunk realtime guarantee",
+    "Host PipeWire user runtime must exist before starting this Compose configuration",
+    "Stage proof used the initial image; production proof used the final HOME ownership fix image"
+  ]
+}

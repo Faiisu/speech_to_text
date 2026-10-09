@@ -6,7 +6,7 @@ Persist operational measurements from the Speech-to-Text services and the host P
 
 ## Storage and deployment
 
-Use TimescaleDB (PostgreSQL-compatible) for persisted telemetry. This matches the database already used by the archived PoC, while Grafana's built-in PostgreSQL data source can query it directly. Keep the model-serving application on the host so its OpenVINO/device integration remains independent from the observability containers. Provide Compose services for TimescaleDB and Grafana, bound to loopback by default, with persistent database and Grafana volumes.
+Use TimescaleDB (PostgreSQL-compatible) for persisted telemetry. This matches the database already used by the archived PoC, while Grafana's built-in PostgreSQL data source can query it directly. Provide Compose services for TimescaleDB and Grafana, bound to loopback by default, with persistent database and Grafana volumes. The model-serving application can run on the host or in the Linux deployment image. The container shares the host network and PID namespace and receives the Intel GPU, audio devices, and host PipeWire runtime socket; its HTTP server still binds to loopback only.
 
 Configure the application with `SPEECH_TO_TEXT_TELEMETRY_DATABASE_URL`. The application writer uses a dedicated telemetry database role. Grafana uses a separate read-only role. Credentials come from an untracked environment file; example configuration contains placeholders only.
 
@@ -51,7 +51,7 @@ Automated tests cover schema creation, serialization, per-chunk RTF values, PID/
 
 ## Local operation
 
-Copy `.env.observability.example` to `.env`, replace every placeholder with unique local credentials, then run `docker compose -f compose.observability.yml up -d`. The database and Grafana ports bind to `127.0.0.1` by default. On a fresh database, Compose creates the roles, schema, indexes, hypertables, and retention policy. The model-serving process remains on the host and uses `SPEECH_TO_TEXT_TELEMETRY_DATABASE_URL`.
+Copy `.env.observability.example` to `.env` and replace every placeholder with unique local credentials. Run `docker compose -f compose.observability.yml up -d` for database and Grafana only, or use the combined observability and speech-service Compose files for Linux deployment as described in [Deployment](../../docs/deployment.md#linux-service-container). The database and Grafana ports bind to `127.0.0.1` by default. On a fresh database, Compose creates the roles, schema, indexes, hypertables, and retention policy. The service uses `SPEECH_TO_TEXT_TELEMETRY_DATABASE_URL`.
 
 For an existing database or a retention change, set `SPEECH_TO_TEXT_TELEMETRY_MIGRATION_DATABASE_URL` to a privileged PostgreSQL URL and run `.venv/bin/python -m speech_to_text.features.system_observability.migrations`. Install `.[telemetry]` into the repository `.venv` for the psycopg writer and psutil sampler. The regular service URL must use the insert-only `telemetry_writer` role.
 

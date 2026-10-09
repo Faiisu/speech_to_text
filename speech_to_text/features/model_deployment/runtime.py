@@ -87,7 +87,7 @@ class OpenVINOAdapter:
 
     def transcribe(self, audio, *, language, decoding_options):
         features = self.processor(audio, sampling_rate=16000, return_tensors="pt").input_features
-        kwargs = {"max_new_tokens": 448, "num_beams": decoding_options["beam_size"],
+        kwargs = {"max_new_tokens": self._max_new_tokens(language), "num_beams": decoding_options["beam_size"],
                   "do_sample": decoding_options["temperature"] > 0,
                   "temperature": decoding_options["temperature"],
                   "condition_on_prev_tokens": decoding_options["condition_on_previous_text"],
@@ -97,6 +97,39 @@ class OpenVINOAdapter:
             kwargs.update(language=language, task="transcribe")
         ids = self.model.generate(features, **kwargs)
         return self.processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
+
+    def _max_new_tokens(self, language):
+        config = self.model.config
+        target_limit = getattr(config, "max_target_positions", None)
+        if target_limit is None:
+            generation_config = getattr(self.model, "generation_config", None)
+            target_limit = getattr(generation_config, "max_length", 448)
+
+        tokenizer = getattr(self.processor, "tokenizer", None)
+        prompt_ids = None
+        get_prompt_ids = getattr(tokenizer, "get_decoder_prompt_ids", None)
+        if callable(get_prompt_ids) and language != "auto":
+            prompt_ids = get_prompt_ids(task="transcribe", language=language, no_timestamps=True)
+        if prompt_ids is not None:
+            # get_decoder_prompt_ids omits the initial decoder start token.
+            decoder_prefix_length = 1 + len(prompt_ids)
+        else:
+            generation_config = getattr(self.model, "generation_config", None)
+            forced_decoder_ids = getattr(generation_config, "forced_decoder_ids", None)
+            if forced_decoder_ids:
+                decoder_prefix_length = max(4, 1 + max(position for position, _ in forced_decoder_ids))
+            else:
+                # Whisper's auto-language path still adds language, task, and
+                # timestamp-control tokens after the decoder start token.
+                decoder_prefix_length = 4
+
+        max_new_tokens = int(target_limit) - decoder_prefix_length
+        if max_new_tokens < 1:
+            raise ValueError(
+                f"Whisper decoder prompt uses {decoder_prefix_length} positions, "
+                f"exceeding its {target_limit}-position target limit"
+            )
+        return max_new_tokens
 
     def close(self):
         self.model = None

@@ -1,0 +1,64 @@
+{
+  "architecture": "native linux/arm64 under Mac Docker Desktop",
+  "runtime": "ctranslate2",
+  "precision": "int8",
+  "model": {
+    "handle_id": "d68e04cf4f1f41a58125c8a7f36a1e28",
+    "model": "turbo",
+    "runtime": "ctranslate2",
+    "precision": "int8",
+    "state": "ready"
+  },
+  "clip_file": "legacies-poc/audio/clip_20260903_160233.wav",
+  "clip": {
+    "transcript": "ฮัลโหลโหลโหเทส หนึ่งสองสามสี่ สวัสดีครับ สวัสดีครับ สวัสดีครับ สวัสดีครับ ฮัลโหลโหเทส สวัสดีครับ การละครั้งหนึ่งนานมาแล้ว อันวินเทคไทยแลนด์ ค่ะ เออ",
+    "elapsed_seconds": 7.192172377999668,
+    "source_id": "b8e3798f6f8b4dbda86ce89c09c27af3",
+    "configuration": {
+      "model": "turbo",
+      "runtime": "ctranslate2",
+      "precision": "int8",
+      "language": "th",
+      "chunk_seconds": 30.0,
+      "silence_threshold": 0.0
+    }
+  },
+  "measurements": [
+    {
+      "recorded_at": "2026-10-09 10:26:12.061300+00:00",
+      "pid": 7,
+      "source_id": "b8e3798f6f8b4dbda86ce89c09c27af3",
+      "sequence": 0,
+      "audio_seconds": 21.129375,
+      "inference_seconds": 7.187678087000677,
+      "rtf": 0.3401746661697602,
+      "status": "completed"
+    }
+  ],
+  "owned_process_sample": {
+    "pid": 7,
+    "rss_bytes": 1214386176
+  },
+  "linux_vm_memory_total_bytes": 8217341952,
+  "grafana_real_rtf_query": "passed",
+  "limitations": [
+    "Measurements describe Docker Desktop Linux VM and container PIDs, not native macOS OS counters",
+    "Mac microphone and Intel GPU unavailable in this profile",
+    "Transcript not compared to independently verified reference; CER and multi-input capacity unverified"
+  ],
+  "verified_at": "2026-10-09",
+  "image_id": "sha256:66eb7e9b7ed07ff87ae75b1ab84724938012ca3d2f945c9fd0cd4e8fd32b4351",
+  "runtime_uid_gid": "501:20",
+  "hugging_face_cache_writable": true,
+  "observability_smoke": "passed: insert/read, Grafana, retention, datasource/dashboard, Editor permission",
+  "browser_verification": {
+    "page-title": "Model deployment & audio-to-text",
+    "system-state": "Service ready",
+    "overview-model": "1 loaded"
+  },
+  "compose_project": "speech-mac-test",
+  "api_port": 18766,
+  "database_port": 15433,
+  "grafana_port": 13001,
+  "host_mac_memory_bytes": 17179869184
+}

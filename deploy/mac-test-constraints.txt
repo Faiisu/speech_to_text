@@ -1,0 +1,5 @@
+# Dependencies available in the existing Apple Silicon Python environment.
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+fastapi==0.143.0
+uvicorn==0.54.0

@@ -40,8 +40,31 @@ Copy [`.env.observability.example`](../.env.observability.example) to `.env` and
 | `GRAFANA_ADMIN_USER` | `admin` | Grafana UI administrator username. |
 | `GRAFANA_ADMIN_PASSWORD` | Required by Compose | Grafana UI administrator password. |
 | `GRAFANA_PORT` | `3000` | Host port for Grafana; bound to loopback. |
+| `MAC_TEST_CONTROL_CENTER_PORT` | `18766` | Mac Docker Desktop test profile API port; bound to loopback. |
+| `MAC_TEST_TELEMETRY_DATABASE_PORT` | `15433` | Mac Docker Desktop test profile database port; bound to loopback. |
+| `MAC_TEST_GRAFANA_PORT` | `13001` | Mac Docker Desktop test profile Grafana port; bound to loopback. |
+| `MAC_TEST_PLATFORM` | `linux/arm64` | Native Mac test image platform. Use `linux/amd64` only for Docker Desktop emulation fallback. |
 
 See [Deployment](deployment.md#database-and-grafana) for how these settings are used.
+
+## Container deployment settings
+
+These values configure the Linux service defined in `compose.speech-service.yml`. The image uses Linux AMD64 for the Intel GPU target. The optional Mac Docker Desktop profile is documented in [Deployment](deployment.md#mac-docker-desktop-test-profile).
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SPEECH_TO_TEXT_IMAGE` | `speech-to-text:local` | Container image tag. Set to a built or registry image when starting with `--no-build`. |
+| `CONTROL_CENTER_PORT` | `8765` | Loopback port for the containerized Control Center; can be overridden temporarily for staged rollout. |
+| `HOST_UID` / `HOST_GID` | `1001` / `1001` | Numeric host identity used by the service process and persistent bind-mounted files. |
+| `RENDER_GID` | `992` | Host render-device group added to the container process. |
+| `AUDIO_GID` | `29` | Host audio-device group added to the container process. |
+| `SPEECH_TO_TEXT_MODELS_DIR` | `./models` on the host | Writable host model directory mounted at `/app/models` in the container. |
+| `HF_HOME` | `/home/speech/.cache/huggingface` in the container | Persistent Hugging Face download and conversion cache. |
+| `SPEECH_TO_TEXT_TELEMETRY_DATABASE_URL` | Unset | Optional insert-only telemetry writer URL passed to the service container. |
+| `SPEECH_TO_TEXT_TELEMETRY_RETENTION_DAYS` | `30` | Retention setting passed to the service container. |
+| `SPEECH_TO_TEXT_MAC_TEST_IMAGE` | `speech-to-text:mac-test` | Native ARM64 Mac Docker Desktop test profile image tag. |
+
+See [Deployment](deployment.md#linux-service-container) for the combined Compose commands and required Linux host access.
 
 ## Control center command-line options
 

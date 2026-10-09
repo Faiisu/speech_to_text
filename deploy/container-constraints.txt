@@ -1,0 +1,9 @@
+# Versions verified on the Linux deployment target on 2026-10-09.
+torch==2.14.1+cpu
+torchvision==0.29.1+cpu
+openvino==2026.4.1
+optimum-intel==2.2.0
+transformers==5.5.4
+huggingface-hub==1.21.0
+fastapi==0.143.0
+uvicorn==0.54.0

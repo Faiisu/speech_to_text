@@ -25,3 +25,7 @@ telemetry = ["psycopg[binary]>=3.2,<4", "psutil>=5.9"]
 
 [tool.setuptools.packages.find]
 include = ["speech_to_text*"]
+
+[tool.setuptools.package-data]
+"speech_to_text.control_center" = ["static/*", "static/**/*"]
+"speech_to_text.features.system_observability" = ["migrations/*.sql"]

@@ -2,7 +2,7 @@
 
 Status: ready-for-human
 Blocked by: none
-Execution: implementation-complete; local-deploy-passed; linux-host-pending
+Execution: implementation-complete; local-and-linux-deploy-passed; hardware-capacity-pending
 
 ## Scope
 
@@ -40,3 +40,7 @@ Corrective software implementation is complete. `.venv/bin/python -m pytest test
 ## Corrective database verification
 
 On the local development host, the parent agent verified inserts through the application writer and read-back through Grafana's read-only database role using injected runtime and capture boundaries. The run observed 15 lifecycle/service-event rows and 6 per-chunk RTF rows across a finite clip, one microphone, both process topologies, model/group shutdown, and repeated group stop without an SSE consumer. Persisted rows retained actual worker PIDs. This establishes the database insert/read path for those injected software flows; it does not establish physical microphone, OpenVINO/GPU, or Linux-host behavior.
+
+## Linux deployment verification: 2026-10-09
+
+The deployment smoke check passed on the actual UBX-330M: database event/RTF insertion, Grafana read-only query, retention policies, datasource/dashboard provisioning, and Editor folder permissions. Real OpenVINO GPU measurements and microphone lifecycle events were read through the Grafana database role; all nine provisioned panel queries succeeded with All filters. Host/process/writer samples were present. See [target deployment proof](../../new-speech-to-text/issues/05-target-hardware-acceptance.md#linux-deployment-proof-2026-10-09) for the authoritative machine setup, measured performance, evidence artifact, and remaining hardware limits.
