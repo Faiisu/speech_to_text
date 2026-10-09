@@ -17,7 +17,7 @@ docker compose -p speech-feature-01 -f compose.speech-service.yml up -d --build 
 curl -fsS http://127.0.0.1:18765/api/system
 ```
 
-The container listens on `0.0.0.0:8765`, and Docker publishes it as `0.0.0.0:18765` on the host by default. `SPEECH_TO_TEXT_HOST_PORT` changes the host port; `CONTROL_CENTER_PORT` changes the container port. The service is reachable through host network interfaces, subject to host firewall and network routing rules; the existing SSH tunnel can also target host port `18765`. The Control Center has no authentication, so use this binding only on a network where its users are trusted. The model directory is writable in this profile. The host UID/GID owns mounted cache files; `RENDER_GID` and `AUDIO_GID` grant device access, `/dev/dri` and `/dev/snd` are passed through, and `/run/user/$HOST_UID` is mounted read-only for PipeWire. Start the host user's PipeWire session before Compose; its runtime directory must exist. Rebuild after changing `HOST_UID` or `HOST_GID`.
+The container listens on `0.0.0.0:8765`, and Docker publishes it as `0.0.0.0:18765` on the host by default. `SPEECH_TO_TEXT_HOST_PORT` changes the host port; `CONTROL_CENTER_PORT` changes the container port. The service is reachable through host network interfaces, subject to host firewall and network routing rules; the existing SSH tunnel can also target host port `18765`. The Control Center has no authentication, so use this binding only on a network where its users are trusted. Host models in `models/` are copied directly into `/app/models` inside the image during build, making the container self-contained; the Compose file's volume mount can be uncommented to override container models with a host path. The host UID/GID owns mounted cache files; `RENDER_GID` and `AUDIO_GID` grant device access, `/dev/dri` and `/dev/snd` are passed through, and `/run/user/$HOST_UID` is mounted read-only for PipeWire. Start the host user's PipeWire session before Compose; its runtime directory must exist. Rebuild after changing `HOST_UID` or `HOST_GID`.
 
 The project name remains `speech-feature-01`. If retiring an earlier observability stack under this project name, first wait for the speech service to become healthy, then remove its orphan containers with the same standalone compose file:
 
@@ -40,7 +40,7 @@ sudo systemctl enable --now speech-feature-01.service
 
 The Mac profile exercises the app and existing model in a native ARM64 CPU container on Apple Silicon. It does not pass through the Mac GPU, audio devices, or prove the Linux AMD64 image or target hardware. Docker Desktop does not expose CoreAudio devices from its Linux VM, so the optional Mac host bridge provides one microphone session.
 
-Prepare the existing model and Hugging Face cache directories, then start the isolated `speech-mac-test` project. The model directory is mounted read-only, while the cache is writable:
+Prepare the existing model and Hugging Face cache directories, then start the isolated `speech-mac-test` project. Host models in `models/` are baked into the image at build time, while the Compose cache mount remains writable:
 
 ```bash
 test -f .env || cp .env.example .env
@@ -59,7 +59,7 @@ HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose -p speech-mac-test \
   -f compose.mac-test.yml up -d --remove-orphans
 ```
 
-This keeps the model and cache mounts and does not remove named volumes. The Mac profile does not use the old database or Grafana volumes.
+This preserves cache mounts and does not remove named volumes. The Mac profile does not use the old database or Grafana volumes.
 
 ### Mac microphone bridge
 

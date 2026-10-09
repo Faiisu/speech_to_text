@@ -22,7 +22,7 @@ Copy [`.env.example`](../.env.example) to `.env` to override deployment defaults
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory for a host process; `./models` as the Compose host bind source | Local model files used by catalog discovery and runtime loading. Compose mounts the host directory at `/app/models` and sets this variable to that container path; Linux mounts read-write and the Mac test profile mounts read-only. |
+| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory for a host process; `/app/models` in containers | Local model files used by catalog discovery and runtime loading. Container images copy host models into `/app/models` during build. The Compose bind mount (`./models:/app/models`) is commented out by default and can be enabled to override container models with a host path. |
 | `MAC_TEST_CONTROL_CENTER_PORT` | `18766` | Mac Docker Desktop test profile API port; published on all IPv4 host interfaces (`0.0.0.0`). |
 | `MAC_TEST_MICROPHONE_BRIDGE_PORT` | `18767` | Mac host microphone bridge port; bound to Mac loopback. |
 | `MAC_TEST_PLATFORM` | `linux/arm64` | Native Mac test image platform. Use `linux/amd64` only for Docker Desktop emulation fallback. |

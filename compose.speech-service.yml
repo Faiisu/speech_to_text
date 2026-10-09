@@ -33,7 +33,8 @@ services:
       - /dev/dri:/dev/dri
       - /dev/snd:/dev/snd
     volumes:
-      - ${SPEECH_TO_TEXT_MODELS_DIR:-./models}:/app/models
+      # Models are baked into /app/models inside the image. Uncomment below to override with host models:
+      # - ${SPEECH_TO_TEXT_MODELS_DIR:-./models}:/app/models
       - ./.cache/huggingface:/home/speech/.cache/huggingface
       - type: bind
         source: /run/user/${HOST_UID:-1001}

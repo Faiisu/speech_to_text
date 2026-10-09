@@ -35,6 +35,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && python -m pip install --constraint deploy/mac-test-constraints.txt \
         -e '.[control-center,microphone,ctranslate2]'
 
+COPY --chown=${APP_UID}:${APP_GID} models /app/models
+
 USER ${APP_UID}:${APP_GID}
 EXPOSE 8765
 

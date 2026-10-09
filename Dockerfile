@@ -42,6 +42,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         'torch==2.14.1+cpu' 'torchvision==0.29.1+cpu' \
     && python -m pip install --constraint deploy/container-constraints.txt -e '.[control-center,microphone,openvino]'
 
+COPY --chown=${APP_UID}:${APP_GID} models /app/models
+
 RUN chown "${APP_UID}:${APP_GID}" /home/speech
 
 USER ${APP_UID}:${APP_GID}
