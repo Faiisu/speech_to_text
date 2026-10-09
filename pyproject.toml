@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "speech-to-text-feature"
+version = "0.1.0"
+description = "Callable speech-to-text model deployment feature"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26,<3"]
+
+[project.optional-dependencies]
+microphone = ["sounddevice>=0.5"]
+openvino = [
+  "openvino>=2024.4",
+  "optimum-intel[openvino]>=1.20",
+  "transformers>=4.40",
+  "huggingface-hub>=0.24",
+]
+ctranslate2 = ["faster-whisper>=1.0"]
+benchmark = ["psutil>=5.9"]
+test = ["pytest>=8,<10"]
+
+[tool.setuptools.packages.find]
+include = ["speech_to_text*"]

@@ -1,0 +1,16 @@
+{
+  "proof": "real installed runtime load and clip inference",
+  "model": "turbo",
+  "runtime": "ctranslate2",
+  "precision": "int8",
+  "clip": "legacies-poc/audio/test_clip.wav",
+  "clip_sha256": "6ee9440a83ce94a6768dce80b0591e2252cee7f646f4774cf9e0dc06730760ae",
+  "duration_seconds": 6.0,
+  "load_seconds": 1.2231239170068875,
+  "inference_seconds": 14.465360832982697,
+  "rtf": 2.410893472163783,
+  "transcript": "เกม สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน สิน อืม",
+  "quality_proven": false,
+  "note": "Reference transcript provenance is not established; this does not prove accuracy or target hardware performance.",
+  "closed_state": "closed"
+}

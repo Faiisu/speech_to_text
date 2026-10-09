@@ -1,0 +1,25 @@
+{
+  "proof": "real named OS microphone through new pipeline with injected runtime",
+  "device": "MacBook Air Microphone",
+  "normalized_sample_rate": 16000,
+  "chunk_sample_counts": [
+    4000,
+    4000,
+    4000,
+    4000,
+    4000,
+    139
+  ],
+  "sample_count": 20139,
+  "event_count": 7,
+  "completion": {
+    "type": "completed",
+    "source_id": "mac-capture-proof",
+    "status": "stopped",
+    "last_sequence": 5
+  },
+  "handle_state": "closed",
+  "runtime_closed": true,
+  "real_model_inference_proven": false,
+  "note": "This proves physical capture/delivery/shutdown, not speech recognition accuracy or OpenVINO deployment."
+}

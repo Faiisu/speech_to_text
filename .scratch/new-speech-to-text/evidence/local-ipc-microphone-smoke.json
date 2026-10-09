@@ -1,0 +1,36 @@
+[
+  {
+    "topology": "shared-model",
+    "device": "MacBook Air Microphone",
+    "parent_pid": 68004,
+    "capture_pid": 68009,
+    "normalized_sample_count": 20480,
+    "transcript_event_count": 6,
+    "terminal": {
+      "type": "completed",
+      "source_id": "mic-1-b9bd8cc4",
+      "status": "stopped",
+      "last_sequence": 5
+    },
+    "capture_process_stopped": true,
+    "injected_runtime": true,
+    "real_model_or_target_performance_proven": false
+  },
+  {
+    "topology": "per-input-model",
+    "device": "MacBook Air Microphone",
+    "parent_pid": 68004,
+    "capture_pid": 68016,
+    "normalized_sample_count": 20139,
+    "transcript_event_count": 6,
+    "terminal": {
+      "type": "completed",
+      "source_id": "mic-1-5284afa7",
+      "status": "stopped",
+      "last_sequence": 5
+    },
+    "capture_process_stopped": true,
+    "injected_runtime": true,
+    "real_model_or_target_performance_proven": false
+  }
+]
