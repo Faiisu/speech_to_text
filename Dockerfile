@@ -63,4 +63,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:' + __import__('os').getenv('CONTROL_CENTER_PORT', '8765') + '/api/system', timeout=3)" || exit 1
 
 ENTRYPOINT ["python", "-m", "speech_to_text.control_center"]
-CMD ["--host", "127.0.0.1", "--port", "8765"]
+CMD ["--host", "0.0.0.0", "--port", "8765"]

@@ -19,7 +19,7 @@ Open <http://127.0.0.1:8765/>. See [Getting Started](docs/getting-started.md) fo
 
 Both Compose profiles publish their HTTP port on all IPv4 host interfaces. The Control Center has no authentication; use these bindings on trusted networks and configure host firewall rules as needed. See [Deployment](docs/deployment.md#network-exposure).
 
-See [Deployment](docs/deployment.md) for Linux host access, the Mac microphone bridge, and migration from the retired observability stack.
+See [Deployment](docs/deployment.md) for Linux host access and the Mac microphone bridge.
 
 ## Project guides
 

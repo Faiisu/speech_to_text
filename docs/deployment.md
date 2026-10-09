@@ -19,15 +19,7 @@ curl -fsS http://127.0.0.1:18765/api/system
 
 The container listens on `0.0.0.0:8765`, and Docker publishes it as `0.0.0.0:18765` on the host by default. `SPEECH_TO_TEXT_HOST_PORT` changes the host port; `CONTROL_CENTER_PORT` changes the container port. The service is reachable through host network interfaces, subject to host firewall and network routing rules; the existing SSH tunnel can also target host port `18765`. The Control Center has no authentication, so use this binding only on a network where its users are trusted. Host models in `models/` are copied directly into `/app/models` inside the image during build, making the container self-contained; the Compose file's volume mount can be uncommented to override container models with a host path. The host UID/GID owns mounted cache files; `RENDER_GID` and `AUDIO_GID` grant device access, `/dev/dri` and `/dev/snd` are passed through, and `/run/user/$HOST_UID` is mounted read-only for PipeWire. Start the host user's PipeWire session before Compose; its runtime directory must exist. Rebuild after changing `HOST_UID` or `HOST_GID`.
 
-The project name remains `speech-feature-01`. If retiring an earlier observability stack under this project name, first wait for the speech service to become healthy, then remove its orphan containers with the same standalone compose file:
-
-```bash
-docker compose -p speech-feature-01 --profile linux ps
-curl -fsS http://127.0.0.1:18765/api/system
-docker compose -p speech-feature-01 --profile linux up -d --remove-orphans
-```
-
-The last command stops containers no longer defined by this Compose file, such as the old database and Grafana services. It does not remove named volumes. Do not use `down -v` when retiring those containers. Old `.env` database/Grafana keys are ignored by these compose files and are not needed by the speech service. Standalone `compose.speech-service.yml` remains available as an alias for `-f compose.speech-service.yml`.
+The project name remains `speech-feature-01`. Standalone `compose.speech-service.yml` remains available as an alias for `-f compose.speech-service.yml`.
 
 For host-service rollback, stop the container and re-enable the existing systemd unit:
 
@@ -51,15 +43,6 @@ curl -fsS http://127.0.0.1:18766/api/system
 ```
 
 The container API listens on `0.0.0.0:8765` internally and Docker publishes `0.0.0.0:18766` on the Mac by default. `MAC_TEST_PLATFORM` defaults to `linux/arm64`; set it to `linux/amd64` only to use Docker Desktop emulation. The project name and API port remain `speech-mac-test` and `18766`. The UI and API can be reached through the Mac's network interfaces, subject to firewall rules. The Mac microphone bridge still listens only on the Mac's loopback address, so microphone capture through that bridge requires opening the UI in a browser on the Mac itself. Standalone `compose.mac-test.yml` also remains available as an alias.
-
-If this project previously included the observability services, run the single-service Compose command after `/api/system` succeeds to stop those orphans:
-
-```bash
-HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose -p speech-mac-test \
-  --profile mac up -d --remove-orphans
-```
-
-This preserves cache mounts and does not remove named volumes. The Mac profile does not use the old database or Grafana volumes.
 
 ### Mac microphone bridge
 
@@ -101,4 +84,3 @@ Docker publishes Linux `18765` and the Mac profile's `18766` on `0.0.0.0`, expos
 - [Configuration](configuration.md) for environment variables and model settings.
 - [Getting Started](getting-started.md) for local development.
 - [Architecture](architecture.md) for process ownership and per-chunk measurements.
-- [Retired System Observability specification](../.scratch/system-observability/spec.md) for context about the removed database and Grafana deployment.

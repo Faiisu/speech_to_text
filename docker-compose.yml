@@ -13,6 +13,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 90s
     init: true
+    command: ["--host", "0.0.0.0", "--port", "${CONTROL_CENTER_PORT:-8765}"]
     ports:
       - "0.0.0.0:${SPEECH_TO_TEXT_HOST_PORT:-18765}:${CONTROL_CENTER_PORT:-8765}"
     environment:
@@ -62,6 +63,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 90s
     init: true
+    command: ["--host", "0.0.0.0", "--port", "8765"]
     ports:
       - "0.0.0.0:${MAC_TEST_CONTROL_CENTER_PORT:-18766}:8765"
     environment:
