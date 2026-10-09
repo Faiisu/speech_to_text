@@ -2,18 +2,18 @@
 
 # Deployment
 
-The service runs directly on the host for development or in one of two speech-service-only Docker Compose profiles. Per-chunk RTF is returned with inference results and microphone events; neither profile requires a database, Grafana, credentials, or a telemetry sidecar.
+The service runs directly on the host for development or through a unified Docker deployment (`docker-compose.yml` and a single multi-platform `Dockerfile`). Deployment profiles select between Linux production hardware access (`--profile linux`) and Apple Silicon development testing (`--profile mac`). Per-chunk RTF is returned with inference results and microphone events; neither profile requires a database, Grafana, credentials, or a telemetry sidecar.
 
 ## Linux service container
 
-The Linux image uses Ubuntu 24.04, Python 3.12, CPU-only PyTorch, OpenVINO, and the host Intel OpenCL driver interface. It uses Compose bridge networking and publishes the API on all IPv4 host interfaces; the service receives the Intel GPU, audio devices, and host PipeWire runtime socket. Its health check calls `/api/system` without loading a model.
+The unified image uses Ubuntu 24.04 and Python 3.12, providing CPU-only PyTorch, OpenVINO, CTranslate2, and the host Intel OpenCL driver interface on AMD64. It uses Compose bridge networking and publishes the API on all IPv4 host interfaces; the service receives the Intel GPU, audio devices, and host PipeWire runtime socket. Its health check calls `/api/system` without loading a model.
 
 Copy the optional deployment defaults, prepare model and download-cache directories, then build and start the speech service:
 
 ```bash
 test -f .env || cp .env.example .env
 mkdir -p .cache/huggingface models
-docker compose -p speech-feature-01 -f compose.speech-service.yml up -d --build --wait speech-service
+docker compose -p speech-feature-01 --profile linux up -d --build --wait speech-service
 curl -fsS http://127.0.0.1:18765/api/system
 ```
 
@@ -22,41 +22,41 @@ The container listens on `0.0.0.0:8765`, and Docker publishes it as `0.0.0.0:187
 The project name remains `speech-feature-01`. If retiring an earlier observability stack under this project name, first wait for the speech service to become healthy, then remove its orphan containers with the same standalone compose file:
 
 ```bash
-docker compose -p speech-feature-01 -f compose.speech-service.yml ps
+docker compose -p speech-feature-01 --profile linux ps
 curl -fsS http://127.0.0.1:18765/api/system
-docker compose -p speech-feature-01 -f compose.speech-service.yml up -d --remove-orphans
+docker compose -p speech-feature-01 --profile linux up -d --remove-orphans
 ```
 
-The last command stops containers no longer defined by this Compose file, such as the old database and Grafana services. It does not remove named volumes. Do not use `down -v` when retiring those containers. Old `.env` database/Grafana keys are ignored by these compose files and are not needed by the speech service.
+The last command stops containers no longer defined by this Compose file, such as the old database and Grafana services. It does not remove named volumes. Do not use `down -v` when retiring those containers. Old `.env` database/Grafana keys are ignored by these compose files and are not needed by the speech service. Standalone `compose.speech-service.yml` remains available as an alias for `-f compose.speech-service.yml`.
 
 For host-service rollback, stop the container and re-enable the existing systemd unit:
 
 ```bash
-docker compose -p speech-feature-01 -f compose.speech-service.yml stop speech-service
+docker compose -p speech-feature-01 --profile linux stop speech-service
 sudo systemctl enable --now speech-feature-01.service
 ```
 
 ## Mac Docker Desktop test profile
 
-The Mac profile exercises the app and existing model in a native ARM64 CPU container on Apple Silicon. It does not pass through the Mac GPU, audio devices, or prove the Linux AMD64 image or target hardware. Docker Desktop does not expose CoreAudio devices from its Linux VM, so the optional Mac host bridge provides one microphone session.
+The Mac profile exercises the app and existing model in a native ARM64 CPU container on Apple Silicon. It uses the same unified multi-platform `Dockerfile` without passing through the Mac GPU or audio devices. Docker Desktop does not expose CoreAudio devices from its Linux VM, so the optional Mac host bridge provides one microphone session.
 
-Prepare the existing model and Hugging Face cache directories, then start the isolated `speech-mac-test` project. Host models in `models/` are baked into the image at build time, while the Compose cache mount remains writable:
+Prepare the existing model and Hugging Face cache directories, then start the isolated `speech-mac-test` project using the `mac` profile. Host models in `models/` are baked into the image at build time, while the Compose cache mount remains writable:
 
 ```bash
 test -f .env || cp .env.example .env
 mkdir -p .cache/huggingface models
 HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose -p speech-mac-test \
-  -f compose.mac-test.yml up -d --build --wait speech-service
+  --profile mac up -d --build --wait speech-service-mac
 curl -fsS http://127.0.0.1:18766/api/system
 ```
 
-The container API listens on `0.0.0.0:8765` internally and Docker publishes `0.0.0.0:18766` on the Mac by default. `MAC_TEST_PLATFORM` defaults to `linux/arm64`; set it to `linux/amd64` only to use Docker Desktop emulation. The project name and API port remain `speech-mac-test` and `18766`. The UI and API can be reached through the Mac's network interfaces, subject to firewall rules. The Mac microphone bridge still listens only on the Mac's loopback address, so microphone capture through that bridge requires opening the UI in a browser on the Mac itself.
+The container API listens on `0.0.0.0:8765` internally and Docker publishes `0.0.0.0:18766` on the Mac by default. `MAC_TEST_PLATFORM` defaults to `linux/arm64`; set it to `linux/amd64` only to use Docker Desktop emulation. The project name and API port remain `speech-mac-test` and `18766`. The UI and API can be reached through the Mac's network interfaces, subject to firewall rules. The Mac microphone bridge still listens only on the Mac's loopback address, so microphone capture through that bridge requires opening the UI in a browser on the Mac itself. Standalone `compose.mac-test.yml` also remains available as an alias.
 
 If this project previously included the observability services, run the single-service Compose command after `/api/system` succeeds to stop those orphans:
 
 ```bash
 HOST_UID="$(id -u)" HOST_GID="$(id -g)" docker compose -p speech-mac-test \
-  -f compose.mac-test.yml up -d --remove-orphans
+  --profile mac up -d --remove-orphans
 ```
 
 This preserves cache mounts and does not remove named volumes. The Mac profile does not use the old database or Grafana volumes.

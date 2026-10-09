@@ -63,9 +63,22 @@ def _module_ready(name):
         return False
 
 
+def default_models_root():
+    env = os.environ.get("SPEECH_TO_TEXT_MODELS_DIR")
+    if env:
+        return Path(env)
+    root = Path.cwd() / "models"
+    legacy = Path.cwd() / "legacies-poc" / "models"
+    if root.is_dir() and any(_has_weights(p, "ctranslate2") or _has_weights(p, "openvino") for p in root.iterdir()):
+        return root
+    if legacy.is_dir() and any(_has_weights(p, "ctranslate2") or _has_weights(p, "openvino") for p in legacy.iterdir()):
+        return legacy
+    return root
+
+
 def _registry(path):
     if path is None:
-        root = Path(os.environ.get("SPEECH_TO_TEXT_MODELS_DIR", Path.cwd() / "models"))
+        root = default_models_root()
         registry = root / "models.local.json"
     else:
         registry = Path(path)

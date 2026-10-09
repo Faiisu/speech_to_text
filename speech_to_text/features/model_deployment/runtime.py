@@ -8,11 +8,11 @@ from pathlib import Path
 import numpy as np
 
 from .errors import ModelLoadError
-from .catalog import resolve_repository
+from .catalog import default_models_root, resolve_repository
 
 
 def _root():
-    return Path(os.environ.get("SPEECH_TO_TEXT_MODELS_DIR", Path.cwd() / "models"))
+    return default_models_root()
 
 
 def _find_converted(root, runtime, model):

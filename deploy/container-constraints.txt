@@ -7,3 +7,5 @@ transformers==5.5.4
 huggingface-hub==1.21.0
 fastapi==0.143.0
 uvicorn==0.54.0
+faster-whisper==1.2.1
+ctranslate2==4.8.2

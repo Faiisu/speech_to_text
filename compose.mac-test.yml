@@ -4,7 +4,7 @@ services:
     platform: ${MAC_TEST_PLATFORM:-linux/arm64}
     build:
       context: .
-      dockerfile: Dockerfile.mac-test
+      dockerfile: Dockerfile
       args:
         APP_UID: ${HOST_UID:-1001}
         APP_GID: ${HOST_GID:-1001}

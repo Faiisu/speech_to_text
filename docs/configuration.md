@@ -22,7 +22,8 @@ Copy [`.env.example`](../.env.example) to `.env` to override deployment defaults
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory for a host process; `/app/models` in containers | Local model files used by catalog discovery and runtime loading. Container images copy host models into `/app/models` during build. The Compose bind mount (`./models:/app/models`) is commented out by default and can be enabled to override container models with a host path. |
+| `COMPOSE_PROFILES` | `linux` | Active Docker Compose profile (`linux` for Linux Intel GPU / ALSA, or `mac` for macOS development with host microphone bridge). |
+| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory for a host process (falling back to `legacies-poc/models/` when empty); `/app/models` in containers | Local model files used by catalog discovery and runtime loading. Container images copy host models into `/app/models` during build. The Compose bind mount can be uncommented to override container models with a host path (e.g. `./models` or `./legacies-poc/models`). |
 | `MAC_TEST_CONTROL_CENTER_PORT` | `18766` | Mac Docker Desktop test profile API port; published on all IPv4 host interfaces (`0.0.0.0`). |
 | `MAC_TEST_MICROPHONE_BRIDGE_PORT` | `18767` | Mac host microphone bridge port; bound to Mac loopback. |
 | `MAC_TEST_PLATFORM` | `linux/arm64` | Native Mac test image platform. Use `linux/amd64` only for Docker Desktop emulation fallback. |
@@ -31,7 +32,7 @@ Other compose defaults for image tags and host UID/GID are listed below and in [
 
 ## Container deployment settings
 
-These values configure the Linux service defined in `compose.speech-service.yml`. The image uses Linux AMD64 for the Intel GPU target. The optional Mac Docker Desktop profile is documented in [Deployment](deployment.md#mac-docker-desktop-test-profile).
+These values configure the services defined in `docker-compose.yml` (as well as the standalone `compose.speech-service.yml` and `compose.mac-test.yml` files). The unified image builds natively on both Linux AMD64 and Apple Silicon ARM64. The optional Mac Docker Desktop profile is documented in [Deployment](deployment.md#mac-docker-desktop-test-profile).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
