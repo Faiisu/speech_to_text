@@ -2,43 +2,55 @@
 
 # Getting Started
 
-This guide starts the current Speech-to-Text control center from a repository-local Python environment. Feature behavior and acceptance criteria remain in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#features).
+This guide installs the callable Python package. The previous Control Center UI and HTTP server have been removed; a replacement frontend/backend is not part of this phase.
 
 ## Prerequisites
 
 - Python 3.10 or newer.
 - [`uv`](https://docs.astral.sh/uv/) for creating and installing into a local virtual environment.
-- An operating-system audio input device for live microphone tests.
 
-## Install and start the control center
+## Install
 
-From the repository root, create `.venv/` and install the control center:
+From the repository root:
 
 ```bash
 uv venv .venv
-uv pip install --python .venv/bin/python -e '.[control-center]'
-.venv/bin/python -m speech_to_text.control_center
+uv pip install --python .venv/bin/python -e .
 ```
 
-The service binds to `127.0.0.1:8765` by default and is intended to run directly on the host. Transcription and per-chunk RTF reporting work locally without a database or telemetry service.
+## Install optional runtimes and microphone support
 
-For frontend development, run the same command with `--dev` to reload Python code and refresh the browser when Control Center static assets change. See [Configuration](configuration.md#control-center-command-line-options) for the command-line options.
-
-## Add a model runtime and microphone support
-
-Install the optional runtime and capture dependencies into the same local environment:
+Install only the extras needed for your work:
 
 ```bash
-uv pip install --python .venv/bin/python -e '.[openvino,microphone]'
+uv pip install --python .venv/bin/python -e '.[openvino]'
 ```
 
-Feature 01's model and flow defaults, supported options, validation ranges, and runtime compatibility are listed in its [configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults). OpenVINO GPU availability depends on the host and its drivers; a Mac development environment does not prove Linux target-hardware support. See the [Feature 01 acceptance evidence](../.scratch/new-speech-to-text/spec.md#acceptance-evidence-to-establish-before-treating-deployment-as-complete) for the required target proof.
+```bash
+uv pip install --python .venv/bin/python -e '.[microphone]'
+uv pip install --python .venv/bin/python -e '.[thai-word-matching]'
+```
 
-In the control center, inspect the model catalog, load a compatible model, then transcribe a WAV clip or start a microphone session. Clip results include per-inferred-chunk measurements. Microphone sessions publish a measurement event for each inferred chunk alongside transcript, error, and completion events. The model remains loaded until it is closed or the service exits. See the [API reference](api.md#feature-01-model-deployment) for equivalent HTTP calls.
+For other runtime choices, see the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults). OpenVINO GPU availability depends on the host and its drivers; a Mac development environment does not prove Linux target-hardware support.
+
+## Call Feature 01
+
+```python
+from speech_to_text.features.model_deployment import load_model, transcribe_clip
+
+model = load_model({"model": "turbo", "runtime": "openvino-gpu"})
+try:
+    transcript = transcribe_clip("sample.wav", model, {"language": "th"})
+    print(transcript)
+finally:
+    model.close()
+```
+
+Feature 01 accepts WAV paths or bytes at its Python callable boundary. Its [specification](../.scratch/new-speech-to-text/spec.md) documents model configuration, clip and microphone behavior, session events, and process topologies.
 
 ## Run tests
 
-Install the test extra if it is not already present, then run the contract and integration suites:
+Install the test extra if it is not already present, then run the feature contract suite:
 
 ```bash
 uv pip install --python .venv/bin/python -e '.[test]'
@@ -49,5 +61,6 @@ Real microphone and model tests are opt-in and skip by default. Read [Contributi
 
 ## See also
 
-- [Configuration](configuration.md) for runtime, flow, and local environment settings.
-- [Architecture](architecture.md) for service ownership and local RTF measurements.
+- [Configuration](configuration.md) for runtime, flow, and matching settings.
+- [Architecture](architecture.md) for module ownership.
+- [Callable Interfaces](api.md) for public feature interfaces.

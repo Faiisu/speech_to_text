@@ -1,24 +1,24 @@
 # Speech-to-Text
 
-Speech-to-Text is a modular Python service for loading speech models, transcribing audio clips or microphone input, and checking feature behavior through a local control center. It reports per-chunk real-time factor (RTF) locally with each clip result or microphone event; it does not require a database or telemetry service. The former proof of concept remains archived in [`legacies-poc/`](legacies-poc/README.md).
+Speech-to-Text is a modular Python package for loading speech models, transcribing audio clips or microphone input, matching Thai words and phrases, and forwarding results. It reports per-chunk real-time factor (RTF) with each clip result or microphone event. The former proof of concept remains archived in [`legacies-poc/`](legacies-poc/README.md).
 
-## Quick start
+## Install
 
 ```bash
 uv venv .venv
-uv pip install --python .venv/bin/python -e '.[control-center]'
-.venv/bin/python -m speech_to_text.control_center
+uv pip install --python .venv/bin/python -e .
 ```
 
-Open <http://127.0.0.1:8765/>. See [Getting Started](docs/getting-started.md) for adding a model runtime and microphone capture.
+This repository currently provides callable feature modules and workflows; the previous Control Center frontend and HTTP server have been removed. See [Getting Started](docs/getting-started.md) for installing optional runtimes and calling Feature 01.
 
 ## Project guides
 
 - [Getting Started](docs/getting-started.md)
 - [Configuration](docs/configuration.md)
-- [API Reference](docs/api.md)
+- [Callable Interfaces](docs/api.md)
 - [Architecture](docs/architecture.md)
+- [Project structure](docs/project-structure.md)
 - [Contributing](docs/contributing.md)
 - [Feature 01 specification](.scratch/new-speech-to-text/spec.md)
-- [Control Center specification](.scratch/feature-test-console/spec.md)
+- [Transcript matching and forwarding specification](.scratch/transcript-matching-forwarding/spec.md)
 - [Retired system observability specification](.scratch/system-observability/spec.md)

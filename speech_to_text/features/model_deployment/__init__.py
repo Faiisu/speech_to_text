@@ -32,7 +32,6 @@ def start_microphone_flow(
     device=None, model_handle=None, flow_config=None, *, audio_source_factory=None
 ):
     """Start one microphone source owned by the current process.
-
     ``device`` is omitted for the host OS default or is an exact stable device
     name. A supplied audio source factory replaces only the hardware boundary;
     buffering, inference routing, queueing, and events stay feature-owned.

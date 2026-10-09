@@ -2,11 +2,11 @@
 
 # Configuration
 
-The [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults) is the source of truth for model and flow options, defaults, valid ranges, and runtime compatibility. Use this page for entry points and local command guidance.
+The [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults) is the source of truth for model and flow options, defaults, valid ranges, and runtime compatibility. Use this page for installation and local configuration guidance.
 
 ## Model configuration
 
-Pass model selection and shared-model queue settings to `load_model()` or `POST /api/features/feature-01-model-deployment/models`. See the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults) for fields, defaults, validation, and runtime/precision compatibility.
+Pass model selection and shared-model queue settings to `load_model()`. See the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults) for fields, defaults, validation, and runtime/precision compatibility.
 
 Model, runtime, and precision are fixed for the lifetime of a loaded handle. Load a new handle to change them.
 
@@ -14,30 +14,25 @@ Model, runtime, and precision are fixed for the lifetime of a loaded handle. Loa
 
 Pass flow settings to a clip or microphone flow; each input can have independent settings. See the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults) for the complete option list and validation rules.
 
-The HTTP clip adapter currently accepts `beam_size`, `temperature`, and `condition_on_previous_text` as form fields. The Python callable accepts all decoding options in the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults).
+The Python callable accepts decoding options listed in the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults).
 
 ## Local environment variables
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory; falls back to `legacies-poc/models/` when it contains installed weights | Local model files used by catalog discovery and runtime loading. |
-| `SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE` | Disabled | Set to `1` to enable authenticated PCM input from the optional host microphone bridge. |
-| `SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE_URL` | `http://127.0.0.1:18767/api` | Local host bridge URL supplied to the Control Center page when the bridge is enabled. |
-| `SPEECH_TO_TEXT_BRIDGE_PORT` | `18767` | Loopback port used by the optional Mac host microphone bridge. |
-| `SPEECH_TO_TEXT_BRIDGE_SERVICE_URL` | `http://127.0.0.1:18766` | Local Control Center URL used by the bridge; set this to the service's port if it differs. |
-| `SPEECH_TO_TEXT_BRIDGE_CONTROL_ORIGIN` | `*` | Allowed Control Center origin for bridge requests. A specific local HTTP origin enables strict origin checking. |
 
-No credentials or database settings are required for local operation.
+No credentials or database settings are required to call Feature 01 locally. The previous Control Center and its Mac host microphone bridge are not included in the current application.
 
-## Control center command-line options
+## Transcript matching and forwarding
 
-Run `python -m speech_to_text.control_center --help` to see these options.
+Install `thai-word-matching` when matching Thai words and phrases:
 
-| Option | Default | Values and notes |
-| --- | --- | --- |
-| `--host` | `127.0.0.1` | Loopback address; explicit `0.0.0.0` is also supported. |
-| `--port` | `8765` | Local HTTP port. |
-| `--dev` | Disabled | Enables Python auto-reload and browser refresh when Control Center static assets change. See the [local service run command](../.scratch/feature-test-console/spec.md#local-service-api-and-run-command). |
+```bash
+uv pip install --python .venv/bin/python -e '.[thai-word-matching]'
+```
+
+Configure target keywords with `WordMatchingConfig` and outbound delivery with `HttpForwarderConfig` in the caller. Pass the endpoint URL and, when required, a bearer token from the caller's secret store. Matching defaults, retry behavior, and the forwarded JSON contract are maintained in the [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md).
 
 ## Capacity command-line options
 
@@ -75,4 +70,4 @@ These variables only configure opt-in proofs in `tests/feature_01/test_hardware_
 ## See also
 
 - [Getting Started](getting-started.md) for local installation.
-- [API Reference](api.md) for where model and flow settings are sent.
+- [Callable Interfaces](api.md) for model and flow entry points.

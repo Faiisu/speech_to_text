@@ -1,5 +1,7 @@
 # Feature Test Frontend and System Control Center
 
+> **Retired:** This design describes the former Control Center and is retained as project history. Its frontend, FastAPI application, feature HTTP adapters, and Mac microphone bridge have been removed. It is not the current frontend/backend architecture specification.
+
 ## Purpose
 
 Build the browser frontend as the shared control center for the speech-to-text system. Developers and operators use it to configure, run, observe, and test each implemented feature through that feature's public API.

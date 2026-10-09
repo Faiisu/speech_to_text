@@ -16,6 +16,10 @@ Follow these steps in order whenever writing or updating documentation:
 
 Organize program code into folders by feature. Each feature module exposes a callable interface for other systems, with explicit inputs, outputs, errors, and configuration. Give feature-specific settings documented defaults and let callers adjust them through configuration. Keep implementation details behind the interface, separate responsibilities into cohesive modules, and place genuinely shared code in shared modules. Apply this structure to new code and changes within the task's scope.
 
+### Project structure
+
+Always follow [`docs/project-structure.md`](docs/project-structure.md) when adding, moving, renaming, or removing project files and folders. Read its placement rules before making structural changes, put each file in its defined owner, and update that document in the same change whenever the lasting project structure or ownership boundaries change.
+
 ### Feature development through sub-agents
 
 Develop each documented feature through a separate sub-agent assigned to that feature's specification and acceptance criteria. The parent agent coordinates work, reviews the result, and verifies integration.
