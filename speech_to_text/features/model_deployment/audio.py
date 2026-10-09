@@ -21,11 +21,16 @@ def normalize_audio(samples, sample_rate, channels=None):
         audio = audio.mean(axis=1, dtype=np.float32)
     elif channels and channels > 1:
         if audio.ndim != 2 or audio.shape[1] != channels:
-            raise AudioInputError("Captured channel layout does not match the source configuration")
+            raise AudioInputError(
+                "Captured channel layout does not match the source configuration"
+            )
         audio = audio.mean(axis=1, dtype=np.float32)
     elif audio.ndim != 1:
         raise AudioInputError("Audio must be mono or frame-by-channel PCM")
-    if not isinstance(sample_rate, (int, np.integer)) or not 8000 <= sample_rate <= 48000:
+    if (
+        not isinstance(sample_rate, (int, np.integer))
+        or not 8000 <= sample_rate <= 48000
+    ):
         raise AudioInputError("Audio sample rate must be between 8 kHz and 48 kHz")
     if not np.all(np.isfinite(audio)):
         raise AudioInputError("Audio contains NaN or infinite samples")
@@ -43,19 +48,26 @@ def read_clip(clip):
     try:
         if isinstance(clip, (bytes, bytearray, memoryview)):
             import io
+
             source = io.BytesIO(bytes(clip))
         elif isinstance(clip, (str, Path)):
             source = str(clip)
         else:
             raise AudioInputError("clip must be a WAV path or WAV bytes")
         with wave.open(source, "rb") as wav:
-            channels, width, rate = wav.getnchannels(), wav.getsampwidth(), wav.getframerate()
+            channels, width, rate = (
+                wav.getnchannels(),
+                wav.getsampwidth(),
+                wav.getframerate(),
+            )
             frames = wav.readframes(wav.getnframes())
         if width != 2 or channels not in (1, 2):
             raise AudioInputError("WAV input must be PCM signed 16-bit mono or stereo")
         if not 8000 <= rate <= 48000:
             raise AudioInputError("WAV sample rate must be between 8 kHz and 48 kHz")
-        audio = np.frombuffer(frames, dtype="<i2").astype(np.float32) / np.float32(32768.0)
+        audio = np.frombuffer(frames, dtype="<i2").astype(np.float32) / np.float32(
+            32768.0
+        )
         if channels == 2:
             audio = audio.reshape(-1, 2).mean(axis=1, dtype=np.float32)
         return normalize_audio(audio, rate)
@@ -69,7 +81,10 @@ class StreamingResampler:
     """Linear streaming resampler retaining only the interpolation boundary."""
 
     def __init__(self, sample_rate):
-        if not isinstance(sample_rate, (int, np.integer)) or not 8000 <= sample_rate <= 48000:
+        if (
+            not isinstance(sample_rate, (int, np.integer))
+            or not 8000 <= sample_rate <= 48000
+        ):
             raise AudioInputError("Audio sample rate must be between 8 kHz and 48 kHz")
         self.sample_rate = int(sample_rate)
         self.step = self.sample_rate / TARGET_RATE
@@ -119,7 +134,9 @@ class StreamingResampler:
             left = np.minimum(indexes.astype(np.int64), self._buffer.size - 1)
             right = np.minimum(left + 1, self._buffer.size - 1)
             fraction = (indexes - left).astype(np.float32)
-            result = self._buffer[left] * (1 - fraction) + self._buffer[right] * fraction
+            result = (
+                self._buffer[left] * (1 - fraction) + self._buffer[right] * fraction
+            )
             result = np.asarray(result, dtype=np.float32)
         else:
             result = np.empty(0, dtype=np.float32)

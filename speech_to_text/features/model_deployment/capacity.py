@@ -8,17 +8,16 @@ runtime. This tool captures real microphone input at audio pace.
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
 import json
 import math
 import platform
-from queue import Empty
 import sys
 import time
+from collections import defaultdict
+from queue import Empty
 
 from .errors import AudioInputError, ModelLoadError
 from .process_topology import start_multiprocess_microphone_flows
-
 
 REALTIME_TOLERANCE = 0.05
 
@@ -26,22 +25,46 @@ REALTIME_TOLERANCE = 0.05
 def _validate_args(args):
     for name in ("duration_seconds", "stop_timeout", "enqueue_timeout"):
         value = getattr(args, name)
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
             raise ValueError(f"{name.replace('_', ' ')} must be finite and positive")
     if not isinstance(args.device, (list, tuple)) or not args.device:
-        raise ValueError("device must be a non-empty list or tuple of stable microphone names")
+        raise ValueError(
+            "device must be a non-empty list or tuple of stable microphone names"
+        )
 
 
-def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow_configs=None):
+def run_benchmark(
+    args, *, runtime_factory=None, audio_source_factory=None, flow_configs=None
+):
     _validate_args(args)
-    config = {"model": args.model, "runtime": args.runtime, "precision": args.precision,
-              "queue_capacity": args.queue_capacity, "enqueue_timeout_seconds": args.enqueue_timeout}
-    flow = {"language": args.language, "chunk_seconds": args.chunk_seconds,
-            "silence_threshold": args.silence_threshold}
+    config = {
+        "model": args.model,
+        "runtime": args.runtime,
+        "precision": args.precision,
+        "queue_capacity": args.queue_capacity,
+        "enqueue_timeout_seconds": args.enqueue_timeout,
+    }
+    flow = {
+        "language": args.language,
+        "chunk_seconds": args.chunk_seconds,
+        "silence_threshold": args.silence_threshold,
+    }
     started = time.perf_counter()
     try:
-        group = start_multiprocess_microphone_flows(args.device, config, flow, topology=args.topology,
-            runtime_factory=runtime_factory, audio_source_factory=audio_source_factory, flow_configs=flow_configs)
+        group = start_multiprocess_microphone_flows(
+            args.device,
+            config,
+            flow,
+            topology=args.topology,
+            runtime_factory=runtime_factory,
+            audio_source_factory=audio_source_factory,
+            flow_configs=flow_configs,
+        )
     except (AudioInputError, ModelLoadError) as exc:
         return {
             "status": "unavailable",
@@ -49,7 +72,11 @@ def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow
             "model": args.model,
             "runtime": args.runtime,
             "precision": args.precision,
-            "hardware": {"platform": platform.platform(), "machine": platform.machine(), "python": sys.version.split()[0]},
+            "hardware": {
+                "platform": platform.platform(),
+                "machine": platform.machine(),
+                "python": sys.version.split()[0],
+            },
             "prerequisite_error": str(exc),
             "measurements": None,
         }
@@ -60,6 +87,7 @@ def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow
     memory_status = "available"
     try:
         import psutil
+
         process = psutil.Process()
     except ImportError:
         process = None
@@ -81,7 +109,12 @@ def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         pass
                 peak_rss = max(peak_rss, current_rss)
-            time.sleep(min(0.25, max(0, args.duration_seconds - (time.perf_counter() - run_started))))
+            time.sleep(
+                min(
+                    0.25,
+                    max(0, args.duration_seconds - (time.perf_counter() - run_started)),
+                )
+            )
         capture_stopped_at = time.perf_counter()
         if group._input_queue is not None:
             try:
@@ -96,7 +129,9 @@ def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow
         try:
             group.abort(timeout=min(args.stop_timeout, 5))
         except Exception as cleanup_error:
-            raise RuntimeError(f"Capacity run failed and process cleanup failed: {cleanup_error}") from cleanup_error
+            raise RuntimeError(
+                f"Capacity run failed and process cleanup failed: {cleanup_error}"
+            ) from cleanup_error
         raise
     events = []
     for session in group.sessions:
@@ -114,8 +149,12 @@ def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow
     errors = [event for event in events if event["type"] == "error"]
     queue_discarded = sum(event.get("discarded_queued_chunks", 0) for event in errors)
     rejected_chunks = sum(event.get("rejected_chunks", 0) for event in errors)
-    inference_failures = sum(event.get("code") == "CHUNK_INFERENCE_FAILED" for event in errors)
-    inflight_discarded = sum(item.get("discarded_inflight", False) for item in telemetry)
+    inference_failures = sum(
+        event.get("code") == "CHUNK_INFERENCE_FAILED" for event in errors
+    )
+    inflight_discarded = sum(
+        item.get("discarded_inflight", False) for item in telemetry
+    )
     per_source_audio = defaultdict(float)
     for item in telemetry:
         per_source_audio[item["source_id"]] += item["chunk_duration_seconds"]
@@ -123,21 +162,42 @@ def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow
     per_source_inference = defaultdict(float)
     for item in telemetry:
         per_source_inference[item["source_id"]] += item["inference_seconds"]
-    per_source_audio_throughput = {session.source_id: per_source_audio[session.source_id] / capture_seconds
-                                   for session in group.sessions}
+    per_source_audio_throughput = {
+        session.source_id: per_source_audio[session.source_id] / capture_seconds
+        for session in group.sessions
+    }
     if args.topology == "shared-model":
-        utilization = {"shared-model": sum(per_source_inference.values()) / capture_seconds}
+        utilization = {
+            "shared-model": sum(per_source_inference.values()) / capture_seconds
+        }
     else:
-        utilization = {session.source_id: per_source_inference[session.source_id] / capture_seconds
-                       for session in group.sessions}
+        utilization = {
+            session.source_id: per_source_inference[session.source_id] / capture_seconds
+            for session in group.sessions
+        }
     minimum_audio_seconds = max(5.0, args.duration_seconds * (1 - REALTIME_TOLERANCE))
     sufficient_workload = bool(group.sessions) and all(
-        per_source_audio[session.source_id] >= minimum_audio_seconds for session in group.sessions)
-    failed_sources = [item for item in group.sessions
-                      if next((event.get("status") for event in events
-                               if event.get("source_id") == item.source_id and event.get("type") == "completed"), None) != "stopped"]
+        per_source_audio[session.source_id] >= minimum_audio_seconds
+        for session in group.sessions
+    )
+    failed_sources = [
+        item
+        for item in group.sessions
+        if next(
+            (
+                event.get("status")
+                for event in events
+                if event.get("source_id") == item.source_id
+                and event.get("type") == "completed"
+            ),
+            None,
+        )
+        != "stopped"
+    ]
     failed_run = bool(errors or failed_sources)
-    dropped_or_failed = queue_discarded + rejected_chunks + inflight_discarded + inference_failures
+    dropped_or_failed = (
+        queue_discarded + rejected_chunks + inflight_discarded + inference_failures
+    )
     if failed_run or dropped_or_failed:
         realtime_verdict = "fail"
     elif not sufficient_workload:
@@ -153,10 +213,26 @@ def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow
         "runtime": args.runtime,
         "precision": args.precision,
         "language": args.language,
-        "hardware": {"platform": platform.platform(), "machine": platform.machine(), "python": sys.version.split()[0]},
-        "sources": [{"source_id": session.source_id,
-                     "status": next((event["status"] for event in events if event["source_id"] == session.source_id and event["type"] == "completed"), "missing-terminal-event")}
-                    for session in group.sessions],
+        "hardware": {
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "python": sys.version.split()[0],
+        },
+        "sources": [
+            {
+                "source_id": session.source_id,
+                "status": next(
+                    (
+                        event["status"]
+                        for event in events
+                        if event["source_id"] == session.source_id
+                        and event["type"] == "completed"
+                    ),
+                    "missing-terminal-event",
+                ),
+            }
+            for session in group.sessions
+        ],
         "startup_seconds_to_ready": elapsed_to_ready,
         "model_startup_seconds": group.model_load_seconds,
         "per_source_startup_seconds": group.source_load_seconds,
@@ -166,7 +242,9 @@ def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow
         "queue_capacity_chunks": args.queue_capacity,
         "max_observed_queue_depth": peak_queue,
         "queue_depth_at_capture_stop": queue_depth_at_capture_stop,
-        "queue_depth_measurement": "shared-model-input-queue" if group._input_queue is not None else "unavailable-per-input-process",
+        "queue_depth_measurement": "shared-model-input-queue"
+        if group._input_queue is not None
+        else "unavailable-per-input-process",
         "eligible_audio_chunk_count": len(telemetry),
         "eligible_audio_seconds_by_source": dict(per_source_audio),
         "per_source_audio_seconds_per_capture_second": per_source_audio_throughput,
@@ -182,15 +260,27 @@ def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow
         "peak_total_process_rss_bytes": peak_rss if process is not None else None,
         "memory_measurement": memory_status,
         "chunks": telemetry,
-        "source_identity_by_chunk": [{"source_id": item["source_id"], "sequence": item["sequence"]} for item in telemetry],
+        "source_identity_by_chunk": [
+            {"source_id": item["source_id"], "sequence": item["sequence"]}
+            for item in telemetry
+        ],
     }
     return result
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compare real microphone capacity across process topologies")
-    parser.add_argument("--topology", required=True, choices=("shared-model", "per-input-model"))
-    parser.add_argument("--device", required=True, nargs="+", help="Exact stable input device names, one per microphone")
+    parser = argparse.ArgumentParser(
+        description="Compare real microphone capacity across process topologies"
+    )
+    parser.add_argument(
+        "--topology", required=True, choices=("shared-model", "per-input-model")
+    )
+    parser.add_argument(
+        "--device",
+        required=True,
+        nargs="+",
+        help="Exact stable input device names, one per microphone",
+    )
     parser.add_argument("--duration-seconds", type=float, default=60)
     parser.add_argument("--stop-timeout", type=float, default=60)
     parser.add_argument("--model", default="turbo")
@@ -201,7 +291,9 @@ def main():
     parser.add_argument("--silence-threshold", type=float, default=0.05)
     parser.add_argument("--queue-capacity", type=int, default=6)
     parser.add_argument("--enqueue-timeout", type=float, default=1)
-    parser.add_argument("--output", help="Write JSON evidence to this path instead of stdout")
+    parser.add_argument(
+        "--output", help="Write JSON evidence to this path instead of stdout"
+    )
     args = parser.parse_args()
     try:
         _validate_args(args)
@@ -211,6 +303,7 @@ def main():
     rendered = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
         from pathlib import Path
+
         Path(args.output).write_text(rendered + "\n", encoding="utf-8")
     else:
         print(rendered)
