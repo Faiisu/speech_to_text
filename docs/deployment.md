@@ -8,7 +8,22 @@ The service runs directly on the host for development or through a unified Docke
 
 The unified image uses Ubuntu 24.04 and Python 3.12, providing CPU-only PyTorch, OpenVINO, CTranslate2, and the host Intel OpenCL driver interface on AMD64. It uses Compose bridge networking and publishes the API on all IPv4 host interfaces; the service receives the Intel GPU, audio devices, and host PipeWire runtime socket. Its health check calls `/api/system` without loading a model.
 
-Copy the optional deployment defaults, prepare model and download-cache directories, then build and start the speech service:
+### Turnkey pre-built deployment (recommended)
+
+The pre-built container image (`ghcr.io/faiisu/speech-to-text:latest`) packages both OpenVINO (`openvino-turbo`) and CTranslate2 (`ctranslate2-turbo`) weights inside `/app/models`. Target deployment machines do not need local model files or build tools.
+
+Copy the deployment defaults, pull the pre-built image, and start the speech service:
+
+```bash
+test -f .env || cp .env.example .env
+docker compose -p speech-feature-01 --profile linux pull speech-service
+docker compose -p speech-feature-01 --profile linux up -d --wait speech-service
+curl -fsS http://127.0.0.1:18765/api/system
+```
+
+### Local build deployment
+
+To build the image locally with customized dependencies or local model weights:
 
 ```bash
 test -f .env || cp .env.example .env
@@ -16,6 +31,8 @@ mkdir -p .cache/huggingface models
 docker compose -p speech-feature-01 --profile linux up -d --build --wait speech-service
 curl -fsS http://127.0.0.1:18765/api/system
 ```
+
+Host models present in `models/` (such as `openvino-turbo` and `ctranslate2-turbo`) are copied directly into `/app/models` inside the image during build, making the resulting container self-contained. The Compose file's volume mount can be uncommented to override container models with a host path.
 
 The container listens on `0.0.0.0:8765`, and Docker publishes it as `0.0.0.0:18765` on the host by default. `SPEECH_TO_TEXT_HOST_PORT` changes the host port; `CONTROL_CENTER_PORT` changes the container port. The service is reachable through host network interfaces, subject to host firewall and network routing rules; the existing SSH tunnel can also target host port `18765`. The Control Center has no authentication, so use this binding only on a network where its users are trusted. Host models in `models/` are copied directly into `/app/models` inside the image during build, making the container self-contained; the Compose file's volume mount can be uncommented to override container models with a host path. The host UID/GID owns mounted cache files; `RENDER_GID` and `AUDIO_GID` grant device access, `/dev/dri` and `/dev/snd` are passed through, and `/run/user/$HOST_UID` is mounted read-only for PipeWire. Start the host user's PipeWire session before Compose; its runtime directory must exist. Rebuild after changing `HOST_UID` or `HOST_GID`.
 

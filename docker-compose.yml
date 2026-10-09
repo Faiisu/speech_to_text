@@ -2,7 +2,7 @@ services:
   # Linux profile (Production target: Intel GPU passthrough, ALSA/PipeWire host audio)
   speech-service:
     profiles: ["linux", "production"]
-    image: ${SPEECH_TO_TEXT_IMAGE:-speech-to-text:local}
+    image: ${SPEECH_TO_TEXT_IMAGE:-ghcr.io/faiisu/speech-to-text:latest}
     platform: linux/amd64
     build:
       context: .

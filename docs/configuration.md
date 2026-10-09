@@ -36,7 +36,7 @@ These values configure the services defined in `docker-compose.yml` (as well as 
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SPEECH_TO_TEXT_IMAGE` | `speech-to-text:local` | Container image tag. Set to a built or registry image when starting with `--no-build`. |
+| `SPEECH_TO_TEXT_IMAGE` | `ghcr.io/faiisu/speech-to-text:latest` | Container image tag. Defaults to the pre-built turnkey image on GitHub Container Registry with pre-baked OpenVINO and CTranslate2 models. Set to `speech-to-text:local` when building locally. |
 | `CONTROL_CENTER_PORT` | `8765` | Port the containerized Control Center listens on inside the Compose network. |
 | `SPEECH_TO_TEXT_HOST_PORT` | `18765` | Linux host port published on all IPv4 host interfaces (`0.0.0.0`); the existing SSH tunnel can target this port on Linux. |
 | `HOST_UID` / `HOST_GID` | `1001` / `1001` | Numeric host identity used by the service process and persistent bind-mounted files. |
