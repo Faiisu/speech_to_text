@@ -12,22 +12,6 @@ def _root():
     return default_models_root()
 
 
-def _find_converted(root, runtime, model):
-    family = "openvino" if runtime.startswith("openvino") else "ctranslate2"
-    candidates = [root / f"{family}-{model}", root / family / model]
-    for precision in ("source", "bf16", "int8", "int4", "float32"):
-        candidates.extend(
-            (
-                root / f"{family}-{model}-{precision}",
-                root / family / f"{model}-{precision}",
-            )
-        )
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
-
-
 class OpenVINOAdapter:
     def __init__(self, config):
         try:

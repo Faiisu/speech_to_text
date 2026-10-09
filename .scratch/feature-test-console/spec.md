@@ -145,7 +145,7 @@ Design critique: an all-black surface with neon green would resemble a generic d
 
 ## Local service API and run command
 
-The service is `speech_to_text.control_center`, built with FastAPI and native browser modules. Install the `control-center` optional dependency group and run `python -m speech_to_text.control_center` at the repository root; it binds to `127.0.0.1:8765` by default and accepts an explicit `0.0.0.0` bind. Shared CORS middleware allows all origins, methods, and headers with credentials disabled; the Control Center has no authentication. `/` serves the page from the same origin as `/api` and `/assets`.
+The service is `speech_to_text.control_center`, built with FastAPI and native browser modules. Install the `control-center` optional dependency group and run `python -m speech_to_text.control_center` at the repository root; it binds to `127.0.0.1:8765` by default and accepts an explicit `0.0.0.0` bind. For development, add `--dev` to enable Uvicorn's Python reload and browser refresh when files under `speech_to_text/control_center/static/` change. This mode polls a development-only asset fingerprint every 700 ms; normal service mode does not poll. Shared CORS middleware allows all origins, methods, and headers with credentials disabled; the Control Center has no authentication. `/` serves the page from the same origin as `/api` and `/assets`.
 
 The explicit registry provides `GET /api/features` and `GET /api/system`. A feature contribution supplies its own router beneath `/api/features/<feature-id>`. Feature 01 exposes:
 

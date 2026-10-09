@@ -37,6 +37,7 @@ Run `python -m speech_to_text.control_center --help` to see these options.
 | --- | --- | --- |
 | `--host` | `127.0.0.1` | Loopback address; explicit `0.0.0.0` is also supported. |
 | `--port` | `8765` | Local HTTP port. |
+| `--dev` | Disabled | Enables Python auto-reload and browser refresh when Control Center static assets change. See the [local service run command](../.scratch/feature-test-console/spec.md#local-service-api-and-run-command). |
 
 ## Capacity command-line options
 

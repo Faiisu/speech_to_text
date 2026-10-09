@@ -1,11 +1,12 @@
 """FastAPI application factory for the local control center."""
 
+import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .registry import FeatureContribution, FeatureRegistry
@@ -29,7 +30,17 @@ def default_registry(**feature_options):
     ),))
 
 
-def create_app(*, registry=None, feature_options=None):
+def _static_version():
+    digest = hashlib.blake2b(digest_size=12)
+    for path in sorted(STATIC_DIR.rglob("*")):
+        if path.is_file():
+            stat = path.stat()
+            digest.update(path.relative_to(STATIC_DIR).as_posix().encode())
+            digest.update(f"{stat.st_mtime_ns}:{stat.st_size}".encode())
+    return digest.hexdigest()
+
+
+def create_app(*, registry=None, feature_options=None, dev=False):
     registry = registry or default_registry(**(feature_options or {}))
     owned = {}
 
@@ -50,7 +61,34 @@ def create_app(*, registry=None, feature_options=None):
 
     @app.get("/", include_in_schema=False)
     def index():
+        if dev:
+            html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+            reload_script = """<script>
+              (() => {
+                let version;
+                const check = async () => {
+                  try {
+                    const response = await fetch('/__dev/static-version', { cache: 'no-store' });
+                    if (response.ok) {
+                      const next = (await response.json()).version;
+                      if (version !== undefined && version !== next) location.reload();
+                      version = next;
+                    }
+                  } catch (_) {}
+                  setTimeout(check, 700);
+                };
+                check();
+              })();
+            </script>"""
+            return HTMLResponse(html.replace("</body>", reload_script + "</body>"))
         return FileResponse(STATIC_DIR / "index.html")
+
+    if dev:
+        @app.get("/__dev/static-version", include_in_schema=False)
+        def static_version():
+            response = JSONResponse({"version": _static_version()})
+            response.headers["Cache-Control"] = "no-store"
+            return response
 
     @app.get("/docs/features/{feature_id}", include_in_schema=False)
     def feature_contract(feature_id: str):
@@ -96,3 +134,8 @@ def create_app(*, registry=None, feature_options=None):
         app.include_router(router, prefix=f"/api/features/{contribution.id}", tags=[contribution.id])
 
     return app
+
+
+def create_dev_app():
+    """Create the control center with development-only browser refresh enabled."""
+    return create_app(dev=True)

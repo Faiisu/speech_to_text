@@ -171,7 +171,6 @@ def _capture_chunks(
     local_control = Queue()
     handle = None
     source = None
-    source_started = False
     ready_sent = False
     queue_failed = False
     try:
@@ -226,7 +225,6 @@ def _capture_chunks(
         buffer = np.empty(0, dtype=np.float32)
         sequence = -1
         source.start()
-        source_started = True
         ready_queue.put(("source", source_id, None))
         ready_sent = True
 
@@ -337,7 +335,6 @@ def _capture_chunks(
 
         try:
             source.stop()
-            source_started = False
         except Exception as exc:
             capture_error = capture_error or str(exc)
         # Preserve frames accepted by the bounded callback queue before stop.
@@ -453,7 +450,6 @@ def _capture_chunks(
         if source is not None:
             try:
                 source.stop()
-                source_started = False
             except Exception:
                 pass
         if handle is not None:

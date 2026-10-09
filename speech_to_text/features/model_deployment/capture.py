@@ -45,7 +45,7 @@ class SoundDeviceSource:
                 raise AudioInputError(
                     "device must be omitted or a stable microphone device name"
                 )
-            self.sample_rate = int(round(info["default_samplerate"]))
+            self.sample_rate = round(info["default_samplerate"])
             self.channels = 1
             if self.sample_rate < 8000 or self.sample_rate > 48000:
                 raise AudioInputError(
@@ -64,7 +64,7 @@ class SoundDeviceSource:
             return
         try:
             self._on_audio(frames.copy())
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._notify_error(exc)
 
     def _notify_error(self, exc):

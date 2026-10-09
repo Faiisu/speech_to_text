@@ -22,6 +22,8 @@ uv pip install --python .venv/bin/python -e '.[control-center]'
 
 The service binds to `127.0.0.1:8765` by default and is intended to run directly on the host. Transcription and per-chunk RTF reporting work locally without a database or telemetry service.
 
+For frontend development, run the same command with `--dev` to reload Python code and refresh the browser when Control Center static assets change. See [Configuration](configuration.md#control-center-command-line-options) for the command-line options.
+
 ## Add a model runtime and microphone support
 
 Install the optional runtime and capture dependencies into the same local environment:
