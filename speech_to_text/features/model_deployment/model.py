@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import threading
+import time
+import uuid
 import warnings
 from copy import deepcopy
 from queue import Queue
@@ -12,6 +14,7 @@ from .audio import TARGET_RATE, read_clip
 from .config import model_config as validate_model_config, flow_config as validate_flow_config
 from .errors import ChunkInferenceWarning, ConfigurationError, ModelClosedError, ModelLoadError
 from .runtime import create_runtime
+from .telemetry import publish_inference_measurement
 
 
 class ModelHandle:
@@ -34,6 +37,7 @@ class ModelHandle:
         self._worker = None
         self._sessions = set()
         self._telemetry_sink = None
+        self._event_sink = None
 
     @property
     def model(self):
@@ -136,7 +140,8 @@ def load_model(model_config=None, *, runtime_factory=None):
         raise ModelLoadError(f"Unable to load {resolved['model']} with {resolved['runtime']}: {exc}") from exc
 
 
-def transcribe_clip(clip, model_handle, flow_config=None):
+def transcribe_clip(clip, model_handle, flow_config=None, *, measurement_sink=None, source_id=None,
+                    measurement_clock=None, monotonic_clock=None):
     if not isinstance(model_handle, ModelHandle):
         raise TypeError("model_handle must be a ModelHandle returned by load_model")
     model_handle._check()
@@ -146,6 +151,8 @@ def transcribe_clip(clip, model_handle, flow_config=None):
     audio = read_clip(clip)
     frame_count = max(1, int(round(flow["chunk_seconds"] * TARGET_RATE)))
     transcripts = []
+    source_id = source_id or uuid.uuid4().hex
+    monotonic_clock = monotonic_clock or time.perf_counter
     # Keep clip chunks contiguous on the runtime while multiple sessions share this handle.
     with model_handle._inference_lock:
         model_handle._check()
@@ -153,11 +160,20 @@ def transcribe_clip(clip, model_handle, flow_config=None):
             chunk = audio[start:start + frame_count]
             if chunk.size == 0 or float((chunk * chunk).mean() ** 0.5) < flow["silence_threshold"]:
                 continue
+            inference_started = monotonic_clock()
             try:
                 text = model_handle._transcribe(chunk, flow)
             except Exception as exc:
+                elapsed = max(0.0, monotonic_clock() - inference_started)
+                publish_inference_measurement(measurement_sink, operation="finite-clip", source_id=source_id,
+                    sequence=sequence, audio_seconds=len(chunk) / TARGET_RATE, inference_seconds=elapsed,
+                    status="failed", error=exc, clock=measurement_clock)
                 warnings.warn(f"Chunk {sequence} inference failed: {exc}", ChunkInferenceWarning, stacklevel=2)
                 continue
+            inference_elapsed = max(0.0, monotonic_clock() - inference_started)
+            publish_inference_measurement(measurement_sink, operation="finite-clip", source_id=source_id,
+                sequence=sequence, audio_seconds=len(chunk) / TARGET_RATE,
+                inference_seconds=inference_elapsed, clock=measurement_clock)
             text = str(text).strip()
             if text:
                 transcripts.append(text)

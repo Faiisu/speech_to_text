@@ -1,3 +1,5 @@
+[← Back to README](../../README.md)
+
 # Domain Docs
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
@@ -51,3 +53,8 @@ If the concept you need isn't in the glossary yet, that's a signal: either you'r
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
 > _Contradicts ADR-0007 (event-sourced orders), but worth reopening because…_
+
+## See also
+
+- [Contributing](../contributing.md) for this repository's feature workflow.
+- [Issue tracker guide](issue-tracker.md) for specification and ticket locations.

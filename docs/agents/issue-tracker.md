@@ -1,3 +1,5 @@
+[← Back to README](../../README.md)
+
 # Issue tracker: Local Markdown
 
 Issues and specs for this repo live as markdown files in `.scratch/`.
@@ -28,3 +30,8 @@ Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
 - **Frontier**: scan `.scratch/<effort>/issues/` for files that are open, unblocked, and unclaimed; first by number wins.
 - **Claim**: set `Status: claimed` and save before any work.
 - **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`.
+
+## See also
+
+- [Contributing](../contributing.md) for documentation and feature change guidance.
+- [Triage labels](triage-labels.md) for issue status values.

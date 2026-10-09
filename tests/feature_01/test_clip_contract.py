@@ -2,8 +2,10 @@
 
 import numpy as np
 import pytest
+from datetime import datetime, timezone
 
 from .support import RuntimeFactory, ScriptedRuntime, wav_bytes
+from .support import MeasurementCollector
 
 
 @pytest.mark.parametrize("input_kind", ["bytes", "path"])
@@ -43,11 +45,17 @@ def test_stereo_clip_is_downmixed_and_resampled_before_inference(api, sample_rat
 def test_failed_chunk_is_reported_and_later_text_is_kept(api):
     runtime = ScriptedRuntime(["first", RuntimeError("decode failed"), "third"])
     handle = api.load_model({}, runtime_factory=RuntimeFactory(runtime))
+    history = MeasurementCollector()
     try:
         with pytest.warns(api.ChunkInferenceWarning, match="decode failed"):
-            result = api.transcribe_clip(wav_bytes([10000] * 4800), handle, {"chunk_seconds": 0.1})
+            result = api.transcribe_clip(wav_bytes([10000] * 4800), handle, {"chunk_seconds": 0.1},
+                measurement_sink=history.record, source_id="clip-failure-test")
         assert result == "first third"
         assert "decode failed" not in result
+        records = history.history()
+        assert [record["status"] for record in records] == ["completed", "failed", "completed"]
+        assert records[1]["error"] == "decode failed"
+        assert records[1]["rtf"] >= 0
     finally:
         handle.close()
 
@@ -59,6 +67,32 @@ def test_silence_gate_skips_quiet_audio_without_inventing_text(api):
         result = api.transcribe_clip(wav_bytes([0] * 1600 + [10000] * 1600), handle, {"chunk_seconds": 0.1})
         assert result == "speech"
         assert len(runtime.audio) == 1
+    finally:
+        handle.close()
+
+
+def test_clip_publishes_per_chunk_rtf_with_completion_time_pid_and_no_silence_records(api):
+    runtime = ScriptedRuntime(["speech"])
+    handle = api.load_model({}, runtime_factory=RuntimeFactory(runtime))
+    history = MeasurementCollector()
+    timestamp = datetime(2026, 10, 9, 12, 30, tzinfo=timezone.utc)
+    clock_values = iter([1.0, 1.5])
+    try:
+        result = api.transcribe_clip(wav_bytes([0] * 1600 + [10000] * 1600), handle,
+            {"chunk_seconds": 0.1}, measurement_sink=history.record, source_id="clip-rtt-test",
+            measurement_clock=lambda: timestamp, monotonic_clock=lambda: next(clock_values))
+        records = history.history()
+        assert result == "speech"
+        assert len(records) == 1
+        record, = records
+        assert record["feature_id"] == "feature-01-model-deployment"
+        assert record["operation"] == "finite-clip"
+        assert record["pid"] == __import__("os").getpid()
+        assert record["completed_at"] == "2026-10-09T12:30:00+00:00"
+        assert (record["source_id"], record["sequence"]) == ("clip-rtt-test", 1)
+        assert record["audio_seconds"] == pytest.approx(0.1)
+        assert record["inference_seconds"] == pytest.approx(0.5)
+        assert record["rtf"] == pytest.approx(5.0)
     finally:
         handle.close()
 

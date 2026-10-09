@@ -32,7 +32,7 @@ def _validate_args(args):
         raise ValueError("device must be a non-empty list or tuple of stable microphone names")
 
 
-def run_benchmark(args):
+def run_benchmark(args, *, runtime_factory=None, audio_source_factory=None, flow_configs=None):
     _validate_args(args)
     config = {"model": args.model, "runtime": args.runtime, "precision": args.precision,
               "queue_capacity": args.queue_capacity, "enqueue_timeout_seconds": args.enqueue_timeout}
@@ -40,7 +40,8 @@ def run_benchmark(args):
             "silence_threshold": args.silence_threshold}
     started = time.perf_counter()
     try:
-        group = start_multiprocess_microphone_flows(args.device, config, flow, topology=args.topology)
+        group = start_multiprocess_microphone_flows(args.device, config, flow, topology=args.topology,
+            runtime_factory=runtime_factory, audio_source_factory=audio_source_factory, flow_configs=flow_configs)
     except (AudioInputError, ModelLoadError) as exc:
         return {
             "status": "unavailable",

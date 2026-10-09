@@ -6,6 +6,18 @@ from queue import Empty
 from threading import Event
 import wave
 
+
+class MeasurementCollector:
+    """Test-only sink for asserting the public measurement callback contract."""
+    def __init__(self):
+        self.records = []
+
+    def record(self, record):
+        self.records.append(dict(record))
+
+    def history(self):
+        return list(self.records)
+
 import numpy as np
 
 

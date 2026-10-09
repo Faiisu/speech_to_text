@@ -1,0 +1,28 @@
+# 02. Grafana dashboards and observability Compose stack
+
+Status: ready-for-human
+Blocked by: 01
+Execution: implementation-complete; local-deploy-passed; linux-host-pending
+
+## Scope
+
+Provide local/host deployment for TimescaleDB and Grafana with a provisioned read-only data source and dashboards described in the [System Observability spec](../spec.md).
+
+## Acceptance checklist
+
+- [x] Compose starts TimescaleDB and Grafana with persistent volumes and loopback-only host ports by default.
+- [x] Grafana's PostgreSQL data source is provisioned from environment variables and uses a read-only database role.
+- [x] Provisioned dashboards can be edited and saved in Grafana UI, and the Grafana volume preserves those edits across container replacement.
+- [x] Dashboards show per-chunk RTF rows, RTF over time and target 1.0, host CPU/memory/swap, owned process CPU/RSS, and telemetry writer health.
+- [x] A recent service-event/error panel filters structured records by service, feature, severity, PID, and source.
+- [x] Dashboard filters identify feature, operation, PID, source, and status without averaging away individual chunk records.
+- [x] A documented example environment file has placeholders only; real credentials are not committed.
+- [x] A Compose smoke check verifies database readiness, telemetry insert/query, and Grafana dashboard provisioning.
+
+## Comments
+
+Use version-controlled Grafana provisioning. The model-serving application remains on the host; only observability infrastructure runs in Compose.
+
+## Verification
+
+The stack is running on the local development host at loopback ports 5433 and 3000. The smoke check queried an inserted event through Grafana's provisioned data source and verified Editor folder access. Linux target-host validation remains pending.

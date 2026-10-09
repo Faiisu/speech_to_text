@@ -4,10 +4,11 @@ from queue import Empty
 
 import numpy as np
 import pytest
+import time
 
 from .support import (
     ManualAudioSource, RuntimeFactory, ScriptedRuntime,
-    collect_until_completed, stop_and_close, texts, wav_bytes,
+    MeasurementCollector, collect_until_completed, stop_and_close, texts, wav_bytes,
 )
 
 
@@ -104,6 +105,34 @@ def test_failed_microphone_chunk_does_not_stop_later_chunks(api):
         assert error["fatal"] is False
         assert error["message"]
         assert events[-1]["status"] == "stopped"
+    finally:
+        stop_and_close(handle, session)
+
+
+def test_live_session_publishes_timestamped_pid_and_sequence_measurements(api):
+    source = ManualAudioSource()
+    history = MeasurementCollector()
+    handle = api.load_model({}, runtime_factory=RuntimeFactory(ScriptedRuntime(["live"])))
+    handle._measurement_sink = history.record
+    session = start(api, handle, source, "measurement-live")
+    try:
+        source.push(np.full(1600, 0.3))
+        session.stop(timeout=3)
+        deadline = time.monotonic() + 1
+        records = []
+        while time.monotonic() < deadline:
+            records = history.history()
+            if records:
+                break
+            time.sleep(0.01)
+        record, = records
+        assert record["operation"] == "microphone-session"
+        assert record["pid"] == __import__("os").getpid()
+        assert (record["source_id"], record["sequence"]) == ("measurement-live", 0)
+        assert record["audio_seconds"] == pytest.approx(0.1)
+        assert record["inference_seconds"] >= 0
+        assert record["rtf"] == pytest.approx(record["inference_seconds"] / record["audio_seconds"])
+        assert record["completed_at"].endswith("+00:00")
     finally:
         stop_and_close(handle, session)
 

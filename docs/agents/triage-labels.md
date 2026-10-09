@@ -1,3 +1,5 @@
+[← Back to README](../../README.md)
+
 # Triage Labels
 
 Canonical triage roles map directly to this repo's issue status strings.
@@ -14,3 +16,8 @@ When a skill mentions a triage role, use its tracker string
 in the issue file's `Status:` line.
 
 Edit the tracker column to customize the vocabulary.
+
+## See also
+
+- [Issue tracker guide](issue-tracker.md) for where status is recorded.
+- [Contributing](../contributing.md) for project change workflow.

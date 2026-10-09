@@ -1,16 +1,29 @@
 # Speech-to-Text
 
-The previous proof-of-concept codebase is archived in [`legacies-poc/`](./legacies-poc/). Its application code, tests, deployment scripts, project configuration, model files, audio clips, domain glossary, and ADRs remain together there.
+Speech-to-Text is a modular Python system for loading speech models, transcribing audio clips or microphone input, and testing feature behavior through a local control center. Optional telemetry is stored in TimescaleDB and explored in Grafana; the former proof of concept is archived in [`legacies-poc/`](legacies-poc/README.md).
 
-See the [legacy README](./legacies-poc/README.md) for setup and operation. Run its commands from `legacies-poc/`.
-
-The [feature verification audit](./.scratch/feature-verification/spec.md) records the existing system's behavior before building the new program. Repository-wide agent rules and issue tracking remain at the repository root.
-
-The existing local `.venv/` remains at the repository root. To run the archived tests with that environment:
+## Quick Start
 
 ```bash
-cd legacies-poc
-../.venv/bin/python -m pytest -q
+uv venv .venv
+uv pip install --python .venv/bin/python -e '.[control-center,telemetry]'
+.venv/bin/python -m speech_to_text.control_center
 ```
 
-For an independent legacy environment, run `uv sync --group dev` from `legacies-poc/` before using the commands in the legacy README.
+Open <http://127.0.0.1:8765/>. See [Getting Started](docs/getting-started.md) to install a model runtime, enable microphone capture, or connect telemetry.
+
+## Documentation
+
+- [Getting Started](docs/getting-started.md)
+- [Architecture](docs/architecture.md)
+- [Configuration](docs/configuration.md)
+- [API Reference](docs/api.md)
+- [Deployment](docs/deployment.md)
+- [Contributing](docs/contributing.md)
+- [Agent domain documentation guide](docs/agents/domain.md)
+- [Issue tracker guide](docs/agents/issue-tracker.md)
+- [Triage labels](docs/agents/triage-labels.md)
+- [Feature 01 specification](.scratch/new-speech-to-text/spec.md)
+- [Control center specification](.scratch/feature-test-console/spec.md)
+- [System observability specification](.scratch/system-observability/spec.md)
+- [Archived proof-of-concept guide](legacies-poc/README.md)
