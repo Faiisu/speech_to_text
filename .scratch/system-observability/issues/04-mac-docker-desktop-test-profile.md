@@ -6,7 +6,7 @@ Blocked by: 02, 03
 
 ## Scope
 
-Provide a companion Compose profile for exercising the app, CPU model, and telemetry in a native ARM64 container on Apple Silicon with Docker Desktop. The profile is for container and application integration checks; it must not be reported as macOS hardware telemetry, microphone, GPU, or Linux target evidence. Operator steps and the resource-measurement boundary are documented in [Deployment](../../../docs/deployment.md#mac-docker-desktop-test-profile).
+Provide a companion Compose profile for exercising the app, CPU model, and telemetry in a native ARM64 container on Apple Silicon with Docker Desktop. The profile is for container and application integration checks; it must not be reported as macOS hardware telemetry, microphone, GPU, or Linux target evidence. This is a historical deployment ticket; its implementation and evidence are retained here, while current local service setup is documented in [Getting Started](../../../docs/getting-started.md).
 
 ## Acceptance checklist
 

@@ -2,7 +2,7 @@
 
 # Configuration
 
-The [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults) is the source of truth for model and flow options, defaults, valid ranges, and runtime compatibility. Use this page for entry points, environment variables, and local command guidance.
+The [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults) is the source of truth for model and flow options, defaults, valid ranges, and runtime compatibility. Use this page for entry points and local command guidance.
 
 ## Model configuration
 
@@ -16,40 +16,18 @@ Pass flow settings to a clip or microphone flow; each input can have independent
 
 The HTTP clip adapter currently accepts `beam_size`, `temperature`, and `condition_on_previous_text` as form fields. The Python callable accepts all decoding options in the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults).
 
-## Environment variables
-
-Copy [`.env.example`](../.env.example) to `.env` to override deployment defaults. No credentials or database settings are required. Keep `.env` out of version control.
+## Local environment variables
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `COMPOSE_PROFILES` | `linux` | Active Docker Compose profile (`linux` for Linux Intel GPU / ALSA, or `mac` for macOS development with host microphone bridge). |
-| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory for a host process (falling back to `legacies-poc/models/` when empty); `/app/models` in containers | Local model files used by catalog discovery and runtime loading. Mounted into `/app/models` read-only by Docker Compose (e.g. `./models` or `./legacies-poc/models`). |
-| `MAC_TEST_CONTROL_CENTER_PORT` | `18766` | Mac Docker Desktop test profile API port; published on all IPv4 host interfaces (`0.0.0.0`). |
-| `MAC_TEST_MICROPHONE_BRIDGE_PORT` | `18767` | Mac host microphone bridge port; bound to Mac loopback. |
-| `MAC_TEST_PLATFORM` | `linux/arm64` | Native Mac test image platform. Use `linux/amd64` only for Docker Desktop emulation fallback. |
+| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory; falls back to `legacies-poc/models/` when it contains installed weights | Local model files used by catalog discovery and runtime loading. |
+| `SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE` | Disabled | Set to `1` to enable authenticated PCM input from the optional host microphone bridge. |
+| `SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE_URL` | `http://127.0.0.1:18767/api` | Local host bridge URL supplied to the Control Center page when the bridge is enabled. |
+| `SPEECH_TO_TEXT_BRIDGE_PORT` | `18767` | Loopback port used by the optional Mac host microphone bridge. |
+| `SPEECH_TO_TEXT_BRIDGE_SERVICE_URL` | `http://127.0.0.1:18766` | Local Control Center URL used by the bridge; set this to the service's port if it differs. |
+| `SPEECH_TO_TEXT_BRIDGE_CONTROL_ORIGIN` | `*` | Allowed Control Center origin for bridge requests. A specific local HTTP origin enables strict origin checking. |
 
-Other compose defaults for image tags and host UID/GID are listed below and in [`.env.example`](../.env.example).
-
-## Container deployment settings
-
-These values configure the services defined in `docker-compose.yml` (as well as the standalone `compose.speech-service.yml` and `compose.mac-test.yml` files). The unified image builds natively on both Linux AMD64 and Apple Silicon ARM64. The optional Mac Docker Desktop profile is documented in [Deployment](deployment.md#mac-docker-desktop-test-profile).
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `SPEECH_TO_TEXT_IMAGE` | `speech-to-text:local` | Container image tag. Set to a built or registry image when starting with `--no-build`. |
-| `CONTROL_CENTER_PORT` | `8765` | Port the containerized Control Center listens on inside the Compose network. |
-| `SPEECH_TO_TEXT_HOST_PORT` | `18765` | Linux host port published on all IPv4 host interfaces (`0.0.0.0`); the existing SSH tunnel can target this port on Linux. |
-| `HOST_UID` / `HOST_GID` | `1001` / `1001` | Numeric host identity used by the service process and persistent bind-mounted files. |
-| `RENDER_GID` | `992` | Host render-device group added to the container process. |
-| `AUDIO_GID` | `29` | Host audio-device group added to the container process. |
-| `HF_HOME` | `/home/speech/.cache/huggingface` in the container | Persistent Hugging Face download and conversion cache. |
-| `SPEECH_TO_TEXT_MAC_TEST_IMAGE` | `speech-to-text:mac-test` | Native ARM64 Mac Docker Desktop test profile image tag. |
-| `SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE` | Disabled | Enables authenticated PCM ingest in the service container; enabled by the Mac Docker Desktop profile. |
-| `SPEECH_TO_TEXT_HOST_MICROPHONE_BRIDGE_URL` | `http://127.0.0.1:18767/api` | Host bridge URL supplied to the Control Center page in the Mac profile. |
-
-See [Deployment](deployment.md#linux-service-container) for the service Compose command and required Linux host access.
-
-The Mac host bridge also accepts `SPEECH_TO_TEXT_BRIDGE_PORT` (`18767`), `SPEECH_TO_TEXT_BRIDGE_SERVICE_URL` (`http://127.0.0.1:18766`), and `SPEECH_TO_TEXT_BRIDGE_CONTROL_ORIGIN` (`*`). Wildcard CORS supports loopback aliases used by the Control Center; a specific loopback HTTP origin can be set to enable strict origin checking. See [Deployment](deployment.md#mac-microphone-bridge) for startup and stop commands.
+No credentials or database settings are required for local operation.
 
 ## Control center command-line options
 
@@ -57,7 +35,7 @@ Run `python -m speech_to_text.control_center --help` to see these options.
 
 | Option | Default | Values and notes |
 | --- | --- | --- |
-| `--host` | `127.0.0.1` | Must be `127.0.0.1`, `localhost`, or `::1`. |
+| `--host` | `127.0.0.1` | Loopback address; explicit `0.0.0.0` is also supported. |
 | `--port` | `8765` | Local HTTP port. |
 
 ## Capacity command-line options
@@ -97,4 +75,3 @@ These variables only configure opt-in proofs in `tests/feature_01/test_hardware_
 
 - [Getting Started](getting-started.md) for local installation.
 - [API Reference](api.md) for where model and flow settings are sent.
-- [Deployment](deployment.md) for Linux and Mac service setup.

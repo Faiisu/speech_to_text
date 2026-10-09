@@ -10,7 +10,7 @@ Run deployment proofs on the actual macOS microphone host and Advantech UBX-330M
 
 ## Acceptance checklist
 
-- [ ] Run the documented macOS microphone smoke test with a named device and report the observed model/runtime and clean shutdown.
+- [x] Run the documented macOS microphone smoke test with a named device and report the observed model/runtime and clean shutdown.
 - [x] Install and load `turbo` with OpenVINO GPU at source precision on the UBX-330M; record device and conversion/load outcomes.
 - [ ] Replay the versioned, independently checked Thai reference WAV; record hashes, model/runtime/device/precision/language, transcript, per-chunk latency, RTF, and normalized CER at most 20%.
 - [ ] Run three microphones at audio pace using shared-model IPC and per-input model processes; separately report memory, queue growth, dropped chunks, and real-time sustainment.
@@ -22,6 +22,8 @@ Run deployment proofs on the actual macOS microphone host and Advantech UBX-330M
 This remains `ready-for-human` until target hardware and verified reference material are available. It cannot be marked completed based on injected-source tests or the archived PoC benchmark.
 
 Partial local evidence: the Mac named microphone was exercised through both process topologies with an injected runtime; see `../evidence/local-ipc-microphone-smoke.json`. This establishes capture/IPC routing/clean process shutdown only. Real model recognition on microphone input, OpenVINO GPU, verified Thai CER, and target capacity remain unchecked.
+
+Later evidence supersedes the earlier OpenVINO GPU and Mac capture statements below: the Mac Docker bridge captured and inferred from the named microphone using the real CTranslate2 runtime, and the UBX-330M loaded `turbo/openvino-gpu/source` and completed real clip inference. See [`Mac Docker microphone proof`](../evidence/mac-docker-microphone-20261009.json) and [`Linux local RTF proof`](../evidence/linux-local-rtf-20261009.json). The microphone run does not establish recognition accuracy; the Linux clip lacks an independently verified reference transcript. Three-microphone capacity, both real-model process topologies, disconnect/reconnect, and overload remain pending.
 
 ## Linux deployment proof: 2026-10-09
 

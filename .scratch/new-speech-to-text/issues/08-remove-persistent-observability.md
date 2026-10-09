@@ -10,7 +10,7 @@ Remove the current application's TimescaleDB/Grafana deployment and persistence 
 
 The deployment owns Compose files, Dockerfiles, environment examples, deployment scripts/assets, operator documentation, and this ticket. Runtime/API implementation and tests are owned by the pipeline work. Preserve historical audit tickets, evidence, and the archived PoC; historical statements are not current deployment instructions.
 
-The initial Linux host publication was implemented by [ticket 09](09-linux-docker-port-publishing.md). The Compose files were later edited to publish Linux `18765` and Mac `18766` on all IPv4 host interfaces (`0.0.0.0`); see the current [deployment guide](../../../docs/deployment.md#network-exposure).
+The initial Linux host publication was implemented by [ticket 09](09-linux-docker-port-publishing.md). The Compose files were later edited to publish Linux `18765` and Mac `18766` on all IPv4 host interfaces (`0.0.0.0`). This ticket records that former deployment; the container configuration and operator guide have since been removed, and the service now runs directly on the host as described in [Getting Started](../../../docs/getting-started.md).
 
 ## Acceptance checklist
 

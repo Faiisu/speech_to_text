@@ -6,7 +6,7 @@ Blocked by: none
 
 ## Scope
 
-Build and run the current Control Center, model deployment, and system telemetry as one Linux container while retaining the loopback-only HTTP boundary and existing observability services. See [Deployment](../../../docs/deployment.md#linux-service-container) for the operator workflow.
+Build and run the current Control Center, model deployment, and system telemetry as one Linux container while retaining the loopback-only HTTP boundary and existing observability services. This is a historical deployment ticket; the container configuration and its operator workflow have since been removed. Current local service setup is documented in [Getting Started](../../../docs/getting-started.md).
 
 ## Acceptance checklist
 

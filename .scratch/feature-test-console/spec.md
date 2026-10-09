@@ -46,7 +46,7 @@ There is no separate system-observation dashboard or historical telemetry store.
 
 ### Microphone and process flows
 
-- Show host input device names and allow the OS default or a named device. Native host deployments capture in the service. In the Mac Docker Desktop profile, a loopback-only Mac host bridge owns physical capture and streams bounded PCM batches into the existing Feature 01 session; the browser does not request microphone access. Opening the Mac-published UI from another device does not make the Mac loopback bridge reachable to that device's browser.
+- Show host input device names and allow the OS default or a named device. The service captures directly on its host. When the service cannot access a Mac microphone directly, an optional loopback-only host bridge captures audio and streams bounded PCM batches into the existing Feature 01 session; the browser does not request microphone access.
 - Start/stop `start_microphone_flow` and stream ordered transcript, error, and completion events with source ID and sequence.
 - Support shared-model and per-input-model process topologies, device lists, and per-source flow settings.
 - Show per-source lifecycle, queue timeout/errors, and measured capacity output. Distinguish pass, fail, unavailable, and inconclusive; never show unavailable values as zero or passing.
@@ -67,7 +67,7 @@ The feature's acceptance criteria are incomplete until the page is reachable thr
 ## Architecture and safety
 
 - The browser calls a Python HTTP adapter which invokes callable feature APIs in-process. The browser never imports or duplicates Python feature logic.
-- Bind the directly run developer service to loopback (`127.0.0.1`) by default. Linux and Mac Compose profiles publish their configured service ports on all IPv4 host interfaces. The shared Control Center CORS middleware allows all origins, methods, and headers with credentials disabled; the Control Center has no authentication. Use the Compose binding on a trusted network and apply host firewall rules as needed.
+- Bind the directly run service to loopback (`127.0.0.1`) by default. The shared Control Center CORS middleware allows all origins, methods, and headers with credentials disabled; the Control Center has no authentication. Use an explicit `0.0.0.0` bind only on a trusted network and apply host firewall rules as needed.
 - Use request/response for catalog, configuration, lifecycle, and finite actions. Use an event stream for long-running feature sessions; choose the transport while defining the API contract.
 - Upload WAV bytes to the service, validate them through Feature 01, and avoid retaining uploaded clips after the request.
 - Keep shared shell/navigation/event handling in a common control-center module. Keep each feature page, API adapter, and UI tests in its feature-named module.
@@ -95,7 +95,7 @@ Use feature-based modules as required by the repository's [agent rules](../../AG
 - A future feature can add its page and test structure by adding a feature-owned module and registry contribution without rewriting existing pages.
 - Each feature is developed with its frontend contribution and UI/API tests alongside its backend API.
 - Simulated, real-runtime, and hardware proof statuses are distinguishable.
-- The directly run local service binds only to loopback by default; Compose publishes on host interfaces as documented in Deployment.
+- The directly run local service binds to loopback by default; an explicit `0.0.0.0` bind is available for trusted networks.
 - Existing feature contract suites run separately and continue to validate backend contracts independently of the browser.
 
 ## Decisions to make during implementation
@@ -145,7 +145,7 @@ Design critique: an all-black surface with neon green would resemble a generic d
 
 ## Local service API and run command
 
-The initial service is `speech_to_text.control_center`, built with FastAPI and native browser modules. Install the `control-center` optional dependency group and run `python -m speech_to_text.control_center` at the repository root; it binds to `127.0.0.1:8765` by default, and accepts an explicit `0.0.0.0` bind. Linux and Mac Compose profiles listen on the container bridge and publish host ports `18765` and `18766` on all IPv4 interfaces. Shared CORS middleware allows all origins, methods, and headers with credentials disabled; the Control Center has no authentication. `/` serves the page from the same origin as `/api` and `/assets`.
+The service is `speech_to_text.control_center`, built with FastAPI and native browser modules. Install the `control-center` optional dependency group and run `python -m speech_to_text.control_center` at the repository root; it binds to `127.0.0.1:8765` by default and accepts an explicit `0.0.0.0` bind. Shared CORS middleware allows all origins, methods, and headers with credentials disabled; the Control Center has no authentication. `/` serves the page from the same origin as `/api` and `/assets`.
 
 The explicit registry provides `GET /api/features` and `GET /api/system`. A feature contribution supplies its own router beneath `/api/features/<feature-id>`. Feature 01 exposes:
 
@@ -157,7 +157,7 @@ The explicit registry provides `GET /api/features` and `GET /api/system`. A feat
 | `DELETE /models/<handle-id>` | Stop owned flows and close a model handle |
 | `POST /clips` | Validate and transcribe an uploaded WAV without retaining it |
 | `POST /microphones` | Start a Feature 01 microphone session |
-| `GET /capture-capabilities` | Report deployment-specific microphone capture adapters |
+| `GET /capture-capabilities` | Report configured microphone capture adapters |
 | `POST /sessions/<source-id>/audio` | Append one authenticated, bounded PCM batch in the Mac profile |
 | `POST /sessions/<source-id>/capture-error` | End a Mac host-bridge session with a typed capture error |
 | `POST /process-groups` | Start shared-model or per-input-model capture processes |

@@ -2,15 +2,13 @@
 
 # API Reference
 
-The Control Center HTTP API adapts requests to the callable feature modules. It binds to loopback by default when run directly; Linux and Mac Compose profiles bind inside the container and publish their host ports on all IPv4 host interfaces. Its CORS middleware allows all origins, methods, and headers without credentials, and the API has no authentication. Deployment exposure is documented in [Deployment](deployment.md#network-exposure). The feature function contract is defined in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#callable-interface); the control-center route design is recorded in the [control center specification](../.scratch/feature-test-console/spec.md#local-service-api-and-run-command).
+The Control Center HTTP API adapts requests to the callable feature modules. It binds to loopback by default and permits an explicit `0.0.0.0` bind. Its CORS middleware allows all origins, methods, and headers without credentials, and the API has no authentication. The feature function contract is defined in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#callable-interface); the control-center route design is recorded in the [control center specification](../.scratch/feature-test-console/spec.md#local-service-api-and-run-command).
 
 Set `BASE_URL` to `http://127.0.0.1:8765` in the examples below.
 
 ```bash
 export BASE_URL=http://127.0.0.1:8765
 ```
-
-For local access, use `http://127.0.0.1:18765` for Linux Compose or `http://127.0.0.1:18766` for Mac Docker Desktop. Other devices on the same routed network can use the Docker host's IPv4 address with the corresponding port, subject to firewall rules.
 
 ## Shared endpoints
 
@@ -30,7 +28,7 @@ All routes use the prefix `/api/features/feature-01-model-deployment`.
 | `GET /` | Feature readiness and currently loaded model handles. |
 | `GET /catalog` | Rescan available models and runtime readiness. |
 | `GET /devices` | List host audio input devices; reports the OS default input. |
-| `GET /capture-capabilities` | Report whether a deployment enables the Mac host bridge. |
+| `GET /capture-capabilities` | Report whether the Control Center has the optional host microphone bridge enabled. |
 | `POST /models` | Load a model; JSON fields include `model`, `runtime`, `precision`, `queue_capacity`, and `enqueue_timeout_seconds`. |
 | `DELETE /models/{handle_id}` | Stop flows owned by the handle and close it. |
 | `POST /clips` | Transcribe an uploaded WAV using multipart form data. |
@@ -78,7 +76,7 @@ Omit `device` or pass `null` to use the OS-selected input. The response returns 
 
 The microphone event stream includes a `type: "measurement"` event for every inferred chunk before completion. Its JSON data carries the same per-chunk fields as clip measurements, including the UTC `completed_at` timestamp. Transcript, error, and terminal completion events remain separate. Process-group SSE streams also carry one measurement event per inferred chunk with process and source attribution. The [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#per-chunk-performance-measurement) defines the measurement contract.
 
-The Mac Docker profile uses the host bridge from the Control Center page. The bridge creates this same session with `capture_mode: "host-bridge"` and a host-selected `sample_rate`; the response also contains a per-session `ingest_token`. The browser page keeps that token out of its requests and asks the loopback bridge to capture and forward audio. The bridge feeds batches through the same microphone session and drains them before calling stop. Process groups and capacity capture still require direct host access to microphones.
+When the host microphone bridge is enabled, the Control Center page uses it to create this same session with `capture_mode: "host-bridge"` and a host-selected `sample_rate`; the response also contains a per-session `ingest_token`. The browser page keeps that token out of its requests and asks the loopback bridge to capture and forward audio. The bridge feeds batches through the same microphone session and drains them before calling stop. Process groups and capacity capture still require direct host access to microphones.
 
 In one terminal, follow the live event stream:
 
@@ -107,4 +105,3 @@ curl -sS -X POST "$BASE_URL/api/features/feature-01-model-deployment/process-gro
 - [Getting Started](getting-started.md) to start the service.
 - [Configuration](configuration.md) for request settings and defaults.
 - [Architecture](architecture.md) for the callable feature boundaries.
-- [Deployment](deployment.md) for Linux and Mac service setup.
