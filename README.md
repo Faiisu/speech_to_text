@@ -14,6 +14,7 @@ The repository provides a React frontend, a FastAPI backend, and callable featur
 
 - [Getting Started](docs/getting-started.md)
 - [Deployment plan: UBX-330M](docs/deployment.md)
+- [UBX-330M installer](scripts/install_ubx330m.sh) — run with `sudo ./scripts/install_ubx330m.sh` on the target host.
 - [Configuration](docs/configuration.md)
 - [API Interfaces](docs/api.md)
 - [Architecture](docs/architecture.md)
