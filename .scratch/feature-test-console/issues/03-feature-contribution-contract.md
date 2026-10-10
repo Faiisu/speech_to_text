@@ -1,7 +1,9 @@
 # 03. Per-feature frontend contribution contract
 
-Status: ready-for-agent
+Status: wontfix
 Blocked by: 01, 02
+
+Legacy outcome: this Control Center registry/page contribution plan was superseded by the current React feature-folder architecture. Current placement rules are in [`docs/project-structure.md`](../../../docs/project-structure.md).
 
 ## Scope
 

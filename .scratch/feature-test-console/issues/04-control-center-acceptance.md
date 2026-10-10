@@ -1,7 +1,9 @@
 # 04. System overview and end-to-end acceptance
 
-Status: ready-for-agent
+Status: wontfix
 Blocked by: 01, 02, 03
+
+Legacy outcome: the former Control Center acceptance plan was superseded by the current React/FastAPI application. Current browser and service workflows are documented in [`docs/getting-started.md`](../../../docs/getting-started.md) and [`docs/architecture.md`](../../../docs/architecture.md).
 
 ## Scope
 

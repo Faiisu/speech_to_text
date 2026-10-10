@@ -1,8 +1,10 @@
 # 01. Control center foundation and local API adapter
 
-Status: ready-for-human
+Status: wontfix
 Blocked by: none
 Execution: complete
+
+Legacy outcome: the original native Control Center/API service was implemented and browser-verified, then replaced by the current React frontend and versioned FastAPI application. See [`docs/architecture.md`](../../../docs/architecture.md) for current boundaries.
 
 ## Scope
 

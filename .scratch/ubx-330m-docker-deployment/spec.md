@@ -1,6 +1,7 @@
 # UBX-330M Docker deployment
 
-Status: trial complete
+Status: wontfix
+Legacy outcome: the initial v0.1.2 image trial completed and remains recorded below. The current trial/release and operator instructions are maintained in [`docs/deployment.md`](../../docs/deployment.md).
 
 ## Purpose
 

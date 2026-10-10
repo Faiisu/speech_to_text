@@ -1,8 +1,10 @@
 # 04. Verify the Mac Docker Desktop CPU deployment
 
-Status: ready-for-human
+Status: wontfix
 Execution: native-arm64-image-built; Mac-deployment-and-real-cpu-inference-verified
 Blocked by: 02, 03
+
+Legacy outcome: this Mac Docker Desktop profile belonged to the retired Control Center and telemetry deployment. Its verification remains historical and does not describe the current deployment.
 
 ## Scope
 

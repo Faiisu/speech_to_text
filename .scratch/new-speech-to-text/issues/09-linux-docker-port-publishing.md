@@ -1,8 +1,10 @@
 # 09. Publish the Linux Docker service on host interfaces
 
-Status: ready-for-human
+Status: wontfix
 Execution: completed
 Blocked by: none
+
+Legacy outcome: the earlier Control Center container and ports were retired. The current versioned image uses port 8000 as documented in [`docs/deployment.md`](../../../docs/deployment.md).
 
 ## Scope
 

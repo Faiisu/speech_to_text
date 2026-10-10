@@ -1,8 +1,10 @@
-# 07. Connect Mac microphones to the Docker Desktop session
+# 10. Connect Mac microphones to the Docker Desktop session
 
-Status: ready-for-human
+Status: wontfix
 Execution: completed
 Blocked by: 03
+
+Legacy outcome: the Mac Docker Desktop host bridge belonged to the retired Control Center architecture. The current application uses the React/FastAPI flow documented in [`docs/architecture.md`](../../../docs/architecture.md); this bridge is not part of the current interface.
 
 ## Scope
 

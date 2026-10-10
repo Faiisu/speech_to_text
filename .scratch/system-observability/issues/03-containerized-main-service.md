@@ -1,12 +1,14 @@
 # 03. Containerize the main service for Linux deployment
 
-Status: ready-for-human
+Status: wontfix
 Execution: image-built; linux-deployed-and-verified
 Blocked by: none
 
+Legacy outcome: this image hosted the former Control Center and telemetry stack. That deployment was retired; the current versioned Docker application and operator workflow are documented in [`docs/deployment.md`](../../../docs/deployment.md).
+
 ## Scope
 
-Build and run the current Control Center, model deployment, and system telemetry as one Linux container while retaining the loopback-only HTTP boundary and existing observability services. This is a historical deployment ticket; the container configuration and its operator workflow have since been removed. Current local service setup is documented in [Getting Started](../../../docs/getting-started.md).
+Build and run the former Control Center, model deployment, and system telemetry as one Linux container while retaining the loopback-only HTTP boundary and existing observability services. This is a historical deployment ticket; that specific container configuration and operator workflow have since been removed. Current local development setup is documented in [Getting Started](../../../docs/getting-started.md), and the current deployment is documented in [`docs/deployment.md`](../../../docs/deployment.md).
 
 ## Acceptance checklist
 

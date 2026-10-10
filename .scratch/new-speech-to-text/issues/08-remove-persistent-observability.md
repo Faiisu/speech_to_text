@@ -1,16 +1,18 @@
 # 08. Remove persistent observability deployment
 
-Status: ready-for-human
+Status: wontfix
 Execution: completed
 Blocked by: none
 
-## Scope
+Legacy outcome: the former persistent observability deployment was removed. The current application still uses Docker, but only the profile SQLite file persists; current operator instructions are in [`docs/deployment.md`](../../../docs/deployment.md).
 
-Remove the current application's TimescaleDB/Grafana deployment and persistence path while keeping Feature 01 per-chunk performance measurements available at the point of use. Retain the Linux `speech-feature-01` project and port `8765`, the Mac `speech-mac-test` project and port `18766`, model/cache mounts, Linux UID/audio/GPU and PipeWire access, and the Mac host microphone bridge.
+## Historical scope
+
+At the time of this ticket, remove the application's TimescaleDB/Grafana deployment and persistence path while keeping Feature 01 per-chunk performance measurements available at the point of use. The former deployment retained the Linux `speech-feature-01` project and port `8765`, the Mac `speech-mac-test` project and port `18766`, model/cache mounts, Linux UID/audio/GPU and PipeWire access, and the Mac host microphone bridge. Those service names and ports are not current deployment instructions.
 
 The deployment owns Compose files, Dockerfiles, environment examples, deployment scripts/assets, operator documentation, and this ticket. Runtime/API implementation and tests are owned by the pipeline work. Preserve historical audit tickets, evidence, and the archived PoC; historical statements are not current deployment instructions.
 
-The initial Linux host publication was implemented by [ticket 09](09-linux-docker-port-publishing.md). The Compose files were later edited to publish Linux `18765` and Mac `18766` on all IPv4 host interfaces (`0.0.0.0`). This ticket records that former deployment; the container configuration and operator guide have since been removed, and the service now runs directly on the host as described in [Getting Started](../../../docs/getting-started.md).
+The initial Linux host publication was implemented by [ticket 09](09-linux-docker-port-publishing.md). The Compose files were later edited to publish Linux `18765` and Mac `18766` on all IPv4 host interfaces (`0.0.0.0`). This ticket records that former Control Center deployment and its telemetry transition. That specific topology was retired; the current application again has a versioned Docker image and Compose deployment, documented in the [UBX-330M deployment plan](../../../docs/deployment.md). Do not use this ticket's old ports or Compose commands as current operator instructions.
 
 ## Acceptance checklist
 

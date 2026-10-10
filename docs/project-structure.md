@@ -27,7 +27,8 @@ This document is the source of truth for where project files belong. Follow it w
 │   │   ├── model_deployment/
 │   │   └── word_matching/
 │   └── workflows/              # Use cases and their output behavior
-│       └── transcribe_match_forward/
+│       ├── transcribe_match_forward/
+│       └── file_replay_stress/
 ├── tests/                      # Automated tests organized by owner and boundary
 │   ├── feature_01/
 │   ├── word_matching/
@@ -62,13 +63,19 @@ The implemented backend module layout is:
 ```text
 speech_to_text/backend/
 ├── app.py                      # FastAPI app factory and process lifecycle
-├── dependencies.py             # Construct and provide workflow dependencies
+├── dependencies.py             # Own workflow service, worker pool, and run registries
+├── profile_store.py            # Persist reusable microphone profiles in SQLite
 └── api/
     ├── router.py               # Combine and mount inbound API routes
+    ├── microphone_lifecycle.py # Shared microphone start/stop lifecycle helpers
     ├── routes/                  # Endpoint handlers grouped by resource or use case
     │   ├── microphones.py
+    │   ├── models.py
+    │   ├── profiles.py
+    │   ├── stress_tests.py
     │   └── transcription.py
     └── schemas/                 # API request and response models
+        ├── stress_tests.py
         └── transcription.py
 ```
 

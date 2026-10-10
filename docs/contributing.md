@@ -47,7 +47,7 @@ Clip, microphone, and process-group contracts include per-chunk measurement outp
 
 ## Documentation and feature changes
 
-Before writing documentation, identify the topic, scan existing docs and `.scratch/` specifications, then update the authoritative file when one exists. Add a new page only for material without an existing source of truth, and link other pages to that source. Write code and documentation in English; application data may retain its intended language.
+Follow the repository-wide [documentation SSOT rules](../AGENTS.md#documentation-single-source-of-truth-ssot) when changing documentation. They define the scan, update, and cross-link process. Write code and documentation in English; application data may retain its intended language.
 
 For a feature change, update its existing specification or ticket before expanding its interface. Keep implementation modules under the owning feature folder, put shared behavior in shared modules, and cover the public input/output/error contract with tests. The backend boundary and its responsibilities are documented in [Architecture](architecture.md#backend-boundary); transport handlers should call feature/workflow interfaces rather than own domain logic.
 

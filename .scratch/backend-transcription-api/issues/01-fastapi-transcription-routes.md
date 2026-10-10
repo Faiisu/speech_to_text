@@ -1,6 +1,7 @@
 # 01. Implement FastAPI transcription routes
 
 Status: ready-for-agent
+Execution: completed
 
 ## Scope
 

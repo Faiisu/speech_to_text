@@ -1,8 +1,10 @@
 # 02. Grafana dashboards and observability Compose stack
 
-Status: ready-for-human
+Status: wontfix
 Blocked by: 01
 Execution: implementation-complete; local-and-linux-deploy-passed; hardware-capacity-pending
+
+Legacy outcome: the TimescaleDB/Grafana stack was implemented and deployed for the former Control Center, then retired. It is not part of the current application.
 
 ## Scope
 

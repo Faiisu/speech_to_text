@@ -1,6 +1,7 @@
 # 01. Match and forward completed transcripts
 
 Status: ready-for-agent
+Execution: completed; verification not run per task instruction
 
 ## Scope
 

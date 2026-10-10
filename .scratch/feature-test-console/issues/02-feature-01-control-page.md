@@ -1,8 +1,10 @@
 # 02. Feature 01 control and test page
 
-Status: ready-for-human
+Status: wontfix
 Blocked by: 01
 Execution: implementation-complete; browser-passed; hardware-proof-pending
+
+Legacy outcome: the former Control Center page was browser-verified and later replaced. Its pending hardware criteria remain historical; current UI setup is in [`docs/getting-started.md`](../../../docs/getting-started.md).
 
 ## Scope
 

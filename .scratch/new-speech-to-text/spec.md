@@ -191,6 +191,6 @@ Recorded software verification: Feature 01 contract suites have passed in the de
 
 ## Planning status
 
-Feature 01 work is tracked in tickets under `issues/`: model catalog/runtime handles, finite clips, microphone sessions, process topologies/capacity tooling, file-replay stress measurement, and target hardware acceptance. Earlier tickets for the retired Control Center host bridge and container deployment are retained as project history, not current interfaces. Target hardware ticket 05 remains `ready-for-human` with execution pending prerequisites. The archived application remains unchanged.
+Feature 01 work is tracked in tickets under `issues/`: model catalog/runtime handles, finite clips, microphone sessions, process topologies/capacity tooling, file-replay stress measurement, and target hardware acceptance. Earlier tickets for the retired Control Center, Mac host bridge, and its deployment topology are retained as project history, not current interfaces. The current React/FastAPI application and versioned Docker deployment are documented in [`docs/architecture.md`](../../docs/architecture.md) and [`docs/deployment.md`](../../docs/deployment.md). Target hardware ticket 05 remains `ready-for-human` with transcript-quality and multi-microphone capacity evidence pending. The archived application remains unchanged.
 
 Frontend and backend adapters live outside the Feature 01 package and call it through the callable interfaces documented above. The current host application is described in the [architecture](../../docs/architecture.md).

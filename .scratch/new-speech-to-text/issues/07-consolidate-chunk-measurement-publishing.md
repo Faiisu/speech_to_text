@@ -1,8 +1,12 @@
 # 07. Consolidate chunk measurement publishing
 
-Status: ready-for-agent
+Status: wontfix
 Execution: software-implementation-complete; local-writer-insert-check-passed
 Blocked by: none
+
+Legacy outcome: local per-chunk measurement construction remains in Feature 01. Database-writer and persisted-event behavior recorded below was removed by issue 08 and is not part of the current application contract.
+
+> Historical implementation note: this ticket's database-writer and persisted terminal-event checks describe an earlier telemetry integration. That integration was removed by [issue 08](08-remove-persistent-observability.md). The current Feature 01 output is local per-chunk records and events as defined by the [measurement contract](../spec.md#per-chunk-performance-measurement); measurements and terminal events are not persisted by the current application.
 
 ## Scope
 

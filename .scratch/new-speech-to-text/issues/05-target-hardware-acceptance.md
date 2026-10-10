@@ -27,6 +27,8 @@ Later evidence supersedes the earlier OpenVINO GPU and Mac capture statements be
 
 ## Linux deployment proof: 2026-10-09
 
+Historical proof: the database-backed measurements and systemd/Control Center setup below describe an earlier implementation. They are historical evidence only; current per-chunk measurements are local and non-persistent, and current deployment instructions are in [`docs/deployment.md`](../../../docs/deployment.md).
+
 Deployed base commit `46d6015` with the runtime token-budget correction to `/home/ubx-330m/apps/speech_to_text` on the UBX-330M. Dependencies and download caches are local to the project. The initial deployment enabled `speech-feature-01.service` on loopback port 8765; the separate `speech-feature-01` Compose project serves TimescaleDB on 5434 and Grafana on 3000 without replacing the existing services. Machine credentials remain in the untracked, mode-0600 `.env`.
 
 OpenVINO detected CPU and Intel Meteor Lake GPU. The default Turbo/source model converted successfully to `models/openvino-turbo-source` and loaded on GPU. Real inference initially exposed an excessive decoder token budget; the adapter now reserves start/language/task/timestamp positions for explicit and automatic language selection, including partial forced-token configurations. Three regression tests cover this failure. The final Linux software suite passed 103 tests; seven skipped (five requiring Chrome/Chromium and two opt-in hardware proofs).

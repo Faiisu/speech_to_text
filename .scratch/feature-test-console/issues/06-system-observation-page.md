@@ -2,10 +2,10 @@
 
 Status: wontfix
 Blocked by: none
-Execution: superseded-by-system-observability
+Execution: proposal-not-implemented; intermediate-telemetry-successor-retired
 
 ## Decision
 
-The Control Center must not provide a system-observation page. Operators will inspect persisted host, process, service-event, and performance telemetry in Grafana.
+This Control Center page was not implemented. The later Grafana telemetry view was retired with the former Control Center. The current application has no system-observation page or persistent telemetry; local per-chunk measurements are available in workflow results and events under the [Feature 01 contract](../../new-speech-to-text/spec.md#per-chunk-performance-measurement).
 
-The authoritative replacement is [System Observability](../../system-observability/spec.md), including the database schema, writer, Grafana dashboards, and deployment instructions.
+The current measurement behavior is defined by the [Feature 01 contract](../../new-speech-to-text/spec.md#per-chunk-performance-measurement). The retired [System Observability record](../../system-observability/spec.md) documents an intermediate implementation, not a current replacement.

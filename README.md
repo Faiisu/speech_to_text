@@ -23,4 +23,7 @@ The repository provides a React frontend, a FastAPI backend, and callable featur
 - [Feature 01 specification](.scratch/new-speech-to-text/spec.md)
 - [Transcript matching and forwarding specification](.scratch/transcript-matching-forwarding/spec.md)
 - [Backend transcription API specification](.scratch/backend-transcription-api/spec.md)
-- [Retired system observability specification](.scratch/system-observability/spec.md)
+
+## Historical records
+
+Historical specifications are retained under `.scratch/` for reference. The retired [system observability specification](.scratch/system-observability/spec.md) describes an earlier telemetry deployment, not the current application.

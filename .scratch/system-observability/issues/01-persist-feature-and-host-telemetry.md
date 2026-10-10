@@ -1,8 +1,10 @@
 # 01. Persist feature and host telemetry
 
-Status: ready-for-human
+Status: wontfix
 Blocked by: none
 Execution: implementation-complete; local-and-linux-deploy-passed; hardware-capacity-pending
+
+Legacy outcome: database-backed telemetry was implemented and deployed for the former Control Center, then removed. Current Feature 01 measurements are local and non-persistent; see the [current measurement contract](../../new-speech-to-text/spec.md#per-chunk-performance-measurement).
 
 ## Scope
 

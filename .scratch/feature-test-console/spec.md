@@ -1,6 +1,6 @@
 # Feature Test Frontend and System Control Center
 
-> **Retired:** This design describes the former Control Center and is retained as project history. Its frontend, FastAPI application, feature HTTP adapters, and Mac microphone bridge have been removed. It is not the current frontend/backend architecture specification.
+> **Retired:** This design describes the former Control Center and is retained as project history. Its frontend, FastAPI application, feature HTTP adapters, and Mac microphone bridge have been removed. The current React frontend and FastAPI backend are described in [`docs/architecture.md`](../../docs/architecture.md), [`docs/getting-started.md`](../../docs/getting-started.md), and [`docs/api.md`](../../docs/api.md). Do not use the routes or commands below as current interfaces.
 
 ## Purpose
 
