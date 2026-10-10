@@ -24,7 +24,7 @@ The matching feature and its output behavior are composed by the [transcript mat
 
 ## Backend API v1
 
-Install the backend extra and run the app with `uvicorn speech_to_text.backend.app:app`. The contract for clip uploads, microphone sessions, device discovery, status, buffered events, and stop behavior is maintained in the [backend transcription API specification](../.scratch/backend-transcription-api/spec.md). Routes call the workflow interface; workflow events are buffered per run for independent polling.
+Install the backend extra and run the app with `uvicorn speech_to_text.backend.app:app`. The [backend transcription API specification](../.scratch/backend-transcription-api/spec.md) is authoritative for clip uploads, microphone sessions, device discovery, status, buffered events, stop behavior, and the asynchronous file-replay stress-test API. Routes call workflow interfaces; workflow events are buffered per run for independent polling.
 
 Microphone requests can select `shared` or `per_workflow_process` model execution; omitted mode keeps the shared-model default. The API process owns the run registry in either mode. Run state is in-memory and non-durable; restarting the server loses it, and multiple backend worker processes do not share status or event history. See the [backend API specification](../.scratch/backend-transcription-api/spec.md) for the request contract and lifecycle.
 

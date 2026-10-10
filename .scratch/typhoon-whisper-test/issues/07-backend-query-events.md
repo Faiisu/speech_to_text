@@ -4,7 +4,8 @@
 
 **Blocked by:** 06
 
-**Status:** done
+Status: wontfix
+Legacy outcome: done
 
 - [x] `GET /counts?word=<word>` returns the total number of matching events for that word
 - [x] `GET /counts` also accepts optional `from`/`to` time-range filters, narrowing the count to events within that window

@@ -98,6 +98,18 @@ The Run Detail Events timeline displays the appended event timestamp, including 
 
 Request asynchronous stop for a microphone workflow and return HTTP 202 with its current status. A clip workflow cannot be stopped and returns HTTP 409. Unknown workflow IDs return HTTP 404.
 
+### `POST /stress-tests`
+
+Start the fixed file-replay stress matrix through the public `run_file_replay_stress()` workflow and return HTTP 202 with `{ "stress_test_id": "<id>", "status": "queued" }`. Accept an optional strict JSON body containing `model`, `runtime`, and `precision`; omitted values use the workflow service's effective model configuration, which follows Feature 01 defaults when no overrides are configured. The server always selects its packaged `audio/test-audio.wav` input and does not accept a path or upload from the caller. Unknown fields, invalid model/runtime/precision combinations, or invalid values return HTTP 422. A stress matrix is resource intensive: only one may be queued or running per backend process. Starting another returns HTTP 409. Starting while a microphone workflow is active also returns HTTP 409 to avoid mixing microphone load into capacity evidence. Starting a microphone workflow while a stress matrix is queued or running returns HTTP 409. Stress and microphone starts are serialized by the process-local registry so concurrent start requests cannot both pass the conflict check. A compatible runtime that is unavailable on the host is accepted by request validation; the asynchronous result records affected trials as unavailable.
+
+### `GET /stress-tests/{stress_test_id}`
+
+Return `stress_test_id`, `status` (`queued`, `running`, `completed`, or `failed`), `model`, `runtime`, `precision`, nullable `report`, nullable `error`, and `created_at`. The completed `report` contains the two topology reports and their 1/2/4-workflow trial outcomes from Feature 01. A failed API/workflow execution has status `failed` and an error message. Unknown IDs return HTTP 404.
+
+### `GET /stress-tests/{stress_test_id}/events?after=<cursor>`
+
+Return `{ "stress_test_id": ..., "events": [...], "next_cursor": n }` using the same repeatable, bounded, cursor-addressable event behavior as transcription event streams. Forward workflow progress events (`trial_started`, `trial_progress`, `trial_completed`, `trial_unavailable`, and `matrix_completed`) with their topology and workflow count where applicable. Append terminal `completed` or `workflow_error` lifecycle events. Each stress run retains at most 1000 events, and the process-local registry retains at most 256 stress runs; when full, admitting a new run evicts the oldest terminal stress run. Active runs are never evicted; if all slots are active, creation returns HTTP 503. An `after` cursor older than retained history returns HTTP 410 with `oldest_cursor`; a cursor ahead of the latest event returns HTTP 422. Unknown or evicted IDs return HTTP 404.
+
 ## Validation and errors
 
 Invalid input, duplicate or empty keywords, unsupported workflow configuration, and unselectable microphone names return HTTP 422. Missing microphone dependencies, model runtime failures, a full run registry, or reaching the per-process limit of 16 active microphone workflows return HTTP 503. Clip audio decode errors occur in the queued worker and appear as a failed status and `workflow_error` event because the API has already returned 202. No outbound forwarding is configured by this API; workflows do not emit fake `forwarded` events when `forwarder=None`.
@@ -145,5 +157,6 @@ The command binds to localhost by default. Choose a different host explicitly wh
 - `GET /transcriptions` lists only currently retained runs in newest-first order and reflects the existing process-local eviction behavior.
 - Individual and list status responses expose nullable `latest_rtf`, updated as per-chunk measurements arrive for clips and microphone workflows.
 - Individual and list status responses expose nullable UTC `first_queued_at` and `last_response_at` values for clip and microphone runs, including profile-started runs in both execution modes.
+- The stress-test API starts the fixed file-replay matrix asynchronously, exposes progress and completed topology reports, validates optional model overrides, and rejects concurrent stress matrices or active microphone sessions.
 - Profile persistence does not make runs, transcripts, matches, or events durable.
 - The backend can be launched by uvicorn using the documented optional dependencies.

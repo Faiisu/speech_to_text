@@ -4,7 +4,8 @@
 
 **Blocked by:** 01
 
-**Status:** done — verified live by the user
+Status: wontfix
+Legacy outcome: done — verified live by the user
 
 - [x] Omitting `--file` switches the script into live microphone recording mode instead of transcribing a file
 - [x] Recording starts on Enter and stops on a second Enter (manual start/stop, no fixed duration)

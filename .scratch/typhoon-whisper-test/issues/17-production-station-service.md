@@ -4,7 +4,8 @@
 
 **Blocked by:** 12, 14
 
-**Status:** done — pending an iGPU run on the UBX-330M
+Status: wontfix
+Legacy outcome: done — pending an iGPU run on the UBX-330M
 
 ## Why the PoC couldn't be extended
 

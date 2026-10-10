@@ -4,7 +4,8 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** code complete; one real bug found and fixed during testing; full live verification still needed by a human (see note)
+Status: wontfix
+Legacy outcome: code complete; one real bug found and fixed during testing; full live verification still needed by a human (see note)
 
 - [x] `python server.py` starts a web server reachable on the LAN (bound to `0.0.0.0`), not just localhost
 - [x] `POST /start` accepts model, keywords, mic device, silence threshold, and backend URL, and begins a recording session in the background without blocking the HTTP response (verified: returns immediately, `/status` transitions `loading` → `recording`)

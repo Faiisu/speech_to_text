@@ -158,6 +158,10 @@ class TranscriptionService:
     def default_runtime(self):
         return self._effective_model_config()["runtime"]
 
+    def resolve_model_config(self, model=None, runtime=None):
+        """Resolve effective model settings without loading a model runtime."""
+        return self._effective_model_config(model, runtime)
+
     def validate_model_key(self, model):
         """Reject model keys that are not present in the local catalog."""
         try:

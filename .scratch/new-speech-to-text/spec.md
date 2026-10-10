@@ -51,7 +51,7 @@ The default decoder settings are runtime-parity settings. Decoding options are f
 
 **PoC baseline:** The archived README reports a mean RTF of `0.53` for `typhoon-whisper-turbo` with OpenVINO GPU and int8 weights on an Advantech UBX-330M (Intel Core Ultra 5 125H, Ubuntu 24.04). The measurement used one fixed 21.1-second Thai clip with 5-second chunks. The same report says int8, int4, and bf16 GPU runs were close in speed; int8 is a candidate because the report observed worse transcripts at lower precision on the noisiest chunk. See the [PoC benchmark results](../../legacies-poc/README.md#measuring-performance--benchmark-studio) and [runtime decision](../../legacies-poc/docs/adr/0005-pluggable-inference-runtimes.md).
 
-**Initial default setup:** `turbo` + `openvino-gpu` + source checkpoint precision (`bf16` for the default checkpoint), matching the PoC station model/runtime defaults and favoring the higher-precision transcript where the PoC found lower precision visibly worse on its noisiest chunk. Int8 remains selectable for benchmarking. The performance result is not a production guarantee: the existing PoC still lists the real three-microphone iGPU run and capacity sweep as pending in [ticket 15](../typhoon-whisper-test/issues/15-production-station-service.md). The current-state audit also could not run OpenVINO GPU on the Mac and did not establish the local clip's target-word provenance; see [model deployment audit](../feature-verification/issues/02-verify-model-deployment-and-inference.md).
+**Initial default setup:** `turbo` + `openvino-gpu` + source checkpoint precision (`bf16` for the default checkpoint), matching the PoC station model/runtime defaults and favoring the higher-precision transcript where the PoC found lower precision visibly worse on its noisiest chunk. Int8 remains selectable for benchmarking. The performance result is not a production guarantee: the existing PoC still lists the real three-microphone iGPU run and capacity sweep as pending in [ticket 17](../typhoon-whisper-test/issues/17-production-station-service.md). The current-state audit also could not run OpenVINO GPU on the Mac and did not establish the local clip's target-word provenance; see [model deployment audit](../feature-verification/issues/02-verify-model-deployment-and-inference.md).
 
 #### Acceptance evidence to establish before treating deployment as complete
 
@@ -82,6 +82,47 @@ For each chunk that reaches inference, record audio duration, queue wait, and mo
 **Recorded hardware verification:** On the UBX-330M, `turbo` with `openvino-gpu` at source precision loaded and completed real clip inference; see [`linux-local-rtf-20261009.json`](evidence/linux-local-rtf-20261009.json). The 21.129-second Thai clip produced five ordered measurements, with RTF below 1 for the first four chunks and above 1 for the final partial chunk. Independent Thai CER and three-microphone capacity in both real-model topologies remain unverified. These are execution proofs against the decisions above, not open product/interface decisions.
 
 **Capacity tool:** Run `python -m speech_to_text.features.model_deployment.capacity --topology shared-model --device 'MIC 1' 'MIC 2' 'MIC 3' --duration-seconds 60 --output shared-model.json` and repeat with `--topology per-input-model --output per-input-model.json`. It reports platform/model/runtime/precision, per-source startup and terminal status, measured shared queue depth (per-input queue depth is explicitly unavailable), discarded/failed chunks, process memory when `psutil` is installed, per-chunk latency/RTF, source identity, capture and drain duration, and model utilization. A capacity verdict requires each source to produce at least `max(5 seconds, 95% of the capture window)` eligible audio, clean terminal status, no errors/drops, and utilization at or below 1.05 to allow 5% scheduling/frame tolerance. Silence or insufficient eligible audio returns an inconclusive verdict, not a capacity pass. CLI exits 0 for a pass, 1 for a failed run, 2 when runtime/capture prerequisites are unavailable, and 3 when workload evidence is inconclusive. No capacity result is fabricated.
+
+**File-replay stress workflow:** The fixed input is `audio/test-audio.wav`, converted from the original `audio/testAudio.m4a` to PCM16 WAV at 16 kHz mono. The stress workflow continuously feeds the whole clip twice at audio pace to each concurrent input workflow. With the default 30-second chunk length, chunking continues across the loop boundary and flushes the final partial chunk after the second loop. It runs separate cold-start trials for 1, 2, and 4 concurrent input workflows in both `shared-model` and `per-input-model` topologies. In shared-model topology, the workflows use one model-owning process; in per-input-model topology, each workflow loads its own model. Model/runtime/precision default to `turbo`/`openvino-gpu`/`source`, and callers may override them. The workflow starts inputs together after model readiness and closes all owned processes before the next trial.
+
+For every chunk, retain queue wait, inference time, elapsed time, audio duration, RTF, status, and source identity. Summarize elapsed-time p50/p95/maximum and per-chunk RTF, and report model startup time separately. Emit one JSON result per topology, each containing its 1/2/4-workflow trials and hardware/runtime identity. Use the existing capacity verdict: pass requires clean terminal completion, no inference errors or dropped chunks, no queued work after input drain, and utilization at or below 1.05; otherwise report the failed or unavailable state with its evidence. For per-input-model runs, first measure peak process memory at one workflow. Before a larger trial, estimate the projected process memory using that footprint and current available host memory; skip the level as unavailable when the resource budget cannot be measured or the projected run would leave less than 25% of physical memory available. Do not load additional model copies to discover that the machine is out of budget.
+
+#### Frontend design
+
+Add a dedicated **Stress test** destination at `/stress-tests`, linked from the existing workspace sidebar. Keep the current EchoDesk visual identity: deep forest green, paper background, lime action accent, restrained coral for failures, and the existing Prompt/Sarabun/IBM Plex Mono type roles. The page's signature is a two-topology comparison board with six fixed 1/2/4-workflow cells; the real workload matrix should be the primary visual, rather than a generic benchmark chart.
+
+The page opens with the title **Capacity lab** and a short explanation of what the machine will do. Show the fixed WAV name, 29.33-second duration, two real-time loops, and 30-second chunk setting as read-only workload facts. Put model, runtime, and precision overrides in a compact **Model settings** panel. Start with backend defaults selected; leave an untouched precision as backend-controlled. Show runtime compatibility and readiness from `/models`; a compatible runtime that is not ready remains selectable with a note that affected trials may be unavailable. The primary action is **Run capacity matrix**.
+
+Before enabling that action, load the current transcription list and disable start while a microphone workflow is active. Show the blocking workflow and link to its detail page so the user can stop it there. Handle a concurrent-start HTTP 409 by refreshing state and explaining which activity blocks the run. Show that one stress matrix runs at a time and that runs are retained only by the current backend process.
+
+During a run, keep the two-column topology board visible. Each column has 1, 2, and 4 workflow cells. Mark cells as queued, preparing, replaying, capacity pass, capacity failed, or unavailable as events arrive. For the active cell, show completed workflows and elapsed replay time; show current chunk count only if the API later exposes it. Label replay progress as per-trial progress so users do not mistake it for model startup or total matrix progress. A polite live region announces state changes without repeatedly announcing every second. There is no cancel action in this API.
+
+When the matrix completes, replace the per-cell progress with the capacity verdict and a compact comparison: response-time p50/p95/maximum, chunk RTF, utilization by model, startup time, peak memory, queue depth, and dropped/failed chunks. Keep unavailable reasons visible in their cells. Provide an expandable per-trial detail section for chunk rows and the full evidence fields; group those details by topology and workflow count. Keep **Run again** available with the previous settings.
+
+Store only the most recent `stress_test_id` in browser local storage so a refresh can resume polling. On load, fetch its status and events from the current backend; if it returns 404, explain that backend restart or bounded-history eviction removed the run and offer a new matrix. On event-cursor HTTP 410, show a brief gap notice, read the current status/report, then resume with `after=oldest_cursor - 1` to include the oldest retained event. Keep event reads repeatable and update the local cursor only after a successful page.
+
+Desktop wireframe:
+
+```text
+┌ Workspace navigation ────────┬──────────────────────────────────────────────────────┐
+│ Overview                      │ CAPACITY LAB                     Backend: local    │
+│ Microphones & profiles        │ Capacity lab                                      │
+│ Stress test                   │ Replay the fixed clip twice to compare two process topologies │
+│                               │                                                      │
+│                               │ [Input: test-audio.wav · 29.33s · 2 loops · 30s]  │
+│                               │ [Model settings: model | runtime | precision]      │
+│                               │ [Run capacity matrix]                              │
+│                               │                                                      │
+│                               │ SHARED MODEL             PER WORKFLOW PROCESS       │
+│                               │ [1 workflow result]      [1 workflow result]       │
+│                               │ [2 workflows result]     [2 workflows result]      │
+│                               │ [4 workflows result]     [4 workflows result]      │
+│                               │                                                      │
+│                               │ Trial evidence · topology · workflow count          │
+└───────────────────────────────┴──────────────────────────────────────────────────────┘
+```
+
+On narrow screens, stack the topology columns and keep each topology's 1/2/4 progression together. Use semantic table/list markup for measurements, visible keyboard focus, text labels alongside color, and respect reduced-motion preferences. The frontend API contract is maintained in the [backend transcription API specification](../../backend-transcription-api/spec.md#post-stress-tests).
 
 ## Feature 01 executable acceptance contract
 
@@ -150,6 +191,6 @@ Recorded software verification: Feature 01 contract suites have passed in the de
 
 ## Planning status
 
-Feature 01 work is tracked in tickets under `issues/`: model catalog/runtime handles, finite clips, microphone sessions, process topologies/capacity tooling, and target hardware acceptance. Earlier tickets for the retired Control Center host bridge and container deployment are retained as project history, not current interfaces. Target hardware ticket 05 remains `ready-for-human` with execution pending prerequisites. The archived application remains unchanged.
+Feature 01 work is tracked in tickets under `issues/`: model catalog/runtime handles, finite clips, microphone sessions, process topologies/capacity tooling, file-replay stress measurement, and target hardware acceptance. Earlier tickets for the retired Control Center host bridge and container deployment are retained as project history, not current interfaces. Target hardware ticket 05 remains `ready-for-human` with execution pending prerequisites. The archived application remains unchanged.
 
 Frontend and backend adapters are not part of the current Feature 01 package. A future host application should call Feature 01 through the callable interface documented above.

@@ -2,7 +2,7 @@
 
 # Triage Labels
 
-Canonical triage roles map directly to this repo's issue status strings.
+Canonical triage roles map directly to the `Status:` strings on implementation issues. Wayfinding child tickets use the separate `Work status:` lifecycle defined in the [issue tracker guide](issue-tracker.md).
 
 | Role | Tracker string | Meaning |
 | --- | --- | --- |
@@ -12,8 +12,7 @@ Canonical triage roles map directly to this repo's issue status strings.
 | ready-for-human | ready-for-human | Requires human implementation |
 | wontfix | wontfix | Will not be actioned |
 
-When a skill mentions a triage role, use its tracker string
-in the issue file's `Status:` line.
+When a skill mentions a triage role, use its tracker string in the issue file's plain `Status:` line. Keep historical completion or verification details in `Legacy outcome:` when an archived issue is marked `wontfix`.
 
 Edit the tracker column to customize the vocabulary.
 

@@ -4,7 +4,8 @@
 
 **Blocked by:** 11
 
-**Status:** done — verified end-to-end in a browser
+Status: wontfix
+Legacy outcome: done — verified end-to-end in a browser
 
 - [x] `run_replay_session` emits exactly the events `run_recording_session` emits, so the feed renders both identically
 - [x] Source selector swaps the mic-device field for a clip picker; button labels change to "Replay clip" / "Stop replay"

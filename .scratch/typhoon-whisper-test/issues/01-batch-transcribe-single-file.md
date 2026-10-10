@@ -4,7 +4,8 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** done
+Status: wontfix
+Legacy outcome: done
 
 - [x] `--model turbo` and `--model large-v3` both load their correct Hugging Face repo (`typhoon-ai/typhoon-whisper-turbo`, `typhoon-ai/typhoon-whisper-large-v3`) without requiring `git-lfs`
 - [x] Device selection automatically uses MPS when available, otherwise CPU, with no code change needed to run on a CPU-only Linux machine

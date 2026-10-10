@@ -4,7 +4,8 @@
 
 **Blocked by:** 10
 
-**Status:** done — verified live in a real browser with a real recording session
+Status: wontfix
+Legacy outcome: done — verified live in a real browser with a real recording session
 
 - [x] The server exposes an SSE endpoint (`GET /stream`, `text/event-stream`) that streams chunk transcript events (text, latency, RTF, timestamp) and keyword detection events as they happen during an active recording session
 - [x] The GUI page subscribes via `EventSource` and appends each event to a live-updating log on the page, without polling or manual refresh

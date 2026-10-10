@@ -4,7 +4,8 @@
 
 **Blocked by:** 04, 06
 
-**Status:** done — verified live (real detection events for "สวัสดี", "ขอบคุณครับ", "ยินดีต้อนรับ" found in the backend after a real mic session)
+Status: wontfix
+Legacy outcome: done — verified live (real detection events for "สวัสดี", "ขอบคุณครับ", "ยินดีต้อนรับ" found in the backend after a real mic session)
 
 - [x] A `session_id` (UUID, printed at recording start) is generated once per recording session and attached to every detection event from that session
 - [x] Each detected keyword (from ticket 04's `spot_keywords`) triggers a `POST /events` to the backend with `word`, `detected_at`, `model`, and `session_id` — verified with a standalone test hitting the real backend from tickets 05-07

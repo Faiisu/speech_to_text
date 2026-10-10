@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+Status: ready-for-agent
 
 **Audit protocol:** [Feature verification audit](../spec.md)
 

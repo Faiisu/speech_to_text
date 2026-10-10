@@ -16,6 +16,7 @@ from .errors import (
     ModelLoadError,
 )
 from .model import ModelHandle, load_model, transcribe_clip
+from .replay_source import PacedWavSource
 from .process_topology import (
     ProcessFlowGroup,
     ProcessSession,
@@ -63,6 +64,7 @@ __all__ = [
     "ModelClosedError",
     "ModelHandle",
     "ModelLoadError",
+    "PacedWavSource",
     "ProcessFlowGroup",
     "ProcessSession",
     "TranscriptionSession",

@@ -4,7 +4,8 @@
 
 **Blocked by:** 12
 
-**Status:** done — verified end-to-end across pytorch, ctranslate2 and whispercpp
+Status: wontfix
+Legacy outcome: done — verified end-to-end across pytorch, ctranslate2 and whispercpp
 
 - [x] `Runtime.transcribe(audio, language)` implemented for all five runtimes
 - [x] `GET /languages` serves the list and default, so it lives only in `transcribe.LANGUAGES`

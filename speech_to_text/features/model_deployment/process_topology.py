@@ -174,9 +174,12 @@ def _capture_chunks(
     source = None
     ready_sent = False
     queue_failed = False
+    per_source_model_load_seconds = None
     try:
         if topology == "per-input-model":
+            model_start = time.perf_counter()
             handle = load_model(model_config, runtime_factory=runtime_factory)
+            per_source_model_load_seconds = time.perf_counter() - model_start
             handle._telemetry_sink = telemetry_queue
             handle._measurement_operation = "microphone-process-group"
             from . import start_microphone_flow
@@ -184,15 +187,24 @@ def _capture_chunks(
             session = start_microphone_flow(
                 device, handle, flow, audio_source_factory=audio_source_factory
             )
-            ready_queue.put(("source", source_id, None))
+            source = session.source
+            ready_queue.put(
+                ("source", source_id, None, per_source_model_load_seconds)
+            )
             ready_sent = True
             while True:
                 try:
                     command = source_control.get(timeout=0.05)
-                    if command[0] == "stop":
+                    if command[0] == "start":
+                        begin = getattr(source, "start_stream", None)
+                        if callable(begin):
+                            begin()
+                    elif command[0] == "stop":
                         session.stop(timeout=60)
                 except Empty:
                     pass
+                if getattr(source, "finished", False) and not session._terminal:
+                    session.stop(timeout=60)
                 try:
                     event = session.result_queue.get(timeout=0.05)
                 except Empty:
@@ -203,7 +215,6 @@ def _capture_chunks(
                 output_queue.put(event)
                 if event["type"] == "completed":
                     return
-            return
 
         def on_audio(frames):
             try:
@@ -227,7 +238,9 @@ def _capture_chunks(
         sequence = -1
         first_queued_at = None
         source.start()
-        ready_queue.put(("source", source_id, None))
+        ready_queue.put(
+            ("source", source_id, None, per_source_model_load_seconds)
+        )
         ready_sent = True
 
         stop_requested = False
@@ -298,6 +311,20 @@ def _capture_chunks(
                     error=inference_error,
                 )
                 output_queue.put(record)
+                telemetry_queue.put(
+                    {
+                        "source_id": source_id,
+                        "sequence": sequence,
+                        "queue_wait_seconds": queue_wait,
+                        "elapsed_seconds": queue_wait + inference_seconds,
+                        "inference_seconds": inference_seconds,
+                        "chunk_duration_seconds": len(chunk) / TARGET_RATE,
+                        "rtf": (queue_wait + inference_seconds)
+                        / max(len(chunk) / TARGET_RATE, 1e-9),
+                        "discarded_inflight": False,
+                        "pid": os.getpid(),
+                    }
+                )
                 return True
             try:
                 input_queue.put(
@@ -344,6 +371,10 @@ def _capture_chunks(
                 command = source_control.get_nowait()
                 if command[0] == "stop":
                     stop_requested = True
+                elif command[0] == "start":
+                    begin = getattr(source, "start_stream", None)
+                    if callable(begin):
+                        begin()
             except Empty:
                 pass
             try:
@@ -355,6 +386,8 @@ def _capture_chunks(
             try:
                 frames = local_frames.get(timeout=0.05)
             except Empty:
+                if getattr(source, "finished", False):
+                    stop_requested = True
                 continue
             buffer = np.concatenate((buffer, resampler.feed(frames)))
             offset = 0
@@ -823,13 +856,16 @@ def start_multiprocess_microphone_flows(
     runtime_factory=None,
     audio_source_factory=None,
     flow_configs=None,
+    startup_monitor_callback=None,
 ):
     """Start separate capture processes in shared-model or per-input-model mode.
 
     Shared mode owns one model in its own process and routes tagged PCM chunks
     over a bounded FIFO queue. Per-input mode loads one independent model in
     each microphone process. Runtime factories, when supplied, must be
-    picklable because they are passed to spawned processes.
+    picklable because they are passed to spawned processes. An optional startup
+    monitor callback receives the started process handles while readiness is
+    pending, allowing callers to sample startup resource use.
     """
     resolved_model = validate_model_config(model_config)
     common_flow = validate_flow_config(flow_config)
@@ -898,6 +934,20 @@ def start_multiprocess_microphone_flows(
     ready_queue = context.Queue()
     telemetry_queue = context.Queue()
     model_process = None
+
+    def wait_for_ready(processes):
+        deadline = time.monotonic() + 60
+        while True:
+            if startup_monitor_callback is not None:
+                startup_monitor_callback(tuple(processes))
+            try:
+                timeout = min(0.1, max(0, deadline - time.monotonic()))
+                return ready_queue.get(timeout=timeout)
+            except Empty:
+                if time.monotonic() >= deadline:
+                    raise
+                continue
+
     model_control = None
     input_queue = None
     if topology == "shared-model":
@@ -919,7 +969,7 @@ def start_multiprocess_microphone_flows(
                 name="stt-shared-model",
             )
             model_process.start()
-            kind, _, error = ready_queue.get(timeout=60)
+            kind, _, error = wait_for_ready([model_process])
             if error:
                 model_process.join(1)
                 raise ModelLoadError(error)
@@ -970,8 +1020,15 @@ def start_multiprocess_microphone_flows(
             sessions.append(ProcessSession(source_id, process, source_control))
             session_start_times[source_id] = source_start
         source_load_seconds = {}
+        per_source_model_load_seconds = {}
         for _ in range(len(device_list)):
-            kind, source_id, error = ready_queue.get(timeout=60)
+            ready = wait_for_ready(
+                [
+                    *([model_process] if model_process is not None else []),
+                    *(session.process for session in sessions),
+                ]
+            )
+            kind, source_id, error = ready[:3]
             if error:
                 raise (
                     AudioInputError(error)
@@ -983,6 +1040,12 @@ def start_multiprocess_microphone_flows(
             source_load_seconds[source_id] = (
                 time.perf_counter() - session_start_times[source_id]
             )
+            if len(ready) > 3 and ready[3] is not None:
+                per_source_model_load_seconds[source_id] = ready[3]
+        # File-backed sources wait for this command so all inputs begin only
+        # after the shared model (when present) and every input process are ready.
+        for session in sessions:
+            session._control_queue.put(("start", session.source_id))
     except Exception:
         for session in sessions:
             if session.process.is_alive():
@@ -1004,6 +1067,7 @@ def start_multiprocess_microphone_flows(
         telemetry_queue=telemetry_queue,
     )
     group.model_load_seconds = model_load_seconds
+    group.per_source_model_load_seconds = per_source_model_load_seconds
     group.source_load_seconds = source_load_seconds
     group.topology = topology
     return group

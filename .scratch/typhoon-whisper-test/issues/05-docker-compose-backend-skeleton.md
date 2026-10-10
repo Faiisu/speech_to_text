@@ -4,7 +4,8 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** done
+Status: wontfix
+Legacy outcome: done
 
 - [x] `docker-compose up` starts a TimescaleDB container and a backend (FastAPI) container
 - [x] The backend container can reach the TimescaleDB container over the docker network (verified: `/health` runs `SELECT 1` through the backend's DB connection)

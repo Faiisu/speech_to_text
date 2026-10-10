@@ -52,6 +52,10 @@ Run `python -m speech_to_text.features.model_deployment.capacity --help` for the
 | `--enqueue-timeout` | Feature 01 model default | Maximum queue insertion wait; see the [configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults). |
 | `--output` | Standard output | Optional path for JSON evidence. |
 
+## File-replay stress workflow
+
+The callable interface, fixed WAV input, replay timing, topology matrix, hardware preflight, and capacity verdict are specified in the [Feature 01 file-replay stress contract](../.scratch/new-speech-to-text/spec.md#file-replay-stress-workflow). Call `run_file_replay_stress()` from `speech_to_text.workflows.file_replay_stress` to run the 1/2/4-workflow cold-start matrix. The default model settings come from Feature 01 and can be overridden with `model_config` and `flow_config`; `output_directory` writes one JSON report per topology. Install the `benchmark` extra to collect process and physical-memory measurements. The fixed asset is `audio/test-audio.wav`.
+
 ## Hardware test environment variables
 
 These variables only configure opt-in proofs in `tests/feature_01/test_hardware_proof.py`.

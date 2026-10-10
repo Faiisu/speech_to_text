@@ -4,7 +4,8 @@
 
 **Blocked by:** 03
 
-**Status:** done — verified live by the user
+Status: wontfix
+Legacy outcome: done — verified live by the user
 
 - [x] `--keywords` accepts a comma-separated list of one or more target strings (single words or multi-word phrases)
 - [x] Each chunk's transcript is checked for an exact, case-insensitive substring match against every target keyword/phrase

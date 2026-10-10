@@ -4,7 +4,8 @@
 
 **Blocked by:** 05
 
-**Status:** done
+Status: wontfix
+Legacy outcome: done
 
 - [x] `POST /events` accepts `word`, `detected_at`, `model`, `session_id` and returns success (201, `{"status": "stored"}`)
 - [x] The event is persisted in TimescaleDB as a row in an append-only event log (per ADR 0003 — not a mutable counter)

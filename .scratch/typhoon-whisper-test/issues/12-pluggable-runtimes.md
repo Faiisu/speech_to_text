@@ -4,7 +4,8 @@
 
 **Blocked by:** 01
 
-**Status:** done — `pytorch` and `ctranslate2` verified end-to-end; Intel paths unverified (see note)
+Status: wontfix
+Legacy outcome: done — `pytorch` and `ctranslate2` verified end-to-end; Intel paths unverified (see note)
 
 - [x] `Runtime` interface with one `transcribe(audio) -> str` method, implemented for all five runtimes
 - [x] `probe()` reports availability per runtime *and the reason* when unavailable, per model

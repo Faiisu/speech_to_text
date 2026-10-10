@@ -15,6 +15,7 @@ __pycache__/
 
 # uploaded/test clips
 audio/*.wav
+!audio/test-audio.wav
 legacies-poc/audio/*.wav
 # per-machine model list (models.local.json is your own additions, not the project's)
 models.local.json

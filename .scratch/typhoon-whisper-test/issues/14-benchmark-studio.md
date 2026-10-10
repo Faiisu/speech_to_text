@@ -4,7 +4,8 @@
 
 **Blocked by:** 12, 13
 
-**Status:** done — three bugs found and fixed during review (below)
+Status: wontfix
+Legacy outcome: done — three bugs found and fixed during review (below)
 
 - [x] `POST /record-server/start|stop|status` records a clip using the server's own microphone and saves it to `audio/`
 - [x] `POST /benchmark` streams progress over SSE: init, per-runtime start/skip, per-chunk timings, per-runtime summary, final result with winner

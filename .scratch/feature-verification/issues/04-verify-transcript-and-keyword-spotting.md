@@ -4,7 +4,7 @@
 
 **Blocked by:** 03: Verify microphone-to-model pipeline.
 
-**Status:** ready-for-agent
+Status: ready-for-agent
 
 **Audit protocol:** [Feature verification audit](../spec.md)
 

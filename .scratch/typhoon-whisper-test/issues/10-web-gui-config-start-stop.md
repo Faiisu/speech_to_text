@@ -4,7 +4,8 @@
 
 **Blocked by:** 09
 
-**Status:** code complete; verified everything not requiring real mic access; needs a human to click through it live
+Status: wontfix
+Legacy outcome: code complete; verified everything not requiring real mic access; needs a human to click through it live
 
 - [x] The server serves an HTML page at its root URL (`GET /`, `text/html`, verified via headers) with a config form covering every field `POST /start` accepts (model, keywords, mic device, silence threshold, backend URL)
 - [x] Clicking "start" calls `POST /start` with the form's values and the page reflects that recording is now active (code reviewed; `refreshStatus()` drives button/state display directly from `/status`, exercised for idle/loading/error states)

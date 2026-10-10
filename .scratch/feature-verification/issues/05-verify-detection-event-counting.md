@@ -4,7 +4,7 @@
 
 **Blocked by:** 04: Verify transcript and keyword spotting.
 
-**Status:** ready-for-agent
+Status: ready-for-agent
 
 **Audit protocol:** [Feature verification audit](../spec.md)
 

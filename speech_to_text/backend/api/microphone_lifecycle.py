@@ -10,6 +10,7 @@ from speech_to_text.backend.dependencies import (
     MicrophoneLimitError,
     RunRecord,
     RunRegistryFullError,
+    StressTestConflictError,
 )
 from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
@@ -112,6 +113,8 @@ def _start_microphone_workflow(
         runtime.add_run(record)
     except (RunRegistryFullError, MicrophoneLimitError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except StressTestConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         flow_config = {"language": "th", "source_id": workflow_id}
         if silence_threshold is not None:

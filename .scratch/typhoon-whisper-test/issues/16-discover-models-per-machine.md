@@ -4,7 +4,8 @@
 
 **Blocked by:** 15
 
-**Status:** done — verified by adding a model to a running server and transcribing with it
+Status: wontfix
+Legacy outcome: done — verified by adding a model to a running server and transcribing with it
 
 - [x] `model_catalog.py` merges four sources: builtin, `models.local.json`, the Hugging Face cache, converted `models/` directories
 - [x] `GET /models` rediscovers on every call and reports repo, sources, converted runtimes, and `multilingual`

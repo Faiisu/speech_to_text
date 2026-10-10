@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: Verify microphone connection; 02: Verify model deployment and inference.
 
-**Status:** ready-for-agent
+Status: ready-for-agent
 
 **Audit protocol:** [Feature verification audit](../spec.md)
 

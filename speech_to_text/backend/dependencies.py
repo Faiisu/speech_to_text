@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from speech_to_text.backend.profile_store import SQLiteProfileStore
+from speech_to_text.workflows.file_replay_stress import run_file_replay_stress
 from speech_to_text.workflows.transcribe_match_forward import TranscriptionService
 
 
@@ -19,6 +20,10 @@ class RunRegistryFullError(RuntimeError):
 
 class MicrophoneLimitError(RuntimeError):
     """The process has reached its concurrent microphone-session limit."""
+
+
+class StressTestConflictError(RuntimeError):
+    """A stress matrix conflicts with another stress or microphone workflow."""
 
 
 def _utc_timestamp():
@@ -51,6 +56,21 @@ class RunRecord:
     workflow: object | None = None
 
 
+@dataclass
+class StressTestRecord:
+    stress_test_id: str
+    status: str
+    model: str
+    runtime: str
+    precision: str
+    created_at: float = field(default_factory=time.time)
+    report: dict | None = None
+    error: str | None = None
+    events: deque = field(default_factory=deque)
+    next_cursor: int = 1
+    lock: threading.RLock = field(default_factory=threading.RLock)
+
+
 class BackendRuntime:
     """Own a workflow service, worker pool, and bounded in-memory run registry."""
 
@@ -63,27 +83,39 @@ class BackendRuntime:
         worker_count=4,
         workflow_service=None,
         profile_store=None,
+        stress_workflow=None,
     ):
         if event_limit < 1 or max_runs < 1 or max_microphone_runs < 1:
             raise ValueError("event_limit and run limits must be positive integers")
         self.event_limit = event_limit
         self.max_runs = max_runs
         self.max_microphone_runs = max_microphone_runs
+        self.max_stress_runs = max_runs
         self.registry_lock = threading.RLock()
         self.profile_run_start_lock = threading.RLock()
+        self.stress_start_lock = threading.RLock()
         self.workflow_service = (
             TranscriptionService() if workflow_service is None else workflow_service
         )
         self.profile_store = (
             SQLiteProfileStore() if profile_store is None else profile_store
         )
+        self.stress_workflow = (
+            run_file_replay_stress if stress_workflow is None else stress_workflow
+        )
         self.runs: dict[str, RunRecord] = {}
+        self.stress_runs: dict[str, StressTestRecord] = {}
         self.executor = ThreadPoolExecutor(
             max_workers=worker_count, thread_name_prefix="speech-api"
         )
 
     def add_run(self, record):
         with self.registry_lock:
+            if record.kind == "microphone" and any(
+                stress_record.status in {"queued", "running"}
+                for stress_record in self.stress_runs.values()
+            ):
+                raise StressTestConflictError("a stress test is queued or running")
             active_microphones = sum(
                 old_record.kind == "microphone"
                 and old_record.status in {"starting", "recording", "stopping"}
@@ -109,6 +141,46 @@ class BackendRuntime:
                 del self.runs[old_id]
             self.runs[record.workflow_id] = record
 
+    def add_stress_test(self, record):
+        """Atomically enforce stress exclusivity and reserve a bounded record."""
+        with self.registry_lock:
+            with self.stress_start_lock:
+                if any(
+                    stress_record.status in {"queued", "running"}
+                    for stress_record in self.stress_runs.values()
+                ):
+                    raise StressTestConflictError(
+                        "a stress test is already queued or running"
+                    )
+                if any(
+                    run.kind == "microphone"
+                    and run.status in {"starting", "recording", "stopping"}
+                    for run in self.runs.values()
+                ):
+                    raise StressTestConflictError("a microphone workflow is active")
+                if len(self.stress_runs) >= self.max_stress_runs:
+                    terminal = {"completed", "failed"}
+                    old_id = next(
+                        (
+                            stress_test_id
+                            for stress_test_id, old_record in self.stress_runs.items()
+                            if old_record.status in terminal
+                        ),
+                        None,
+                    )
+                    if old_id is None:
+                        raise RunRegistryFullError("stress-test registry is full")
+                    del self.stress_runs[old_id]
+                self.stress_runs[record.stress_test_id] = record
+
+    def remove_stress_test(self, stress_test_id):
+        with self.registry_lock:
+            self.stress_runs.pop(stress_test_id, None)
+
+    def get_stress_test(self, stress_test_id):
+        with self.registry_lock:
+            return self.stress_runs.get(stress_test_id)
+
     def remove_run(self, workflow_id):
         with self.registry_lock:
             self.runs.pop(workflow_id, None)
@@ -131,6 +203,17 @@ class BackendRuntime:
         return None
 
     def append_event(self, record, event):
+        with record.lock:
+            item = {**event, "cursor": record.next_cursor}
+            if "timestamp" not in item:
+                item["timestamp"] = _utc_timestamp()
+            record.events.append(item)
+            record.next_cursor += 1
+            while len(record.events) > self.event_limit:
+                record.events.popleft()
+            return item
+
+    def append_stress_event(self, record, event):
         with record.lock:
             item = {**event, "cursor": record.next_cursor}
             if "timestamp" not in item:
@@ -212,6 +295,37 @@ def events_after(record, after):
         cursor = events[-1]["cursor"] if events else after
         return {
             "workflow_id": record.workflow_id,
+            "events": events,
+            "next_cursor": cursor,
+        }, oldest
+
+
+def stress_test_snapshot(record):
+    with record.lock:
+        return {
+            "stress_test_id": record.stress_test_id,
+            "status": record.status,
+            "model": record.model,
+            "runtime": record.runtime,
+            "precision": record.precision,
+            "report": record.report,
+            "error": record.error,
+            "created_at": record.created_at,
+        }
+
+
+def stress_events_after(record, after):
+    with record.lock:
+        latest = record.next_cursor - 1
+        oldest = record.events[0]["cursor"] if record.events else record.next_cursor
+        if after < oldest - 1:
+            return None, oldest
+        if after > latest:
+            return None, latest + 1
+        events = [event for event in record.events if event["cursor"] > after]
+        cursor = events[-1]["cursor"] if events else after
+        return {
+            "stress_test_id": record.stress_test_id,
             "events": events,
             "next_cursor": cursor,
         }, oldest

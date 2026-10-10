@@ -4,7 +4,8 @@
 
 **Blocked by:** 01, 02
 
-**Status:** done — verified live by the user
+Status: wontfix
+Legacy outcome: done — verified live by the user
 
 - [x] While recording is active, audio is buffered into 5s chunks with 1s overlap between consecutive chunks
 - [x] Each chunk is transcribed independently as soon as its window fills, without waiting for recording to stop
