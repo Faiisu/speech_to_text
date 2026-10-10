@@ -47,6 +47,7 @@ RUN apt-get update \
 COPY --from=python-deps /build/.venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 COPY speech_to_text/ /app/speech_to_text/
+COPY audio/test-audio.wav /app/audio/test-audio.wav
 COPY --from=model-export /opt/models/openvino-turbo-source /opt/models/openvino-turbo-source
 COPY --from=frontend-build /build/frontend/dist/ /app/frontend/
 USER app

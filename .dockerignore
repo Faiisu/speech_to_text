@@ -7,7 +7,8 @@ __pycache__
 models
 legacies-poc
 tests
-audio
+audio/*
+!audio/test-audio.wav
 speech_to_text/frontend/node_modules
 speech_to_text/frontend/dist
 speech_to_text/frontend/test-results
