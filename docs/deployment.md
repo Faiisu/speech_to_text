@@ -20,7 +20,14 @@ GitHub Actions builds and tags a `linux/amd64` image for each `v*` release tag, 
 
 ## Host data and configuration
 
-The image contains `openvino-turbo-source` under `/opt/models`; do not mount a models directory over it. Compose mounts `./data` at `/data` and sets `SPEECH_TO_TEXT_PROFILE_DB=/data/profiles.sqlite3`. Create the host directory with `mkdir -p data` before the first start. The application creates the SQLite file on first use. Keep only this database in that directory. Profiles are shared by all LAN users and survive container replacement. The project does not create an additional backup. Run records, transcripts, matches, and events remain in memory and are lost on restart.
+The image contains `openvino-turbo-source` under `/opt/models`; do not mount a models directory over it. Compose mounts `./data` at `/data` and sets `SPEECH_TO_TEXT_PROFILE_DB=/data/profiles.sqlite3`. The container runs as UID/GID `10001`; give that user ownership of the host bind-mount directory before the first start:
+
+```bash
+mkdir -p data
+sudo chown -R 10001:10001 data
+```
+
+The application creates the SQLite file on first use. Keep only this database in that directory. Profiles are shared by all LAN users and survive container replacement. The project does not create an additional backup. Run records, transcripts, matches, and events remain in memory and are lost on restart.
 
 Set the service defaults to `SPEECH_TO_TEXT_MODEL=turbo`, `SPEECH_TO_TEXT_RUNTIME=openvino-gpu`, and `SPEECH_TO_TEXT_PRECISION=source`. Pass only the host device permissions needed for Intel GPU and audio access.
 

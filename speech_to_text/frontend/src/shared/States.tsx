@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 export function ApiError({ message, retry }: { message: string; retry: () => void }) {
-  return <div className="api-error" role="alert"><span className="error-mark">!</span><div><strong>Could not connect to the control center</strong><p>{message}</p><small>Start the backend using the command in docs/api.md, then try again.</small></div><button className="button button-outline" onClick={retry}>Retry ↻</button></div>
+  return <div className="api-error" role="alert"><span className="error-mark">!</span><div><strong>Backend request failed</strong><p>{message}</p><small>Check the backend status and logs, then try again.</small></div><button className="button button-outline" onClick={retry}>Retry ↻</button></div>
 }
 
 export function Loading({ label = 'Loading data from the backend…' }: { label?: string }) {
