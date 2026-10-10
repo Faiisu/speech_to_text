@@ -556,7 +556,7 @@ services:
   speech-to-text:
     image: $IMAGE
     ports:
-      - "$LAN_IP:8000:8000"
+      - "0.0.0.0:8000:8000"
     devices:
       - /dev/dri:/dev/dri
       - /dev/snd:/dev/snd

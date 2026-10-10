@@ -32,9 +32,10 @@ Operator-facing deployment behavior remains authoritative in the [deployment pla
 - [x] It runs export through the dependency image without installing application/model Python dependencies on the host, and preserves an existing complete model if export fails.
 - [x] Export reuse requires provenance metadata matching the pinned Hugging Face repository and revision; exports without matching metadata are staged and regenerated.
 - [x] It builds and runs a deterministic version-tagged local application image with Compose, one backend process, `/dev/dri`, `/dev/snd`, detected device groups, persistent profile SQLite storage, restart policy, and the existing model-free healthcheck; it does not pull an app image from GHCR.
-- [x] It binds access to the detected LAN interface. A root run adds only a rule for the detected LAN subnet to TCP port 8000 when UFW is active; a non-root run skips UFW and explains that the operator must allow LAN traffic. It never enables UFW or changes other firewall rules.
+- [x] It binds port 8000 to all host interfaces. A root run adds only a rule for the detected LAN subnet to TCP port 8000 when UFW is active; a non-root run skips UFW and explains that the operator must allow LAN traffic. It never enables UFW or changes other firewall rules.
+- [x] An update script fast-forwards the deployed checkout from its configured Git upstream, then reuses the installer path to rebuild/reuse dependencies and model, rebuild the application image, and replace the managed service. It refuses dirty checkouts and refuses to run without this installer's managed deployment files.
 - [x] It waits for the container healthcheck, verifies the local HTTP endpoint and model/microphone readiness, then prints the LAN URL and states that forwarding is still required for normal go-live.
-- [x] Installer behavior and update guidance are documented in `docs/deployment.md`; no duplicate deployment source of truth is added.
+- [x] Install and update behavior are documented in `docs/deployment.md`; no duplicate deployment source of truth is added.
 - [x] Static validation includes `bash -n` and ShellCheck when available. Do not execute the installer end-to-end on the development workstation.
 
 ## Non-goals
