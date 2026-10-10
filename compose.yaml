@@ -1,0 +1,23 @@
+services:
+  speech-to-text:
+    image: ${SPEECH_TO_TEXT_IMAGE:-ghcr.io/faiisu/speech_to_text:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/snd:/dev/snd
+    group_add:
+      - "${RENDER_GID:-109}"
+      - "${AUDIO_GID:-29}"
+    volumes:
+      - ./data:/data
+    environment:
+      SPEECH_TO_TEXT_MODELS_DIR: /opt/models
+      SPEECH_TO_TEXT_MODEL: turbo
+      SPEECH_TO_TEXT_RUNTIME: openvino-gpu
+      SPEECH_TO_TEXT_PRECISION: source
+      SPEECH_TO_TEXT_PROFILE_DB: /data/profiles.sqlite3
+    restart: unless-stopped
