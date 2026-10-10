@@ -1,6 +1,16 @@
 [← Back to README](../README.md)
 
-# Deployment plan: UBX-330M
+# Deployment
+
+## Supported platforms
+
+| Platform | Status | Deployment target |
+| --- | --- | --- |
+| Linux | Supported on the validated target below | UBX-330M running Ubuntu 24.04 on x86_64 with an Intel GPU |
+| macOS | No supported deployment path yet | Not currently supported |
+| Windows | No supported deployment path yet | Not currently supported |
+
+The UBX-330M installer is currently the only supported host deployment. It requires the Intel GPU and audio devices provided by that host. Building the Docker image from macOS or another non-`amd64` machine does not make that machine a supported deployment target.
 
 ## Goal
 
@@ -108,6 +118,8 @@ From the checkout root, run the installer as the normal user when Docker Engine 
 ```bash
 ./scripts/install_ubx330m.sh
 ```
+
+This is the only supported deployment installer at present. Use it on the Linux target listed in [Supported platforms](#supported-platforms).
 
 Use `sudo` when Docker or Compose needs installation, Docker needs to be started with host privileges, or an active UFW firewall needs the installer's LAN allow rule. The installer uses `SUDO_UID` and `SUDO_GID` to keep the checkout's generated model and installer files owned by the invoking user. It defaults to the local image tag `speech-to-text-ubx330m:v0.1.3`; pass another version tag to select a different local image:
 

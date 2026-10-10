@@ -30,7 +30,7 @@ No credentials or database server are required to call Feature 01 locally. The b
 
 ## Transcript matching and forwarding
 
-Configure target keywords with `WordMatchingConfig` and workflow output delivery with `HttpForwarderConfig`. Matching uses normalized literal substring searches and requires no optional tokenizer dependency. The workflow owns whether and where results are sent. Keep bearer tokens in the caller's secret configuration. The current FastAPI backend passes no forwarder, so its HTTP workflows do not send results or read forwarding settings yet; the [UBX-330M deployment plan](deployment.md) makes forwarding integration a go-live gate. Matching defaults, retry behavior, and the forwarded JSON contract are maintained in the [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md).
+Configure target keywords with `WordMatchingConfig` and workflow output delivery with `HttpForwarderConfig`. Matching uses normalized literal substring searches and requires no optional tokenizer dependency. The workflow owns whether and where results are sent. Keep bearer tokens in the caller's secret configuration. The current FastAPI backend passes no forwarder, so its HTTP workflows do not send results or read forwarding settings yet; the [deployment guide](deployment.md) makes forwarding integration a go-live gate. Matching defaults, retry behavior, and the forwarded JSON contract are maintained in the [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md).
 
 ## Capacity command-line options
 
