@@ -8,11 +8,13 @@ services:
       - "0.0.0.0:${HOST_PORT:-8000}:8000"
     devices:
       - /dev/dri:/dev/dri
-      - /dev/snd:/dev/snd
+    device_cgroup_rules:
+      - 'c 116:* rw'
     group_add:
       - "${RENDER_GID:-109}"
       - "${AUDIO_GID:-29}"
     volumes:
+      - /dev/snd:/dev/snd
       - ./data:/data
       - ./models:/opt/models:ro
     environment:

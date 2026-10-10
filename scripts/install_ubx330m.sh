@@ -446,25 +446,15 @@ stage "Validate host"
 [[ -d /dev/dri ]] || fail "Intel GPU device directory /dev/dri is missing. No host changes have been made."
 [[ -e /dev/dri/renderD128 || -n "$(find /dev/dri -maxdepth 1 -type c -name 'renderD*' -print -quit 2>/dev/null)" ]] || fail "No GPU render device exists under /dev/dri. No host changes have been made."
 [[ -d /dev/snd ]] || fail "Audio device directory /dev/snd is missing. No host changes have been made."
-for command_name in ip stat ss awk grep find head install; do require_command "$command_name"; done
+for command_name in ip stat ss awk grep find head install getent; do require_command "$command_name"; done
 require_command curl
 require_command python3
 detect_lan
 render_device=$(find /dev/dri -maxdepth 1 -type c -name 'renderD*' -print -quit)
 [[ -n "$render_device" ]] || fail "Could not locate a GPU render device under /dev/dri."
 RENDER_GID=$(stat -c '%g' "$render_device")
-audio_capture_device=""
-for device in /dev/snd/pcmC*D*c; do
-  if [[ -c "$device" ]]; then
-    audio_capture_device="$device"
-    break
-  fi
-done
-if [[ -n "$audio_capture_device" ]]; then
-  AUDIO_GID=$(stat -c '%g' "$audio_capture_device")
-else
-  AUDIO_GID=$(stat -c '%g' /dev/snd)
-fi
+audio_group_entry=$(getent group audio) || fail "The host 'audio' group is missing; it is required for ALSA microphone access."
+AUDIO_GID=$(awk -F: 'NR == 1 { print $3 }' <<< "$audio_group_entry")
 [[ "$RENDER_GID" =~ ^[0-9]+$ && "$AUDIO_GID" =~ ^[0-9]+$ ]] || fail "Could not detect numeric device group IDs."
 port_is_free_or_owned
 [[ ! -L "$INSTALL_DIR" ]] || fail "$INSTALL_DIR is a symbolic link; refusing to write outside the application directory."
@@ -570,12 +560,14 @@ services:
       - "0.0.0.0:8000:8000"
     devices:
       - /dev/dri:/dev/dri
-      - /dev/snd:/dev/snd
+    device_cgroup_rules:
+      - 'c 116:* rw'
     group_add:
       - "$RENDER_GID"
       - "$AUDIO_GID"
       - "$CHECKOUT_GID"
     volumes:
+      - /dev/snd:/dev/snd
       - $INSTALL_DIR/data:/data
       - $MODEL_DIR:/opt/models:ro
     environment:
