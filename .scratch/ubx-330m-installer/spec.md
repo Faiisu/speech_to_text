@@ -1,6 +1,8 @@
 # UBX-330M installer
 
-Status: ready-for-agent
+Status: wontfix
+
+Legacy outcome: installer and update procedures are implemented in the current scripts and documented in [`docs/deployment.md`](../../docs/deployment.md). Acceptance criteria are complete; the installer is not run as part of development verification.
 
 ## Purpose
 
@@ -31,7 +33,7 @@ Operator-facing deployment behavior remains authoritative in the [deployment pla
 - [x] The model export is written into checkout `./models` with the invoking user's ownership, including when the installer is run through `sudo`.
 - [x] It runs export through the dependency image without installing application/model Python dependencies on the host, and preserves an existing complete model if export fails.
 - [x] Export reuse requires provenance metadata matching the pinned Hugging Face repository and revision; exports without matching metadata are staged and regenerated.
-- [x] It builds and runs a deterministic version-tagged local application image with Compose, one backend process, `/dev/dri`, `/dev/snd`, detected device groups, persistent profile SQLite storage, restart policy, and the existing model-free healthcheck; it does not pull an app image from GHCR.
+- [x] It builds and runs a deterministic version-tagged local application image from the checkout with Compose, one backend process, `/dev/dri`, `/dev/snd`, detected device groups, persistent profile SQLite storage, restart policy, and the existing model-free healthcheck.
 - [x] USB microphones connected after container creation are visible without container recreation: bind-mount `/dev/snd`, allow read/write to ALSA character-device major 116 with a wildcard minor cgroup rule, and add the host `audio` group even if no capture device exists at install time.
 - [x] It binds port 8000 to all host interfaces. A root run adds only a rule for the detected LAN subnet to TCP port 8000 when UFW is active; a non-root run skips UFW and explains that the operator must allow LAN traffic. It never enables UFW or changes other firewall rules.
 - [x] An update script fast-forwards the deployed checkout from its configured Git upstream, then reuses the installer path to rebuild/reuse dependencies and model, rebuild the application image, and replace the managed service. It refuses dirty checkouts and refuses to run without this installer's managed deployment files.

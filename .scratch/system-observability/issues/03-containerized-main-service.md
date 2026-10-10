@@ -4,7 +4,7 @@ Status: wontfix
 Execution: image-built; linux-deployed-and-verified
 Blocked by: none
 
-Legacy outcome: this image hosted the former Control Center and telemetry stack. That deployment was retired; the current versioned Docker application and operator workflow are documented in [`docs/deployment.md`](../../../docs/deployment.md).
+Legacy outcome: this image hosted the former Control Center and telemetry stack. That deployment was retired; the current installer builds a local Docker image from a source checkout. Its operator workflow is documented in [`docs/deployment.md`](../../../docs/deployment.md).
 
 ## Scope
 

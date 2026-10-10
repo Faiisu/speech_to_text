@@ -12,7 +12,7 @@ At the time of this ticket, remove the application's TimescaleDB/Grafana deploym
 
 The deployment owns Compose files, Dockerfiles, environment examples, deployment scripts/assets, operator documentation, and this ticket. Runtime/API implementation and tests are owned by the pipeline work. Preserve historical audit tickets, evidence, and the archived PoC; historical statements are not current deployment instructions.
 
-The initial Linux host publication was implemented by [ticket 09](09-linux-docker-port-publishing.md). The Compose files were later edited to publish Linux `18765` and Mac `18766` on all IPv4 host interfaces (`0.0.0.0`). This ticket records that former Control Center deployment and its telemetry transition. That specific topology was retired; the current application again has a versioned Docker image and Compose deployment, documented in the [UBX-330M deployment plan](../../../docs/deployment.md). Do not use this ticket's old ports or Compose commands as current operator instructions.
+The initial Linux host publication was implemented by [ticket 09](09-linux-docker-port-publishing.md). The Compose files were later edited to publish Linux `18765` and Mac `18766` on all IPv4 host interfaces (`0.0.0.0`). This ticket records that former Control Center deployment and its telemetry transition. That topology and its deployment procedures were retired. The current procedure builds and runs a local image from the deployed source checkout using the installer described in the [UBX-330M deployment guide](../../../docs/deployment.md).
 
 ## Acceptance checklist
 
@@ -33,7 +33,7 @@ See [Feature 01 per-chunk performance measurement](../spec.md#per-chunk-performa
 
 ## Deployment transition
 
-After the standalone speech service reports healthy, use the same old project name with `docker compose -p speech-feature-01 -f compose.speech-service.yml up -d --remove-orphans` on Linux or `docker compose -p speech-mac-test -f compose.mac-test.yml up -d --remove-orphans` on Mac to stop old database/Grafana containers from that project. These commands do not remove named volumes. Do not use `down -v` as part of this transition.
+The former Compose cutover procedure is retired. Use only the current installer and update commands in the [UBX-330M deployment guide](../../../docs/deployment.md); this historical ticket does not provide deployment or cleanup commands.
 
 ## Verification
 

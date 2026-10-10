@@ -4,7 +4,7 @@ Status: wontfix
 Execution: completed
 Blocked by: none
 
-Legacy outcome: the earlier Control Center container and ports were retired. The current versioned image uses port 8000 as documented in [`docs/deployment.md`](../../../docs/deployment.md).
+Legacy outcome: the earlier Control Center container and ports were retired. The current installer builds a local image from the source checkout and publishes the service on port 8000 as documented in [`docs/deployment.md`](../../../docs/deployment.md).
 
 ## Scope
 

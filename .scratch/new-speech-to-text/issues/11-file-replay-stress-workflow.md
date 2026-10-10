@@ -1,8 +1,10 @@
 # 11. File-replay stress workflow across model topologies
 
-Status: ready-for-agent
+Status: wontfix
 Execution: completed
 Blocked by: 01, 02, 03, 04
+
+Legacy outcome: the callable file-replay stress workflow and its software acceptance are implemented. Hardware stress results are not claimed by this issue.
 
 ## Scope
 

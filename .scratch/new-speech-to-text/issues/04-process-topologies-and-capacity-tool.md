@@ -1,8 +1,10 @@
 # 04. Process-owned inference topologies and capacity tool
 
-Status: ready-for-agent
+Status: wontfix
 Execution: completed
 Blocked by: 01, 02, 03
+
+Legacy outcome: process-topology implementation and software acceptance are complete. Real target-hardware capacity proof remains tracked separately in ticket 05.
 
 ## Scope
 

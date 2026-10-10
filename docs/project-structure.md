@@ -16,7 +16,6 @@ This document is the source of truth for where project files belong. Follow it w
 ├── legacies-poc/               # Archived proof of concept; isolated from new code
 ├── models/                     # Local model artifacts, not application source
 ├── scripts/                    # Repository and deployment utility scripts
-├── .github/workflows/          # CI and release automation
 ├── speech_to_text/             # Installable Python application package
 │   ├── frontend/               # Frontend source, assets, and browser E2E tests
 │   │   └── e2e/
@@ -40,7 +39,6 @@ This document is the source of truth for where project files belong. Follow it w
 ├── .gitignore                  # Generated files excluded from version control
 ├── README.md                   # Project entry point
 ├── Dockerfile                  # Versioned container build definition
-├── compose.yaml                # Local and host Compose deployment
 ├── pyproject.toml              # Package metadata and Python dependencies
 ├── uv.lock                     # Locked Python dependency resolution
 ├── pytest.ini                  # Pytest configuration
@@ -91,7 +89,7 @@ Frontend code calls the backend API. Backend routes validate requests and call w
 - Put inbound HTTP app setup, route handlers, and HTTP-only schemas in `speech_to_text/backend/`. Keep domain decisions in callable features and workflows.
 - Put Python feature, backend, and workflow tests under `tests/`, grouped by the boundary they verify. Keep browser E2E specs under `speech_to_text/frontend/e2e/`, beside their frontend tooling; keep test-only Python backend fixtures under `tests/frontend_e2e/`.
 - Put maintained documentation under `docs/`. Keep feature specifications, issue tracking, and task evidence under `.scratch/<feature_name>/` as described by the [issue tracker guide](agents/issue-tracker.md).
-- Put container build assets at the repository root (`Dockerfile`, `.dockerignore`, and `compose.yaml`), model-export utilities under `scripts/`, and GitHub automation under `.github/workflows/`.
+- Put container build assets at the repository root (`Dockerfile` and `.dockerignore`), and model-export utilities under `scripts/`. The UBX-330M installer owns and generates its Compose configuration under `data/ubx330m/`.
 - Keep new application code outside `legacies-poc/`. Modify the archive only when a task explicitly targets legacy code.
 - Keep downloaded or machine-specific model artifacts under `models/`, audio inputs under `audio/`, and reusable project commands under `scripts/`. Do not place these assets inside Python packages.
 - Keep ignored persistent runtime data and generated deployment state under `data/`.

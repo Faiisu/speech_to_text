@@ -1,8 +1,10 @@
 # 03. Microphone capture and session lifecycle
 
-Status: ready-for-agent
+Status: wontfix
 Execution: completed
 Blocked by: 01, 02
+
+Legacy outcome: implementation and software acceptance are complete in the current Feature 01 package. Hardware recognition and capacity proof remain tracked separately in ticket 05.
 
 ## Scope
 

@@ -1,8 +1,10 @@
 # 02. Finite clip normalization and transcription
 
-Status: ready-for-agent
+Status: wontfix
 Execution: completed
 Blocked by: 01
+
+Legacy outcome: implementation and software acceptance are complete in the current Feature 01 package.
 
 ## Scope
 

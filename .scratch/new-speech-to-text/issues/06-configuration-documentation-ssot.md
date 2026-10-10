@@ -1,8 +1,10 @@
 # 06. Configuration documentation single source of truth
 
-Status: ready-for-agent
+Status: wontfix
 Execution: completed
 Blocked by: none
+
+Legacy outcome: the configuration contract and its user-guide references are implemented in the current documentation.
 
 ## Scope
 

@@ -1,6 +1,9 @@
 # 01. Update an existing UBX-330M deployment
 
-Status: ready-for-agent
+Status: wontfix
+Execution: completed
+
+Legacy outcome: the update command and documented behavior are implemented in the current deployment workflow.
 
 ## Request
 

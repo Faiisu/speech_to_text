@@ -1,8 +1,10 @@
 # 12. Stress-test frontend
 
-Status: ready-for-agent
+Status: wontfix
 Execution: completed
 Blocked by: 11 and backend stress-test API
+
+Legacy outcome: the stress-test frontend and listed browser acceptance are implemented in the current React application.
 
 ## Scope
 

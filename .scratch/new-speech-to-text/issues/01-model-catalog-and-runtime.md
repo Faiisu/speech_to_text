@@ -1,8 +1,10 @@
 # 01. Model catalog, configuration, and runtime handles
 
-Status: ready-for-agent
+Status: wontfix
 Execution: completed
 Blocked by: none
+
+Legacy outcome: implementation and software acceptance are complete in the current Feature 01 package. Real OpenVINO GPU proof remains tracked separately in ticket 05.
 
 ## Scope
 

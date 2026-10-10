@@ -1,7 +1,9 @@
 # 01. Implement FastAPI transcription routes
 
-Status: ready-for-agent
+Status: wontfix
 Execution: completed
+
+Legacy outcome: the API, lifecycle, profiles, and listed acceptance are implemented in the current FastAPI application.
 
 ## Scope
 

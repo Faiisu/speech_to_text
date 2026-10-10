@@ -1,7 +1,9 @@
 # 01. Match and forward completed transcripts
 
-Status: ready-for-agent
+Status: wontfix
 Execution: completed; verification not run per task instruction
+
+Legacy outcome: matching and forwarding are implemented in the current callable workflow. Verification was not run per task instruction and is not claimed here.
 
 ## Scope
 

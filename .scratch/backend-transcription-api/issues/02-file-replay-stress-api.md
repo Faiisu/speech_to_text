@@ -1,8 +1,10 @@
 # 02. File-replay stress-test API
 
-Status: ready-for-agent
+Status: wontfix
 Execution: completed
 Blocked by: Feature 01 file-replay stress workflow
+
+Legacy outcome: the asynchronous stress-test API and listed software acceptance are implemented in the current FastAPI application.
 
 ## Scope
 

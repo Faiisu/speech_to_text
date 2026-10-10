@@ -1,6 +1,9 @@
 # 02. Support USB microphone hotplug
 
-Status: ready-for-agent
+Status: wontfix
+Execution: completed
+
+Legacy outcome: USB microphone hotplug support and its deployment documentation are implemented in the current installer-managed service.
 
 ## Request
 
