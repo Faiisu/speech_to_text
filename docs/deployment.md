@@ -16,7 +16,7 @@ Deploy the current Speech-to-Text application on the UBX-330M Linux host as a si
 
 ## Image release and update
 
-GitHub Actions builds and tags a `linux/amd64` image for each `v*` release tag, then pushes it to `ghcr.io/faiisu/speech_to_text` using the same `vX.Y.Z` tag plus `latest`. Keep the GHCR package private and grant the UBX-330M pull credentials read access. The model-export stage runs without GPU access; its first build downloads the pinned checkpoint and converts it to OpenVINO IR, which can use substantial memory and disk space. A host operator selects the image version with `SPEECH_TO_TEXT_IMAGE` in the Compose environment, pulls it, and recreates the service. Keep the previous image tag available for rollback. Deployments may briefly interrupt active workflows; run status and events are process-local and are lost when the service restarts.
+GitHub Actions builds and tags a `linux/amd64` image for each `v*` release tag, then pushes it to the public package `ghcr.io/faiisu/speech_to_text` using the same `vX.Y.Z` tag plus `latest`. UBX-330M can pull the image without registry credentials. The model-export stage runs without GPU access; its first build downloads the pinned checkpoint and converts it to OpenVINO IR, which can use substantial memory and disk space. A host operator selects the image version with `SPEECH_TO_TEXT_IMAGE` in the Compose environment, pulls it, and recreates the service. Keep the previous image tag available for rollback. Deployments may briefly interrupt active workflows; run status and events are process-local and are lost when the service restarts.
 
 ## Host data and configuration
 

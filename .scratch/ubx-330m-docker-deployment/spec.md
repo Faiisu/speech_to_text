@@ -14,7 +14,7 @@ Deployment choices and operator behavior are authoritative in the [deployment pl
 - [ ] Model conversion in the build does not require Intel GPU access; the final runtime image loads that model on UBX-330M OpenVINO GPU.
 - [ ] FastAPI serves the React application and `/api/v1` from port 8000 and exposes a lightweight health endpoint that does not load the model.
 - [ ] Docker Compose passes Intel GPU and host audio devices, persists only the SQLite profile database on the host, and runs one backend process with a restart policy.
-- [ ] GitHub Actions builds and pushes a version-tagged `linux/amd64` image to the private GHCR package.
+- [ ] GitHub Actions builds and pushes a version-tagged `linux/amd64` image to the public GHCR package.
 - [ ] Local validation covers frontend build, health and static serving, model catalog readiness, and Compose configuration.
 - [ ] The UBX-330M trial runs on an alternate host port, verifies health, OpenVINO GPU readiness, frontend/API access, and microphone discovery without changing the existing deployment.
 - [ ] Deployment docs describe the build, trial, rollback, persistent profile database, and the go-live gate for HTTP forwarding.
