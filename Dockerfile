@@ -9,7 +9,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libgomp1 python3.12 python3.12-venv \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml uv.lock ./
-RUN uv sync --python /usr/bin/python3.12 --locked --no-dev --no-install-project \
+RUN --mount=type=cache,id=speech-to-text-uv-cache,target=/root/.cache/uv \
+    uv sync --python /usr/bin/python3.12 --locked --no-dev --no-install-project \
     --extra backend --extra microphone --extra openvino
 
 FROM node:22.14.0-bookworm-slim AS frontend-build

@@ -193,6 +193,13 @@ readonly MODEL_DIR="$PROJECT_DIR/models"
 readonly CHECKOUT_UID="${SUDO_UID:-$(id -u)}"
 readonly CHECKOUT_GID="${SUDO_GID:-$(id -g)}"
 readonly INSTALL_DIR="$PROJECT_DIR/data/ubx330m"
+readonly CACHE_DIR="$INSTALL_DIR/cache"
+readonly HF_CACHE_DIR="$CACHE_DIR/huggingface"
+readonly EXPORT_HOME_DIR="$CACHE_DIR/home"
+readonly EXPORT_XDG_CACHE_DIR="$CACHE_DIR/xdg/cache"
+readonly EXPORT_XDG_CONFIG_DIR="$CACHE_DIR/xdg/config"
+readonly EXPORT_XDG_DATA_DIR="$CACHE_DIR/xdg/data"
+readonly EXPORT_TMP_DIR="$CACHE_DIR/tmp"
 readonly COMPOSE_PROJECT="speech_to_text_ubx330m"
 readonly IMAGE_VERSION="${1:-${SPEECH_TO_TEXT_VERSION:-v0.1.3}}"
 readonly EXPORT_DEPS_IMAGE="$LOCAL_IMAGE_REPOSITORY-export-deps:$IMAGE_VERSION"
@@ -453,6 +460,9 @@ port_is_free_or_owned
 [[ ! -e "$INSTALL_DIR" || -d "$INSTALL_DIR" ]] || fail "$INSTALL_DIR exists and is not a directory."
 [[ ! -L "$PROJECT_DIR/data" ]] || fail "$PROJECT_DIR/data is a symbolic link; refusing to write installer state outside the checkout."
 [[ ! -L "$INSTALL_DIR/data" ]] || fail "$INSTALL_DIR/data is a symbolic link; refusing to change ownership outside the application data directory."
+for cache_path in "$CACHE_DIR" "$HF_CACHE_DIR" "$EXPORT_HOME_DIR" "$CACHE_DIR/xdg" "$EXPORT_XDG_CACHE_DIR" "$EXPORT_XDG_CONFIG_DIR" "$EXPORT_XDG_DATA_DIR" "$EXPORT_TMP_DIR"; do
+  [[ ! -L "$cache_path" ]] || fail "$cache_path is a symbolic link; refusing to write installer cache outside the application directory."
+done
 [[ ! -L "$MODEL_DIR" ]] || fail "$MODEL_DIR is a symbolic link; refusing to write model files outside the checkout."
 [[ ! -L "$INSTALL_DIR/compose.yaml" ]] || fail "$INSTALL_DIR/compose.yaml is a symbolic link; refusing to overwrite a file outside the application directory."
 [[ -f "$SCRIPT_DIR/export_openvino_model.py" ]] || fail "The pinned model exporter is missing from $SCRIPT_DIR. Run the installer from a repository checkout."
@@ -484,8 +494,24 @@ docker build --platform linux/amd64 --target python-deps --tag "$EXPORT_DEPS_IMA
 
 stage "Prepare model"
 install -d -m 0755 "$INSTALL_DIR"
+install -d -m 0755 \
+  "$HF_CACHE_DIR" \
+  "$EXPORT_HOME_DIR" \
+  "$EXPORT_XDG_CACHE_DIR" \
+  "$EXPORT_XDG_CONFIG_DIR" \
+  "$EXPORT_XDG_DATA_DIR"
+install -d -m 0700 "$EXPORT_TMP_DIR"
 if (( EUID == 0 )); then
   chown "$CHECKOUT_UID:$CHECKOUT_GID" "$INSTALL_DIR"
+  chown "$CHECKOUT_UID:$CHECKOUT_GID" \
+    "$CACHE_DIR" \
+    "$HF_CACHE_DIR" \
+    "$EXPORT_HOME_DIR" \
+    "$CACHE_DIR/xdg" \
+    "$EXPORT_XDG_CACHE_DIR" \
+    "$EXPORT_XDG_CONFIG_DIR" \
+    "$EXPORT_XDG_DATA_DIR" \
+    "$EXPORT_TMP_DIR"
 fi
 [[ ! -e "$MODEL_DIR" || -d "$MODEL_DIR" ]] || fail "$MODEL_DIR exists and is not a directory."
 install -d -m 0755 "$MODEL_DIR"
@@ -496,8 +522,15 @@ say "Checking or exporting the pinned turbo OpenVINO model into $MODEL_DIR."
 docker run --rm --platform linux/amd64 --user "$CHECKOUT_UID:$CHECKOUT_GID" \
   --volume "$SCRIPT_DIR/export_openvino_model.py:/tmp/export_openvino_model.py:ro" \
   --volume "$MODEL_DIR:/models" \
+  --volume "$CACHE_DIR:/cache" \
+  --env HOME=/cache/home \
   --env HF_HUB_DISABLE_TELEMETRY=1 \
-  --env HF_HOME=/tmp/huggingface \
+  --env HF_HOME=/cache/huggingface \
+  --env XDG_CACHE_HOME=/cache/xdg/cache \
+  --env XDG_CONFIG_HOME=/cache/xdg/config \
+  --env XDG_DATA_HOME=/cache/xdg/data \
+  --env TMPDIR=/cache/tmp \
+  --env PYTHONDONTWRITEBYTECODE=1 \
   --entrypoint /build/.venv/bin/python "$EXPORT_DEPS_IMAGE" /tmp/export_openvino_model.py \
   --destination /models/openvino-turbo-source \
   || fail "Could not prepare the pinned OpenVINO model. The running service and existing model directory were left intact."
