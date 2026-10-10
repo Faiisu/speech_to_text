@@ -10,7 +10,7 @@ Deployment choices and operator behavior are authoritative in the [deployment pl
 
 ## Acceptance criteria
 
-- [ ] A reproducible multi-stage Docker build installs the backend's OpenVINO and microphone dependencies, builds the React frontend, and includes the converted `turbo` model at `source` precision.
+- [ ] A reproducible multi-stage Ubuntu 24.04 Docker build installs the backend's OpenVINO, Intel OpenCL, and microphone dependencies, builds the React frontend, and includes the converted `turbo` model at `source` precision.
 - [ ] Model conversion in the build does not require Intel GPU access; the final runtime image loads that model on UBX-330M OpenVINO GPU.
 - [ ] FastAPI serves the React application and `/api/v1` from port 8000 and exposes a lightweight health endpoint that does not load the model.
 - [ ] Docker Compose passes Intel GPU and host audio devices, persists only the SQLite profile database on the host, and runs one backend process with a restart policy.

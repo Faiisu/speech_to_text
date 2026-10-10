@@ -8,7 +8,7 @@ Deploy the current Speech-to-Text application on the UBX-330M Linux host as a si
 
 ## Shape
 
-- Build one `linux/amd64` Docker image containing the Python backend, the built React frontend, and the converted `turbo` OpenVINO source-precision model. The model is exported in a CPU-only build stage from a pinned Hugging Face revision; runtime uses OpenVINO GPU. FastAPI serves the frontend assets and `/api/v1` from the same origin, with `/healthz` as a model-free health endpoint.
+- Build one `linux/amd64` Docker image on Ubuntu 24.04 containing the Python backend, the built React frontend, the converted `turbo` OpenVINO source-precision model, and the Intel OpenCL runtime. The model is exported in a CPU-only build stage from a pinned Hugging Face revision; runtime uses OpenVINO GPU and the host's Intel kernel driver through `/dev/dri`. FastAPI serves the frontend assets and `/api/v1` from the same origin, with `/healthz` as a model-free health endpoint.
 - Run one backend process in one Docker Compose service. Publish port `8000` to the LAN and open `http://<UBX-330M-IP>:8000` in a browser.
 - Use HTTP without login for LAN users. Restrict access to the LAN through the host firewall.
 - Pass the Intel GPU device (`/dev/dri`) and the host microphone/audio devices into the container. Use the existing OpenVINO GPU model setup.

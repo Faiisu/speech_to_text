@@ -2,14 +2,14 @@
 
 FROM ghcr.io/astral-sh/uv:0.7.12 AS uv
 
-FROM python:3.12-slim-bookworm AS python-deps
+FROM ubuntu:24.04 AS python-deps
 COPY --from=uv /uv /uvx /bin/
 WORKDIR /build
-COPY pyproject.toml uv.lock ./
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 \
+    && apt-get install -y --no-install-recommends ca-certificates libgomp1 python3.12 python3.12-venv \
     && rm -rf /var/lib/apt/lists/*
-RUN uv sync --locked --no-dev --no-install-project \
+COPY pyproject.toml uv.lock ./
+RUN uv sync --python /usr/bin/python3.12 --locked --no-dev --no-install-project \
     --extra backend --extra microphone --extra openvino
 
 FROM python-deps AS model-export
@@ -25,7 +25,7 @@ RUN npm ci
 COPY speech_to_text/frontend/ ./
 RUN npm run build
 
-FROM python:3.12-slim-bookworm AS runtime
+FROM ubuntu:24.04 AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
@@ -36,7 +36,9 @@ ENV PYTHONUNBUFFERED=1 \
     SPEECH_TO_TEXT_PROFILE_DB=/data/profiles.sqlite3 \
     SPEECH_TO_TEXT_FRONTEND_DIR=/app/frontend
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libasound2 libgomp1 libportaudio2 \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates intel-opencl-icd libasound2t64 libgomp1 \
+       libportaudio2 ocl-icd-libopencl1 passwd python3.12 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --home-dir /app app \
