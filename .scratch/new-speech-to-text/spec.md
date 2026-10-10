@@ -39,7 +39,7 @@ The following table is the authoritative Feature 01 configuration contract. It r
 | Model | `enqueue_timeout_seconds` | `1.0` second | Finite positive number; maximum wait to enqueue a shared-model chunk before that source receives `INPUT_QUEUE_TIMEOUT` and stops. |
 | Flow | `source_id` | Generated when omitted | If provided, a non-empty string used to identify events and route results. |
 | Flow | `language` | `th` | Non-empty language code or `auto`; the selected model must support the language. |
-| Flow | `chunk_seconds` | `5.0` seconds | Finite number in `(0, 30]` for the initial Whisper adapters. Chunks have zero overlap. |
+| Flow | `chunk_seconds` | `30.0` seconds | Finite number in `(0, 30]` for the initial Whisper adapters. Chunks have zero overlap. |
 | Flow | `silence_threshold` | `0.05` | Finite RMS threshold in `[0, 1)`. Chunks below the configured gate skip inference; the feature does not estimate room or microphone noise automatically. |
 | Flow decoding | `beam_size` | `1` | Integer in `[1, 10]`; decoder search width. |
 | Flow decoding | `temperature` | `0.0` | Finite number in `[0, 1]`; zero keeps greedy decoding. |
@@ -101,7 +101,7 @@ The callable functions above are the agreed test boundaries. Configuration, cata
 
 Model configuration accepts `model`, `runtime`, `precision`, `queue_capacity`, and `enqueue_timeout_seconds`. Defaults are documented above; `precision="source"` means the checkpoint's published precision. Queue capacity is a positive integer; enqueue timeout is a finite positive number of seconds. Runtime/precision compatibility must be validated before loading. Unknown keys/options raise `ConfigurationError` rather than being ignored.
 
-Flow configuration accepts `source_id`, `language`, `chunk_seconds`, `silence_threshold`, and `decoding_options`. The default chunk length is 5 seconds; accepted lengths are finite values in `(0, 30]` for the initial Whisper adapters. RMS threshold is in `[0, 1)`; default `0.05`. Silence skips inference without producing invented text. No overlap is supported. Decoding options are validated against the selected adapter; unsupported options fail explicitly. Source IDs identify events and IPC routing; an omitted ID is generated uniquely.
+Flow configuration accepts `source_id`, `language`, `chunk_seconds`, `silence_threshold`, and `decoding_options`. The default chunk length is 30 seconds; accepted lengths are finite values in `(0, 30]` for the initial Whisper adapters. RMS threshold is in `[0, 1)`; default `0.05`. Silence skips inference without producing invented text. No overlap is supported. Decoding options are validated against the selected adapter; unsupported options fail explicitly. Source IDs identify events and IPC routing; an omitted ID is generated uniquely.
 
 The public error classes are `ConfigurationError`, `ModelLoadError`, `ModelClosedError`, and `AudioInputError`; missing devices/loading failures before session creation raise directly. Runtime load errors preserve the actionable cause in their message. Asynchronous capture failures emit `CAPTURE_FAILED`; chunk errors emit `CHUNK_INFERENCE_FAILED`; queue overload emits `INPUT_QUEUE_TIMEOUT`. Error events contain `code`, `message`, `sequence` (or `None`), and `fatal` in addition to `type`/`source_id`. Completion events contain `last_sequence` (or `None`) and `status`. This fixes the concrete names used by the executable tests.
 

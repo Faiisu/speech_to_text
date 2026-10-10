@@ -19,7 +19,7 @@ MODEL_KEYS = frozenset(MODEL_DEFAULTS)
 RUNTIME_OPTIONS = ("openvino-gpu", "openvino-cpu", "ctranslate2")
 FLOW_DEFAULTS = {
     "language": "th",
-    "chunk_seconds": 5.0,
+    "chunk_seconds": 30.0,
     "silence_threshold": 0.05,
     "decoding_options": {
         "beam_size": 1,

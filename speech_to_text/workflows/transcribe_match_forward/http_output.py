@@ -1,4 +1,4 @@
-"""Configurable JSON POST adapter with bounded transient retries."""
+"""Workflow-owned HTTP output delivery with bounded transient retries."""
 
 from dataclasses import dataclass
 import json
@@ -98,7 +98,9 @@ class HttpForwarder:
         )
         for attempt in range(1, self.config.max_attempts + 1):
             try:
-                with self._opener(request, timeout=self.config.timeout_seconds) as response:
+                with self._opener(
+                    request, timeout=self.config.timeout_seconds
+                ) as response:
                     status = response.getcode()
                 if 200 <= status < 300:
                     return ForwardingReceipt(source_id, status, attempt)

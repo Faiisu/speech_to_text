@@ -8,8 +8,8 @@ Implement keyword/phrase matching and outbound forwarding as specified in [Trans
 
 ## Acceptance checklist
 
-- [x] Add the Thai `word_matching` module and optional dependency extra.
-- [x] Match exact normalized token sequences and count occurrences per configured target.
+- [x] Add the Thai `word_matching` module without a tokenizer runtime dependency.
+- [x] Match normalized literal substrings and count overlapping occurrences per configured target.
 - [x] Add the configurable outbound HTTP forwarder with documented retry and error behavior.
 - [x] Add clip and session workflow interfaces, including process-session wrapping.
 - [x] Preserve per-source transcript order and forward once after the terminal event.

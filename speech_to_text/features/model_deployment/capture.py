@@ -7,6 +7,41 @@ import threading
 from .errors import AudioInputError
 
 
+def list_input_devices():
+    """List input devices by stable name, marking duplicate names unselectable."""
+    try:
+        import sounddevice as sd
+    except ImportError as exc:
+        raise AudioInputError(
+            "Microphone device listing requires sounddevice and PortAudio"
+        ) from exc
+    try:
+        all_devices = list(sd.query_devices())
+        inputs = [info for info in all_devices if info.get("max_input_channels", 0) > 0]
+        name_counts = {}
+        for info in inputs:
+            name = info.get("name", "")
+            name_counts[name] = name_counts.get(name, 0) + 1
+        default_index = sd.default.device[0]
+        devices = []
+        for index, info in enumerate(all_devices):
+            if info.get("max_input_channels", 0) <= 0:
+                continue
+            name = info.get("name", "")
+            devices.append(
+                {
+                    "name": name,
+                    "selectable": bool(name) and name_counts[name] == 1,
+                    "max_input_channels": int(info["max_input_channels"]),
+                    "default_samplerate": int(round(info["default_samplerate"])),
+                    "is_default": index == default_index,
+                }
+            )
+        return devices
+    except Exception as exc:
+        raise AudioInputError(f"Unable to list input microphones: {exc}") from exc
+
+
 class SoundDeviceSource:
     def __init__(self, *, device, on_audio, on_error):
         try:

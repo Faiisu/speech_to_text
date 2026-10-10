@@ -2,16 +2,15 @@
 
 ## Purpose
 
-Compose the existing Feature 01 transcription interface with Thai keyword/phrase matching and outbound HTTP forwarding. Feature 01 continues to own audio input, model execution, chunking, transcript events, and session lifecycle. The matching feature finds configured terms in completed transcripts and reports each term's occurrence count.
+Compose the existing Feature 01 transcription interface with Thai keyword/phrase matching and workflow-owned output delivery. Feature 01 continues to own audio input, model execution, chunking, transcript events, and session lifecycle. The matching feature finds configured terms in completed transcripts and reports each term's occurrence count. The workflow returns its result to the backend caller and decides whether to send additional output to another backend or external system.
 
 ## Matching contract
 
-- `WordMatchingConfig` contains a non-empty list of unique target keywords or phrases, `language="th"`, and `engine="newmm"`.
-- `match_keywords(text, config)` returns a `WordMatchResult` containing the language, engine, and one `{keyword, count}` result per configured target, including targets with zero occurrences.
-- Normalize source text and targets to Unicode NFC and case-fold tokens before comparison.
-- Tokenize source and targets with the same PyThaiNLP `word_tokenize` engine. Match exact contiguous token sequences; substring matches inside a larger token do not count.
-- Whitespace separates tokens but does not break a phrase match. Punctuation separates token sequences and cannot match a keyword. Count overlapping occurrences for each target independently; different targets may match overlapping spans.
-- The initial implementation supports Thai. Raise `WordMatchingError` for unsupported languages, invalid targets, or an unavailable/unsupported tokenizer. Install the optional `thai-word-matching` extra to provide PyThaiNLP.
+- `WordMatchingConfig` contains a non-empty list of unique target keywords or phrases and `language="th"`.
+- `match_keywords(text, config)` returns a `WordMatchResult` containing the language and one `{keyword, count}` result per configured target, including targets with zero occurrences.
+- Normalize source text and each configured target to Unicode NFC, then case-fold them before comparison.
+- Match literal substrings. Whitespace and punctuation are ordinary characters and only match when present in both source and target. Count overlapping occurrences for each target independently; different targets may match overlapping spans.
+- The initial implementation supports Thai matching configuration. Raise `WordMatchingError` for unsupported languages or invalid targets. Matching does not require a tokenizer dependency.
 
 ## Pipeline behavior
 
@@ -47,15 +46,18 @@ For clips, `status` is `completed`; for microphone sources it copies Feature 01'
 
 ## Usage
 
-Install the project with the optional Thai tokenizer, then compose the callable modules from the host application:
+Install the project, then compose the callable modules from the host application:
 
 ```python
 import os
 
 from speech_to_text.features.model_deployment import load_model, start_microphone_flow
 from speech_to_text.features.word_matching import WordMatchingConfig
-from speech_to_text.integrations.http_forwarder import HttpForwarder, HttpForwarderConfig
-from speech_to_text.workflows.transcribe_match_forward import forward_session
+from speech_to_text.workflows.transcribe_match_forward import (
+    HttpForwarder,
+    HttpForwarderConfig,
+    forward_session,
+)
 
 model = load_model({"model": "turbo", "runtime": "openvino-gpu"})
 forwarder = HttpForwarder(HttpForwarderConfig(
@@ -73,23 +75,26 @@ model.close()
 
 For a finite WAV, use `transcribe_clip_and_forward(clip, model, forwarder, matching, flow_config)` from the same workflow module. `forward_session` can also wrap each session returned by Feature 01's process-group API.
 
+`list_available_microphones()` delegates device discovery to Feature 01's public callable so backend routes can preserve the workflow boundary.
+
 ## Module layout
 
-- `speech_to_text/features/word_matching/` exposes keyword/phrase matching and hides tokenizer details.
-- `speech_to_text/integrations/http_forwarder/` implements the outbound HTTP adapter.
-- `speech_to_text/workflows/transcribe_match_forward/` composes Feature 01, matching, and forwarding for clips and sessions.
+- `speech_to_text/features/word_matching/` exposes keyword/phrase matching and hides its normalization and substring-search implementation.
+- `speech_to_text/workflows/transcribe_match_forward/` composes Feature 01 and matching, returns results to its caller, and owns configured output delivery for clips and sessions. Its `http_output.py` module implements the optional outbound HTTP destination.
+
+The public `TranscriptionService` facade owns one lazy model handle for a backend process. It reads `SPEECH_TO_TEXT_MODEL`, `SPEECH_TO_TEXT_RUNTIME`, and `SPEECH_TO_TEXT_PRECISION` when no explicit model configuration is supplied, then exposes keyword validation, clip transcription, microphone startup, device listing, and `close()`. It translates Feature 01 and matching errors into workflow-owned configuration, input, and dependency errors for backend callers.
 
 HTTP failures raise `ForwardingError` with status and safe diagnostic context.
 
 ## Scope limits
 
-- Match configured complete token/phrase sequences in each source's assembled transcript, not substring fragments.
+- Match configured literal substrings in each source's assembled transcript.
 - Forward once when a clip is complete or a microphone session emits its terminal event.
 - No UI page, inbound HTTP route, database, durable outbox, destination-specific payload mapping, or per-chunk forwarding is included.
 
 ## Acceptance criteria
 
-- Matching is callable independently and supports the documented Thai normalization, tokenization, exact-sequence, and occurrence-count behavior.
+- Matching is callable independently and supports the documented Thai configuration, normalization, literal-substring, and occurrence-count behavior.
 - Clip orchestration invokes Feature 01 once, matches the assembled transcript, forwards one record with a stable source ID, and returns the result.
 - Session orchestration preserves Feature 01 event order, matches once after completion, and forwards once per source for local sessions and process sessions.
 - HTTP forwarding sends the documented JSON and headers, honors timeout/retry settings, and reports permanent and exhausted transient failures explicitly.
@@ -98,4 +103,3 @@ HTTP failures raise `ForwardingError` with status and safe diagnostic context.
 ## References
 
 - [Feature 01 contract](../new-speech-to-text/spec.md)
-- [PyThaiNLP word tokenization](https://pythainlp.org/docs/5.3.4/api/tokenize.html)

@@ -1,18 +1,21 @@
-"""Thai keyword and phrase matching using exact token sequences."""
+"""Thai keyword and phrase matching using literal substring searches."""
 
-from dataclasses import dataclass
 import unicodedata
+from dataclasses import dataclass
 
 
 class WordMatchingError(ValueError):
-    """Raised for invalid match configuration or unavailable tokenization."""
+    """Raised for invalid match configuration."""
+
+
+def _normalize(text):
+    return unicodedata.normalize("NFC", text).casefold()
 
 
 @dataclass(frozen=True)
 class WordMatchingConfig:
     keywords: tuple[str, ...]
     language: str = "th"
-    engine: str = "newmm"
 
     def __post_init__(self):
         if isinstance(self.keywords, (str, bytes)):
@@ -29,15 +32,13 @@ class WordMatchingConfig:
             not isinstance(keyword, str) or not keyword.strip() for keyword in keywords
         ):
             raise WordMatchingError("each keyword or phrase must be a non-empty string")
-        normalized = [
-            unicodedata.normalize("NFC", keyword).casefold() for keyword in keywords
-        ]
+        normalized = [_normalize(keyword) for keyword in keywords]
         if len(set(normalized)) != len(normalized):
-            raise WordMatchingError("keywords must be unique after NFC normalization")
+            raise WordMatchingError(
+                "keywords must be unique after NFC normalization and case folding"
+            )
         if self.language != "th":
             raise WordMatchingError(f"Unsupported matching language: {self.language!r}")
-        if not isinstance(self.engine, str) or not self.engine.strip():
-            raise WordMatchingError("engine must be a non-empty tokenizer name")
         object.__setattr__(self, "keywords", keywords)
 
 
@@ -50,95 +51,37 @@ class KeywordMatch:
 @dataclass(frozen=True)
 class WordMatchResult:
     language: str
-    engine: str
     matches: tuple[KeywordMatch, ...]
 
 
-def _token_segments(tokens):
-    segments = []
-    current_segment = []
-    for token in tokens:
-        lexical = []
-        for character in token:
-            category = unicodedata.category(character)[0]
-            if character.isspace():
-                if lexical:
-                    current_segment.append("".join(lexical))
-                    lexical = []
-                continue
-            if category in {"L", "N", "M"}:
-                lexical.append(character)
-                continue
-            if lexical:
-                current_segment.append("".join(lexical))
-                lexical = []
-            if current_segment:
-                segments.append(current_segment)
-                current_segment = []
-        if lexical:
-            current_segment.append("".join(lexical))
-    if current_segment:
-        segments.append(current_segment)
-    return segments
-
-
-def _tokenize(text, engine):
-    try:
-        from pythainlp.tokenize import word_tokenize
-    except ImportError as exc:
-        raise WordMatchingError(
-            "Thai matching requires PyThaiNLP; install the 'thai-word-matching' extra"
-        ) from exc
-    try:
-        normalized = unicodedata.normalize("NFC", text)
-        tokens = word_tokenize(normalized, engine=engine)
-    except (LookupError, NotImplementedError, ValueError) as exc:
-        raise WordMatchingError(
-            f"Unable to tokenize Thai text with engine {engine!r}: {exc}"
-        ) from exc
-    return [unicodedata.normalize("NFC", token).casefold() for token in tokens]
-
-
-def _target_tokens(keyword, engine):
-    segments = _token_segments(_tokenize(keyword, engine))
-    if len(segments) != 1 or not segments[0]:
-        raise WordMatchingError(
-            f"Keyword or phrase {keyword!r} must be one token sequence"
-        )
-    return tuple(segments[0])
-
-
-def _count_occurrences(source_segments, target):
-    target_length = len(target)
+def _count_occurrences(source, target):
     count = 0
-    for segment in source_segments:
-        for start in range(len(segment) - target_length + 1):
-            if tuple(segment[start : start + target_length]) == target:
-                count += 1
-    return count
+    start = 0
+    while True:
+        start = source.find(target, start)
+        if start < 0:
+            return count
+        count += 1
+        start += 1
 
 
 def match_keywords(text, config):
-    """Count each configured target's exact token-sequence occurrences.
+    """Count overlapping literal substring occurrences for each target.
 
-    Source punctuation and other non-word tokens divide matching segments;
-    whitespace tokens are ignored, so spaces do not interrupt phrases.
-    Occurrences overlap and each configured target is counted independently.
+    The source and configured targets are normalized to Unicode NFC and
+    case-folded before searching. Each target is counted independently.
     """
     if not isinstance(text, str):
         raise TypeError("text must be a string")
     if not isinstance(config, WordMatchingConfig):
         raise TypeError("config must be a WordMatchingConfig")
 
-    source_segments = _token_segments(_tokenize(text, config.engine))
-
+    source = _normalize(text)
     matches = tuple(
         KeywordMatch(
             keyword=keyword,
-            count=_count_occurrences(
-                source_segments, _target_tokens(keyword, config.engine)
-            ),
+            count=_count_occurrences(source, _normalize(keyword)),
         )
         for keyword in config.keywords
     )
-    return WordMatchResult(config.language, config.engine, matches)
+    return WordMatchResult(config.language, matches)

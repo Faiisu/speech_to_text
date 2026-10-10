@@ -16,18 +16,23 @@ This document is the source of truth for where project files belong. Follow it w
 ├── models/                     # Local model artifacts, not application source
 ├── scripts/                    # Repository and deployment utility scripts
 ├── speech_to_text/             # Installable Python application package
-│   ├── backend/                # Inbound HTTP application boundary
-│   │   └── http/
+│   ├── frontend/               # Frontend source, assets, and browser E2E tests
+│   │   └── e2e/
+│   ├── backend/                # Inbound API and server lifecycle
+│   │   └── api/
 │   │       ├── routes/
 │   │       └── schemas/
 │   ├── features/               # Callable feature modules
 │   │   ├── model_deployment/
 │   │   └── word_matching/
-│   ├── integrations/
-│   │   └── http_forwarder/
-│   └── workflows/
+│   └── workflows/              # Use cases and their output behavior
 │       └── transcribe_match_forward/
 ├── tests/                      # Automated tests organized by owner and boundary
+│   ├── feature_01/
+│   ├── word_matching/
+│   ├── backend/
+│   ├── workflows/
+│   └── frontend_e2e/            # Test-only backend fixtures for browser E2E tests
 ├── AGENTS.md                   # Repository-wide agent instructions
 ├── .gitignore                  # Generated files excluded from version control
 ├── README.md                   # Project entry point
@@ -36,34 +41,35 @@ This document is the source of truth for where project files belong. Follow it w
 └── requirements-test.txt        # Test dependency list
 ```
 
-The backend and HTTP subpackages currently reserve package boundaries. The intended backend module layout is:
+The frontend package reserves the UI boundary. The implemented backend module layout is:
 
 ```text
 speech_to_text/backend/
 ├── app.py                      # FastAPI app factory and process lifecycle
 ├── dependencies.py             # Construct and provide workflow dependencies
-└── http/
-    ├── router.py               # Combine and mount HTTP routes
+└── api/
+    ├── router.py               # Combine and mount inbound API routes
     ├── routes/                  # Endpoint handlers grouped by resource or use case
-    │   ├── health.py
+    │   ├── microphones.py
     │   └── transcription.py
-    └── schemas/                 # HTTP request and response models
+    └── schemas/                 # API request and response models
         └── transcription.py
 ```
 
-Add these modules when their behavior and HTTP contracts are specified. The HTTP layer validates transport input, calls workflows or feature interfaces, and maps results to responses. Feature logic stays under `features/`; workflow orchestration stays under `workflows/`; external-system adapters stay under `integrations/`.
+Frontend code calls the backend API. Backend routes validate requests and call workflow functions. A workflow calls features, receives their results, and owns the use case's output choices: it returns results to the backend and can send them to another backend or system. The backend maps returned results to frontend responses or streams. Feature logic stays under `features/`; use-case orchestration and delivery behavior stay under `workflows/`.
 
 ## Placement rules
 
 - Put a feature's implementation and public callable interface in `speech_to_text/features/<feature_name>/`. Export the supported interface from that package's `__init__.py`.
-- Put orchestration that composes multiple features or integrations in `speech_to_text/workflows/<workflow_name>/`.
-- Put code that communicates with an external service or device in `speech_to_text/integrations/<integration_name>/`.
+- Keep each feature independent of other feature modules: a feature must not import or call another feature's functions. When a use case needs to call functions from multiple features, put that orchestration in `speech_to_text/workflows/<workflow_name>/` and have the workflow call each feature's public interface.
+- Put each use case's orchestration and output delivery behavior in `speech_to_text/workflows/<workflow_name>/`. Keep output choices owned by that workflow.
+- Keep code that sends a workflow's results to another backend or system inside that owning workflow. Do not create a top-level `integrations/` folder.
 - Put inbound HTTP app setup, route handlers, and HTTP-only schemas in `speech_to_text/backend/`. Keep domain decisions in callable features and workflows.
-- Put tests under `tests/`, grouped by the feature or boundary they verify. Keep the established `tests/feature_01/` suite with Feature 01; add new feature suites under `tests/<feature_name>/` and workflow or integration suites under `tests/workflows/` or `tests/integrations/`.
+- Put Python feature, backend, and workflow tests under `tests/`, grouped by the boundary they verify. Keep browser E2E specs under `speech_to_text/frontend/e2e/`, beside their frontend tooling; keep test-only Python backend fixtures under `tests/frontend_e2e/`.
 - Put maintained documentation under `docs/`. Keep feature specifications, issue tracking, and task evidence under `.scratch/<feature_name>/` as described by the [issue tracker guide](agents/issue-tracker.md).
 - Keep new application code outside `legacies-poc/`. Modify the archive only when a task explicitly targets legacy code.
 - Keep downloaded or machine-specific model artifacts under `models/`, audio inputs under `audio/`, and reusable project commands under `scripts/`. Do not place these assets inside Python packages.
-- Name modules after their responsibility. Put inbound HTTP route modules under `backend/http/routes/`; do not put HTTP endpoints in feature modules.
+- Name modules after their responsibility. Put inbound API route modules under `backend/api/routes/`; do not put HTTP endpoints in feature or workflow modules.
 
 When a task introduces a lasting folder category or changes ownership boundaries, update this document in the same change. For documentation topics, first update their existing authoritative document and link to it rather than copying its content here.
 

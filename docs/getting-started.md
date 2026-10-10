@@ -2,7 +2,7 @@
 
 # Getting Started
 
-This guide installs the callable Python package. The previous Control Center UI and HTTP server have been removed; a replacement frontend/backend is not part of this phase.
+This guide installs the callable Python package, optional API server, and frontend preview. The previous Control Center UI and HTTP server have been removed; the replacement frontend calls the FastAPI backend.
 
 ## Prerequisites
 
@@ -28,10 +28,32 @@ uv pip install --python .venv/bin/python -e '.[openvino]'
 
 ```bash
 uv pip install --python .venv/bin/python -e '.[microphone]'
-uv pip install --python .venv/bin/python -e '.[thai-word-matching]'
 ```
 
 For other runtime choices, see the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults). OpenVINO GPU availability depends on the host and its drivers; a Mac development environment does not prove Linux target-hardware support.
+
+## Run the backend API
+
+```bash
+uv pip install --python .venv/bin/python -e '.[backend,microphone,openvino]'
+uv run --no-sync uvicorn speech_to_text.backend.app:app --host 127.0.0.1 --port 8000
+```
+
+The workflow service loads the model on the first transcription request. See [Configuration](configuration.md#local-environment-variables) to override its model settings, and the [Backend API v1 contract](../.scratch/backend-transcription-api/spec.md) for endpoints and process-local state limits.
+
+## Run the frontend in development
+
+Keep the backend running, then open a second terminal:
+
+```bash
+cd speech_to_text/frontend
+npm ci
+npm run dev
+```
+
+Open the Vite URL printed in the terminal (normally `http://localhost:5173`). The development server forwards `/api` requests to the backend at `http://localhost:8000`. The frontend includes profile management, workflow monitoring, and a catch-all page for unknown URLs. For example, visit `http://localhost:5173/unknown/path` to see the 404 route.
+
+To build frontend assets, run `npm run build` from `speech_to_text/frontend/`. Production static hosting and FastAPI static-file mounting are not configured yet; the Vite development server is the supported preview path for this phase.
 
 ## Call Feature 01
 

@@ -1,8 +1,8 @@
 [← Back to README](../README.md)
 
-# Callable Interfaces
+# API Interfaces
 
-The current package exposes Python callable interfaces. The previous Control Center frontend, FastAPI application, and HTTP routes have been removed. There is no inbound HTTP backend in this phase.
+Feature and workflow capabilities are available as Python callables. The previous Control Center frontend and server have been removed. The React frontend calls the backend through its inbound HTTP API; callable feature and workflow interfaces remain available to Python callers as well.
 
 ## Feature 01: model deployment
 
@@ -20,11 +20,15 @@ finally:
 
 ## Thai word matching and forwarding
 
-The matching feature and HTTP forwarding integration are composed by the [transcript matching workflow](../.scratch/transcript-matching-forwarding/spec.md). The HTTP forwarder is outbound: it sends completed results to a configured receiver. It is not an inbound API for the frontend.
+The matching feature and its output behavior are composed by the [transcript matching workflow](../.scratch/transcript-matching-forwarding/spec.md). The workflow returns results to its backend caller and can also send completed results to a configured receiver.
 
-## Future frontend and backend
+## Backend API v1
 
-A future backend can expose HTTP routes that validate requests, call these feature/workflow interfaces, and return documented responses. The frontend should call that backend over HTTP; it should not import or duplicate feature logic. The current package does not implement that backend yet.
+Install the backend extra and run the app with `uvicorn speech_to_text.backend.app:app`. The contract for clip uploads, microphone sessions, device discovery, status, buffered events, and stop behavior is maintained in the [backend transcription API specification](../.scratch/backend-transcription-api/spec.md). Routes call the workflow interface; workflow events are buffered per run for independent polling.
+
+Microphone requests can select `shared` or `per_workflow_process` model execution; omitted mode keeps the shared-model default. The API process owns the run registry in either mode. Run state is in-memory and non-durable; restarting the server loses it, and multiple backend worker processes do not share status or event history. See the [backend API specification](../.scratch/backend-transcription-api/spec.md) for the request contract and lifecycle.
+
+Reusable microphone profiles can be created, listed, replaced, deleted, and started through the backend API. Profiles persist in SQLite; the endpoint for listing transcriptions exposes only runs still retained in the current backend process. `SPEECH_TO_TEXT_PROFILE_DB` selects the profile database file. The API specification remains the source of truth for profile and run response shapes.
 
 ## See also
 

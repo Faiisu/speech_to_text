@@ -1,12 +1,13 @@
 """Callable public interface for speech-to-text model deployment.
 
 Model configuration defaults to ``turbo`` + ``openvino-gpu`` + source
-checkpoint precision. Flow configuration defaults to Thai, 5 second chunks,
+checkpoint precision. Flow configuration defaults to Thai, 30 second chunks,
 and an RMS silence threshold of 0.05. Use ``load_model`` once per owning
 process and reuse that handle for clips or microphone flows.
 """
 
 from .catalog import list_models
+from .capture import list_input_devices
 from .errors import (
     AudioInputError,
     ChunkInferenceWarning,
@@ -26,6 +27,11 @@ from .session import TranscriptionSession
 def list_available_models(*, catalog_path=None):
     """Rescan built-in, configured, converted, and local-cache model sources."""
     return list_models(catalog_path=catalog_path)
+
+
+def list_microphone_devices():
+    """List host input devices without exposing transient device indexes."""
+    return list_input_devices()
 
 
 def start_microphone_flow(
@@ -61,6 +67,7 @@ __all__ = [
     "ProcessSession",
     "TranscriptionSession",
     "list_available_models",
+    "list_microphone_devices",
     "load_model",
     "start_microphone_flow",
     "start_multiprocess_microphone_flows",

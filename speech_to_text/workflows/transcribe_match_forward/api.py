@@ -1,16 +1,20 @@
 """Public clip and session orchestration for completed transcripts."""
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import queue
 import threading
 import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
-from speech_to_text.features.model_deployment import transcribe_clip
+from speech_to_text.features.model_deployment import (
+    list_microphone_devices,
+    start_microphone_flow,
+    transcribe_clip,
+)
 from speech_to_text.features.word_matching import (
-    WordMatchResult,
     WordMatchingConfig,
     WordMatchingError,
+    WordMatchResult,
     match_keywords,
 )
 
@@ -71,27 +75,27 @@ def transcribe_clip_and_forward(
         )
     transcript = transcribe_clip(clip, model_handle, flow_config, source_id=source_id)
     matched = match_keywords(transcript, matching_config)
-    try:
-        receipt = _send(
-            forwarder,
-            _record(source_id, matched, transcript, "completed"),
-        )
-        error = None
-    except Exception as exc:  # Preserve the completed transcript and match results.
-        receipt = None
-        error = exc
-    return PipelineResult(
-        transcript, matched.matches, source_id, receipt, error
-    )
+    receipt = None
+    error = None
+    if forwarder is not None:
+        try:
+            receipt = _send(
+                forwarder,
+                _record(source_id, matched, transcript, "completed"),
+            )
+        except Exception as exc:  # Preserve the completed transcript and match results.
+            error = exc
+    return PipelineResult(transcript, matched.matches, source_id, receipt, error)
 
 
 class SessionWorkflow:
     """Expose ordered source events plus derived match and delivery events."""
 
-    def __init__(self, session, forwarder, matching_config):
+    def __init__(self, session, forwarder, matching_config, on_finished=None):
         self.session = session
         self.forwarder = forwarder
         self.matching_config = _validate_matching_config(matching_config)
+        self._on_finished = on_finished
         self.source_id = session.source_id
         self.output_queue = queue.Queue()
         self.result_queue = self.output_queue
@@ -133,37 +137,37 @@ class SessionWorkflow:
                         "type": "match_results",
                         "source_id": self.source_id,
                         "language": matched.language,
-                        "engine": matched.engine,
                         "matches": _match_rows(matched),
                     }
                 )
-                try:
-                    receipt = _send(
-                        self.forwarder,
-                        _record(
-                            self.source_id,
-                            matched,
-                            transcript,
-                            completed_event.get("status", "completed"),
-                        ),
-                    )
-                    self.output_queue.put(
-                        {
-                            "type": "forwarded",
-                            "source_id": self.source_id,
-                            "receipt": receipt,
-                        }
-                    )
-                except Exception as exc:
-                    self.output_queue.put(
-                        {
-                            "type": "forwarding_error",
-                            "source_id": self.source_id,
-                            "error": str(exc),
-                            "status_code": getattr(exc, "status_code", None),
-                            "attempts": getattr(exc, "attempts", None),
-                        }
-                    )
+                if self.forwarder is not None:
+                    try:
+                        receipt = _send(
+                            self.forwarder,
+                            _record(
+                                self.source_id,
+                                matched,
+                                transcript,
+                                completed_event.get("status", "completed"),
+                            ),
+                        )
+                        self.output_queue.put(
+                            {
+                                "type": "forwarded",
+                                "source_id": self.source_id,
+                                "receipt": receipt,
+                            }
+                        )
+                    except Exception as exc:
+                        self.output_queue.put(
+                            {
+                                "type": "forwarding_error",
+                                "source_id": self.source_id,
+                                "error": str(exc),
+                                "status_code": getattr(exc, "status_code", None),
+                                "attempts": getattr(exc, "attempts", None),
+                            }
+                        )
             except Exception as exc:
                 self.output_queue.put(
                     {
@@ -182,6 +186,17 @@ class SessionWorkflow:
                 }
             )
         finally:
+            if self._on_finished is not None:
+                try:
+                    self._on_finished()
+                except Exception as exc:
+                    self.output_queue.put(
+                        {
+                            "type": "workflow_error",
+                            "source_id": self.source_id,
+                            "error": str(exc),
+                        }
+                    )
             self._finished.set()
 
     def stop(self, *, timeout=30):
@@ -203,10 +218,23 @@ class SessionWorkflow:
             )
 
 
-def forward_session(session, forwarder, matching_config):
+def forward_session(session, forwarder, matching_config, *, on_finished=None):
     """Wrap one Feature 01 source, including a process-backed session."""
     if not hasattr(session, "result_queue") or not hasattr(session, "source_id"):
         raise TypeError("session must expose source_id and result_queue")
     if not callable(getattr(session, "stop", None)):
         raise TypeError("session must expose stop(timeout=...)")
-    return SessionWorkflow(session, forwarder, matching_config)
+    return SessionWorkflow(session, forwarder, matching_config, on_finished)
+
+
+def start_microphone_and_forward(
+    device, model_handle, forwarder, matching_config, flow_config=None
+):
+    """Start and wrap one Feature 01 microphone session as a workflow."""
+    session = start_microphone_flow(device, model_handle, flow_config)
+    return forward_session(session, forwarder, matching_config)
+
+
+def list_available_microphones():
+    """Expose Feature 01 input-device discovery to workflow callers."""
+    return list_microphone_devices()

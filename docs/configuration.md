@@ -21,18 +21,16 @@ The Python callable accepts decoding options listed in the [Feature 01 configura
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory; falls back to `legacies-poc/models/` when it contains installed weights | Local model files used by catalog discovery and runtime loading. |
+| `SPEECH_TO_TEXT_MODEL` | Feature 01 model default | Backend workflow service model key, fixed when its lazy model handle is loaded. |
+| `SPEECH_TO_TEXT_RUNTIME` | Feature 01 runtime default | Backend workflow service runtime, fixed when its lazy model handle is loaded. |
+| `SPEECH_TO_TEXT_PRECISION` | Feature 01 precision default | Backend workflow service precision, fixed when its lazy model handle is loaded. |
+| `SPEECH_TO_TEXT_PROFILE_DB` | `~/.local/share/speech_to_text/profiles.sqlite3` | SQLite file for saved microphone workflow profiles. Its parent directory is created when a profile endpoint is first used. |
 
-No credentials or database settings are required to call Feature 01 locally. The previous Control Center and its Mac host microphone bridge are not included in the current application.
+No credentials or database server are required to call Feature 01 locally. The backend creates the profile database file on first use; mount its parent directory as persistent storage when running in a container. The previous Control Center and its Mac host microphone bridge are not included in the current application.
 
 ## Transcript matching and forwarding
 
-Install `thai-word-matching` when matching Thai words and phrases:
-
-```bash
-uv pip install --python .venv/bin/python -e '.[thai-word-matching]'
-```
-
-Configure target keywords with `WordMatchingConfig` and outbound delivery with `HttpForwarderConfig` in the caller. Pass the endpoint URL and, when required, a bearer token from the caller's secret store. Matching defaults, retry behavior, and the forwarded JSON contract are maintained in the [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md).
+Configure target keywords with `WordMatchingConfig` and workflow output delivery with `HttpForwarderConfig`. Matching uses normalized literal substring searches and requires no optional tokenizer dependency. The workflow owns whether and where results are sent. Supply endpoint credentials from the backend's secret store. Matching defaults, retry behavior, and the forwarded JSON contract are maintained in the [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md).
 
 ## Capacity command-line options
 

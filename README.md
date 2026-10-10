@@ -9,16 +9,17 @@ uv venv .venv
 uv pip install --python .venv/bin/python -e .
 ```
 
-This repository currently provides callable feature modules and workflows; the previous Control Center frontend and HTTP server have been removed. See [Getting Started](docs/getting-started.md) for installing optional runtimes and calling Feature 01.
+The repository provides a React frontend, a FastAPI backend, and callable feature and workflow modules. See [Getting Started](docs/getting-started.md) for setup and [API Interfaces](docs/api.md) for the backend API.
 
 ## Project guides
 
 - [Getting Started](docs/getting-started.md)
 - [Configuration](docs/configuration.md)
-- [Callable Interfaces](docs/api.md)
+- [API Interfaces](docs/api.md)
 - [Architecture](docs/architecture.md)
 - [Project structure](docs/project-structure.md)
 - [Contributing](docs/contributing.md)
 - [Feature 01 specification](.scratch/new-speech-to-text/spec.md)
 - [Transcript matching and forwarding specification](.scratch/transcript-matching-forwarding/spec.md)
+- [Backend transcription API specification](.scratch/backend-transcription-api/spec.md)
 - [Retired system observability specification](.scratch/system-observability/spec.md)
