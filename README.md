@@ -13,6 +13,7 @@ The repository provides a React frontend, a FastAPI backend, and callable featur
 ## Project guides
 
 - [Getting Started](docs/getting-started.md)
+- [Deployment plan: UBX-330M](docs/deployment.md)
 - [Configuration](docs/configuration.md)
 - [API Interfaces](docs/api.md)
 - [Architecture](docs/architecture.md)

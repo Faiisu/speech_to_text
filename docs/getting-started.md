@@ -58,7 +58,7 @@ npm run dev
 
 Open the Vite URL printed in the terminal (normally `http://localhost:5173`). The development server forwards `/api` requests to the backend at `http://localhost:8000`. The frontend includes profile management, workflow monitoring, and the [Capacity lab](../.scratch/new-speech-to-text/spec.md#frontend-design) at `/stress-tests`. It also includes a catch-all page for unknown URLs; visit `http://localhost:5173/unknown/path` to see the 404 route.
 
-To build frontend assets, run `npm run build` from `speech_to_text/frontend/`. Production static hosting and FastAPI static-file mounting are not configured yet; the Vite development server is the supported preview path for this phase.
+To build frontend assets, run `npm run build` from `speech_to_text/frontend/`. The Vite development server is the current preview path. The planned production hosting approach is described in the [UBX-330M deployment plan](deployment.md); it is not implemented yet.
 
 ## Call Feature 01
 

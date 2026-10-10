@@ -1,5 +1,6 @@
 # converted model weights — multi-GB, regenerate with convert_model.py
 models/
+/data/
 
 .venv/
 .env
