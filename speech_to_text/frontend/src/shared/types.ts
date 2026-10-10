@@ -49,6 +49,7 @@ export type Transcription = {
   runtime: RuntimeChoice['key'] | null
   transcript: string | null
   matches: { keyword: string; count: number }[] | null
+  latest_rtf: number | null
   error: string | null
   created_at: string
 }

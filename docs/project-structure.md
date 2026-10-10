@@ -37,6 +37,7 @@ This document is the source of truth for where project files belong. Follow it w
 ├── .gitignore                  # Generated files excluded from version control
 ├── README.md                   # Project entry point
 ├── pyproject.toml              # Package metadata and Python dependencies
+├── uv.lock                     # Locked Python dependency resolution
 ├── pytest.ini                  # Pytest configuration
 └── requirements-test.txt        # Test dependency list
 ```

@@ -14,7 +14,7 @@ Compose the existing Feature 01 transcription interface with Thai keyword/phrase
 
 ## Pipeline behavior
 
-- `transcribe_clip_and_forward(clip, model_handle, forwarder, matching_config, flow_config=None)` invokes Feature 01 clip transcription, matches the complete transcript, forwards one result, and returns a `PipelineResult` containing transcript, per-keyword counts, source ID, and delivery result.
+- `transcribe_clip_and_forward(clip, model_handle, forwarder, matching_config, flow_config=None)` invokes Feature 01 clip transcription, matches the complete transcript, forwards one result, and returns a `PipelineResult` containing transcript, per-keyword counts, source ID, delivery result, and `latest_rtf`. `latest_rtf` is the RTF from the most recent chunk measurement, or null when no chunk reached inference. An optional measurement callback receives each Feature 01 clip measurement as it arrives.
 - `forward_session(session, forwarder, matching_config)` consumes a Feature 01 session result queue, assembles transcript events in `sequence` order, and matches once after the terminal event. It returns a wrapper exposing the source ID, output event queue, and idempotent `stop()` that delegates to Feature 01 and waits for matching and delivery.
 - The session workflow can wrap a `TranscriptionSession` or `ProcessSession`; callers wrap each source from a process group independently.
 - Session output exposes original Feature 01 events, followed by a `match_results` event and a forwarding result/error before the terminal completion event. Forwarding failures do not erase the transcript or match counts.

@@ -1,4 +1,4 @@
-"""Callable Thai keyword and phrase matching feature."""
+"""Callable keyword and phrase matching feature."""
 
 from .matcher import (
     KeywordMatch,

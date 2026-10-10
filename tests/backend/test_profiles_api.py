@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import queue
 import sqlite3
+import threading
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
 
 from speech_to_text.backend.app import create_app
 from speech_to_text.backend.dependencies import BackendRuntime
-from speech_to_text.backend.profile_store import SQLiteProfileStore
+from speech_to_text.backend.profile_store import (
+    ProfileNameConflictError,
+    SQLiteProfileStore,
+)
 from speech_to_text.workflows.transcribe_match_forward import WorkflowConfigurationError
 
 
@@ -27,11 +32,27 @@ class FakeMicrophoneWorkflow:
         self.output_queue.put({"type": "completed", "status": "stopped"})
 
 
+class ActiveFakeMicrophoneWorkflow:
+    def __init__(self):
+        self.output_queue = queue.Queue()
+        self.stopped = threading.Event()
+
+    def wait(self, timeout=0):
+        if not self.stopped.is_set():
+            raise TimeoutError
+
+    def stop(self, timeout=30):
+        self.stopped.set()
+        self.output_queue.put({"type": "completed", "status": "stopped"})
+
+
 class FakeTranscriptionService:
     """Stand-in at the workflow-service boundary; it needs no audio devices."""
 
     def __init__(self):
         self.microphone_start_options = []
+        self.keep_microphone_active = False
+        self.keyword_validation_barrier = None
         self.default_model = "turbo"
         self.default_runtime = "openvino-gpu"
         self.models = ["turbo", "small"]
@@ -60,6 +81,8 @@ class FakeTranscriptionService:
             raise WorkflowConfigurationError(f"Unsupported runtime {runtime!r}")
 
     def validate_keywords(self, keywords):
+        if self.keyword_validation_barrier is not None:
+            self.keyword_validation_barrier.wait(timeout=5)
         if not keywords or any(
             not isinstance(word, str) or not word.strip() for word in keywords
         ):
@@ -75,6 +98,8 @@ class FakeTranscriptionService:
         self.microphone_start_options.append(
             (device, tuple(keywords), flow_config, execution_mode, model, runtime)
         )
+        if self.keep_microphone_active:
+            return ActiveFakeMicrophoneWorkflow()
         return FakeMicrophoneWorkflow()
 
     def close(self):
@@ -99,7 +124,7 @@ def api(tmp_path):
 
 def profile_body(**overrides):
     body = {
-        "name": "Thai vocabulary",
+        "name": "Speech vocabulary",
         "device": "Studio Mic",
         "execution_mode": "per_workflow_process",
         "keywords": ["สวัสดี", "ขอบคุณ"],
@@ -113,12 +138,12 @@ def test_profiles_can_be_created_listed_replaced_and_deleted(api):
 
     assert client.get("/api/v1/profiles").json() == {"profiles": []}
     assert client.get("/api/v1/models").json()["default_model"] == "turbo"
-    created = client.post("/api/v1/profiles", json=profile_body(name="  Thai vocabulary  "))
+    created = client.post("/api/v1/profiles", json=profile_body(name="  Speech vocabulary  "))
 
     assert created.status_code == 201
     profile = created.json()
     assert profile["profile_id"]
-    assert profile["name"] == "Thai vocabulary"
+    assert profile["name"] == "Speech vocabulary"
     assert profile["device"] == "Studio Mic"
     assert profile["execution_mode"] == "per_workflow_process"
     assert profile["keywords"] == ["สวัสดี", "ขอบคุณ"]
@@ -164,6 +189,128 @@ def test_profiles_can_be_created_listed_replaced_and_deleted(api):
     assert deleted.status_code == 204
     assert deleted.content == b""
     assert client.get("/api/v1/profiles").json() == {"profiles": []}
+
+
+def test_repeated_profile_run_start_returns_the_existing_active_run(api):
+    client, service = api
+    profile = client.post(
+        "/api/v1/profiles", json=profile_body(name="Persistent microphone")
+    ).json()
+    service.keep_microphone_active = True
+
+    first = client.post(f"/api/v1/profiles/{profile['profile_id']}/runs")
+    repeated = client.post(f"/api/v1/profiles/{profile['profile_id']}/runs")
+
+    assert first.status_code == repeated.status_code == 202
+    assert repeated.json() == first.json()
+    assert repeated.json()["status"] in {"starting", "recording", "stopping"}
+    assert len(service.microphone_start_options) == 1
+
+
+def test_concurrent_profile_run_starts_create_only_one_workflow(api):
+    client, service = api
+    profile = client.post(
+        "/api/v1/profiles", json=profile_body(name="Concurrent microphone")
+    ).json()
+    service.keep_microphone_active = True
+    service.keyword_validation_barrier = threading.Barrier(2)
+    run_url = f"/api/v1/profiles/{profile['profile_id']}/runs"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda _: client.post(run_url), range(2)))
+
+    assert [response.status_code for response in responses] == [202, 202]
+    assert responses[0].json() == responses[1].json()
+    assert len(service.microphone_start_options) == 1
+
+
+
+@pytest.mark.parametrize(
+    ("existing_name", "requested_name"),
+    [
+        ("Studio", " studio "),
+        ("Café", "Cafe\u0301"),
+        ("Straße", "STRASSE"),
+    ],
+)
+def test_profile_creation_rejects_trimmed_casefolded_and_nfc_name_collisions(
+    api, existing_name, requested_name
+):
+    client, _ = api
+    existing = client.post(
+        "/api/v1/profiles", json=profile_body(name=existing_name)
+    ).json()
+
+    response = client.post(
+        "/api/v1/profiles", json=profile_body(name=requested_name)
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "A profile with this name already exists."
+    assert client.get("/api/v1/profiles").json() == {"profiles": [existing]}
+
+
+def test_profile_update_rejects_another_profile_name_but_allows_its_own(api):
+    client, _ = api
+    first = client.post("/api/v1/profiles", json=profile_body(name="First")).json()
+    second = client.post("/api/v1/profiles", json=profile_body(name="Second")).json()
+
+    unchanged = client.put(
+        f"/api/v1/profiles/{first['profile_id']}",
+        json=profile_body(name=" second "),
+    )
+    assert unchanged.status_code == 409
+    assert client.get(f"/api/v1/profiles/{first['profile_id']}").json() == first
+
+    self_update = client.put(
+        f"/api/v1/profiles/{first['profile_id']}",
+        json=profile_body(name=" FIRST "),
+    )
+    assert self_update.status_code == 200
+    assert self_update.json()["profile_id"] == first["profile_id"]
+    assert self_update.json()["name"] == "FIRST"
+    assert client.get(f"/api/v1/profiles/{second['profile_id']}").json() == second
+
+
+def test_profile_name_collision_is_atomic_across_independent_store_connections(tmp_path):
+    database_path = tmp_path / "concurrent-profiles.sqlite3"
+    start = threading.Barrier(2)
+
+    def create(profile_id, name):
+        store = SQLiteProfileStore(database_path)
+        start.wait(timeout=5)
+        try:
+            return store.create_profile(
+                {
+                    "profile_id": profile_id,
+                    "name": name,
+                    "device": None,
+                    "execution_mode": "shared",
+                    "keywords": ["สวัสดี"],
+                    "silence_threshold": 0.0,
+                    "model": "turbo",
+                    "runtime": "openvino-gpu",
+                }
+            )
+        except ProfileNameConflictError:
+            return None
+        finally:
+            store.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda args: create(*args),
+                [("one", "Concurrent"), ("two", " concurrent ")],
+            )
+        )
+
+    assert sum(result is not None for result in results) == 1
+    store = SQLiteProfileStore(database_path)
+    try:
+        assert len(store.list_profiles()) == 1
+    finally:
+        store.close()
 
 
 def test_profile_list_is_alphabetical(api):

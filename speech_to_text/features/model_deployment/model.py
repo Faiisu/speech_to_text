@@ -221,28 +221,38 @@ def transcribe_clip(
     transcripts = []
     source_id = source_id or uuid.uuid4().hex
     monotonic_clock = monotonic_clock or time.perf_counter
-    # Keep clip chunks contiguous on the runtime while multiple sessions share this handle.
+    inferred_chunks = []
+    for sequence, start in enumerate(range(0, audio.size, frame_count)):
+        chunk = audio[start : start + frame_count]
+        if (
+            chunk.size
+            and float((chunk * chunk).mean() ** 0.5) >= flow["silence_threshold"]
+        ):
+            inferred_chunks.append((sequence, chunk))
+    if not inferred_chunks:
+        return ""
+
+    # Keep a clip's inferred chunks contiguous when other sessions share this handle.
+    queued_at = monotonic_clock()
     with model_handle._inference_lock:
         model_handle._check()
-        for sequence, start in enumerate(range(0, audio.size, frame_count)):
-            chunk = audio[start : start + frame_count]
-            if (
-                chunk.size == 0
-                or float((chunk * chunk).mean() ** 0.5) < flow["silence_threshold"]
-            ):
-                continue
+        for index, (sequence, chunk) in enumerate(inferred_chunks):
             inference_started = monotonic_clock()
+            queue_wait = (
+                max(0.0, inference_started - queued_at) if index == 0 else 0.0
+            )
             try:
                 text = model_handle._transcribe(chunk, flow)
             except Exception as exc:  # noqa: BLE001
-                elapsed = max(0.0, monotonic_clock() - inference_started)
+                inference_elapsed = max(0.0, monotonic_clock() - inference_started)
                 publish_inference_measurement(
                     measurement_sink,
                     operation="finite-clip",
                     source_id=source_id,
                     sequence=sequence,
                     audio_seconds=len(chunk) / TARGET_RATE,
-                    inference_seconds=elapsed,
+                    inference_seconds=inference_elapsed,
+                    queue_wait_seconds=queue_wait,
                     status="failed",
                     error=exc,
                     clock=measurement_clock,
@@ -261,6 +271,7 @@ def transcribe_clip(
                 sequence=sequence,
                 audio_seconds=len(chunk) / TARGET_RATE,
                 inference_seconds=inference_elapsed,
+                queue_wait_seconds=queue_wait,
                 clock=measurement_clock,
             )
             text = str(text).strip()

@@ -41,7 +41,7 @@ Microphone capture and clip decoding are normalized inside Feature 01. Inference
 
 ## Local RTF measurements
 
-Feature 01 creates one measurement for each chunk that reaches inference. RTF is `inference_seconds / audio_seconds`; each record includes process ID, source ID, sequence, status, and UTC completion timestamp. Clip responses return the records, microphone sessions publish them as events, and process-group results include their measurements. There is no database writer, historical telemetry store, host sampler, or Grafana service. See the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#per-chunk-performance-measurement) for the measurement contract.
+Feature 01 creates one measurement for each chunk that reaches inference. Clip responses return the records, microphone sessions publish them as events, and process-group results include their measurements. The authoritative record fields and timing semantics are defined in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#per-chunk-performance-measurement). There is no database writer, historical telemetry store, host sampler, or Grafana service.
 
 ## See also
 

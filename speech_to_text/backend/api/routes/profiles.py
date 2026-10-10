@@ -10,6 +10,7 @@ from speech_to_text.backend.api.microphone_lifecycle import (
     validate_keywords,
 )
 from speech_to_text.backend.api.schemas.transcription import MicrophoneProfileDefinition
+from speech_to_text.backend.profile_store import ProfileNameConflictError
 from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowUnavailableError,
@@ -52,6 +53,10 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
 def _store_call(callback):
     try:
         return callback()
+    except ProfileNameConflictError as exc:
+        raise HTTPException(
+            status_code=409, detail="A profile with this name already exists."
+        ) from exc
     except (OSError, sqlite3.Error) as exc:
         raise HTTPException(status_code=503, detail="profile database unavailable") from exc
 

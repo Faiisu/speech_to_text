@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import threading
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +20,14 @@ def _default_database_path() -> Path:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class ProfileNameConflictError(ValueError):
+    """Raised when a new or updated profile name matches another profile."""
+
+
+def _normalized_name(name: str) -> str:
+    return unicodedata.normalize("NFC", name.strip()).casefold()
 
 
 class SQLiteProfileStore:
@@ -133,54 +142,96 @@ class SQLiteProfileStore:
     def create_profile(self, profile: dict):
         now = _utc_now()
         with self._lock:
-            self._db().execute(
-                """
-                INSERT INTO workflow_profiles
-                    (profile_id, name, device, execution_mode, keywords_json,
-                     silence_threshold, model, runtime, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    profile["profile_id"],
-                    profile["name"],
-                    profile["device"],
-                    profile["execution_mode"],
-                    json.dumps(profile["keywords"], ensure_ascii=False),
-                    profile["silence_threshold"],
-                    profile["model"],
-                    profile["runtime"],
-                    now,
-                    now,
-                ),
-            )
-            self._db().commit()
-            return self.get_profile(profile["profile_id"])
+            connection = self._db()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                self._ensure_name_available(connection, profile["name"])
+                connection.execute(
+                    """
+                    INSERT INTO workflow_profiles
+                        (profile_id, name, device, execution_mode, keywords_json,
+                         silence_threshold, model, runtime, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        profile["profile_id"],
+                        profile["name"],
+                        profile["device"],
+                        profile["execution_mode"],
+                        json.dumps(profile["keywords"], ensure_ascii=False),
+                        profile["silence_threshold"],
+                        profile["model"],
+                        profile["runtime"],
+                        now,
+                        now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM workflow_profiles WHERE profile_id = ?",
+                    (profile["profile_id"],),
+                ).fetchone()
+                connection.commit()
+                return self._serialize(row)
+            except Exception:
+                connection.rollback()
+                raise
 
     def update_profile(self, profile_id: str, profile: dict):
         with self._lock:
-            cursor = self._db().execute(
-                """
-                UPDATE workflow_profiles
-                SET name = ?, device = ?, execution_mode = ?, keywords_json = ?,
-                    silence_threshold = ?, model = ?, runtime = ?, updated_at = ?
-                WHERE profile_id = ?
-                """,
-                (
-                    profile["name"],
-                    profile["device"],
-                    profile["execution_mode"],
-                    json.dumps(profile["keywords"], ensure_ascii=False),
-                    profile["silence_threshold"],
-                    profile["model"],
-                    profile["runtime"],
-                    _utc_now(),
-                    profile_id,
-                ),
-            )
-            self._db().commit()
-            if cursor.rowcount == 0:
-                return None
-            return self.get_profile(profile_id)
+            connection = self._db()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                current = connection.execute(
+                    "SELECT profile_id FROM workflow_profiles WHERE profile_id = ?",
+                    (profile_id,),
+                ).fetchone()
+                if current is None:
+                    connection.commit()
+                    return None
+                self._ensure_name_available(connection, profile["name"], profile_id)
+                connection.execute(
+                    """
+                    UPDATE workflow_profiles
+                    SET name = ?, device = ?, execution_mode = ?, keywords_json = ?,
+                        silence_threshold = ?, model = ?, runtime = ?, updated_at = ?
+                    WHERE profile_id = ?
+                    """,
+                    (
+                        profile["name"],
+                        profile["device"],
+                        profile["execution_mode"],
+                        json.dumps(profile["keywords"], ensure_ascii=False),
+                        profile["silence_threshold"],
+                        profile["model"],
+                        profile["runtime"],
+                        _utc_now(),
+                        profile_id,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM workflow_profiles WHERE profile_id = ?",
+                    (profile_id,),
+                ).fetchone()
+                connection.commit()
+                return self._serialize(row)
+            except Exception:
+                connection.rollback()
+                raise
+
+    @staticmethod
+    def _ensure_name_available(
+        connection: sqlite3.Connection, name: str, excluding_profile_id: str | None = None
+    ) -> None:
+        rows = connection.execute(
+            "SELECT profile_id, name FROM workflow_profiles"
+        ).fetchall()
+        normalized = _normalized_name(name)
+        if any(
+            row["profile_id"] != excluding_profile_id
+            and _normalized_name(row["name"]) == normalized
+            for row in rows
+        ):
+            raise ProfileNameConflictError("A profile with this name already exists.")
 
     def delete_profile(self, profile_id: str) -> bool:
         with self._lock:

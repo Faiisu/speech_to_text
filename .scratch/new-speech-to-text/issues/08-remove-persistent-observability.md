@@ -27,7 +27,7 @@ The initial Linux host publication was implemented by [ticket 09](09-linux-docke
 
 ## Current measurement contract
 
-See [Feature 01 per-chunk performance measurement](../spec.md#per-chunk-performance-measurement). A clip result includes a `measurements` array. Microphone SSE emits one `type: "measurement"` event per inferred chunk before completion. Process-group results include the same per-chunk record shape. Records retain UTC timestamp, PID, source ID, sequence, audio duration, inference duration, numeric RTF, and status. RTF is `inference_seconds / audio_seconds`; values at or below `1.0` met real-time pace for that chunk.
+See [Feature 01 per-chunk performance measurement](../spec.md#per-chunk-performance-measurement) for the authoritative measurement fields and timing semantics. A clip result includes a `measurements` array. Microphone SSE emits one `type: "measurement"` event per inferred chunk before completion. Process-group results include the same per-chunk record shape.
 
 ## Deployment transition
 

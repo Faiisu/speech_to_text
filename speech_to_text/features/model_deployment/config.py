@@ -13,7 +13,7 @@ MODEL_DEFAULTS = {
     "runtime": "openvino-gpu",
     "precision": "source",
     "queue_capacity": 6,
-    "enqueue_timeout_seconds": 1.0,
+    "enqueue_timeout_seconds": 30.0,
 }
 MODEL_KEYS = frozenset(MODEL_DEFAULTS)
 RUNTIME_OPTIONS = ("openvino-gpu", "openvino-cpu", "ctranslate2")

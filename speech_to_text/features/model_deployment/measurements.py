@@ -11,6 +11,7 @@ def inference_measurement(
     sequence,
     audio_seconds,
     inference_seconds,
+    queue_wait_seconds=0.0,
     status="completed",
     error=None,
     clock=None,
@@ -21,6 +22,8 @@ def inference_measurement(
         completed_at = completed_at.replace(tzinfo=timezone.utc)
     audio_seconds = float(audio_seconds)
     inference_seconds = float(inference_seconds)
+    queue_wait_seconds = max(0.0, float(queue_wait_seconds))
+    elapsed_seconds = queue_wait_seconds + inference_seconds
     return {
         "type": "measurement",
         "feature_id": "feature-01-model-deployment",
@@ -29,10 +32,11 @@ def inference_measurement(
         "completed_at": completed_at.astimezone(timezone.utc).isoformat(),
         "source_id": source_id,
         "sequence": sequence,
-        "elapsed_seconds": inference_seconds,
+        "elapsed_seconds": elapsed_seconds,
         "audio_seconds": audio_seconds,
+        "queue_wait_seconds": queue_wait_seconds,
         "inference_seconds": inference_seconds,
-        "rtf": inference_seconds / audio_seconds if audio_seconds else None,
+        "rtf": elapsed_seconds / audio_seconds if audio_seconds else None,
         "status": status,
         "error": str(error) if error is not None else None,
     }
@@ -46,6 +50,7 @@ def publish_inference_measurement(
     sequence,
     audio_seconds,
     inference_seconds,
+    queue_wait_seconds=0.0,
     status="completed",
     error=None,
     clock=None,
@@ -57,6 +62,7 @@ def publish_inference_measurement(
         sequence=sequence,
         audio_seconds=audio_seconds,
         inference_seconds=inference_seconds,
+        queue_wait_seconds=queue_wait_seconds,
         status=status,
         error=error,
         clock=clock,

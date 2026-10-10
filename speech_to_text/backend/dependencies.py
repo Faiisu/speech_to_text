@@ -7,6 +7,7 @@ import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from speech_to_text.backend.profile_store import SQLiteProfileStore
 from speech_to_text.workflows.transcribe_match_forward import TranscriptionService
@@ -20,6 +21,10 @@ class MicrophoneLimitError(RuntimeError):
     """The process has reached its concurrent microphone-session limit."""
 
 
+def _utc_timestamp():
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 @dataclass
 class RunRecord:
     workflow_id: str
@@ -29,6 +34,9 @@ class RunRecord:
     created_at: float = field(default_factory=time.time)
     transcript: str | None = None
     matches: list[dict] | None = None
+    latest_rtf: float | None = None
+    first_queued_at: str | None = None
+    last_response_at: str | None = None
     error: str | None = None
     profile_id: str | None = None
     profile_name: str | None = None
@@ -62,6 +70,7 @@ class BackendRuntime:
         self.max_runs = max_runs
         self.max_microphone_runs = max_microphone_runs
         self.registry_lock = threading.RLock()
+        self.profile_run_start_lock = threading.RLock()
         self.workflow_service = (
             TranscriptionService() if workflow_service is None else workflow_service
         )
@@ -108,9 +117,24 @@ class BackendRuntime:
         with self.registry_lock:
             return self.runs.get(workflow_id)
 
+    def get_active_profile_run(self, profile_id):
+        """Return the active microphone run for a saved profile, if one exists."""
+        active_statuses = {"starting", "recording", "stopping"}
+        with self.registry_lock:
+            records = tuple(self.runs.values())
+        for record in records:
+            if record.kind != "microphone" or record.profile_id != profile_id:
+                continue
+            with record.lock:
+                if record.status in active_statuses:
+                    return record
+        return None
+
     def append_event(self, record, event):
         with record.lock:
             item = {**event, "cursor": record.next_cursor}
+            if "timestamp" not in item:
+                item["timestamp"] = _utc_timestamp()
             record.events.append(item)
             record.next_cursor += 1
             while len(record.events) > self.event_limit:
@@ -168,6 +192,9 @@ def run_snapshot(record):
             "runtime": record.runtime,
             "transcript": record.transcript,
             "matches": record.matches,
+            "latest_rtf": record.latest_rtf,
+            "first_queued_at": record.first_queued_at,
+            "last_response_at": record.last_response_at,
             "error": record.error,
             "created_at": record.created_at,
         }

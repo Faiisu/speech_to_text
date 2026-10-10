@@ -8,6 +8,7 @@ import os
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from collections import deque
 from copy import deepcopy
 from multiprocessing.managers import SyncManager
@@ -224,6 +225,7 @@ def _capture_chunks(
         target_frames = max(1, int(round(flow["chunk_seconds"] * TARGET_RATE)))
         buffer = np.empty(0, dtype=np.float32)
         sequence = -1
+        first_queued_at = None
         source.start()
         ready_queue.put(("source", source_id, None))
         ready_sent = True
@@ -232,7 +234,7 @@ def _capture_chunks(
         capture_error = None
 
         def submit(chunk):
-            nonlocal sequence, queue_failed
+            nonlocal sequence, queue_failed, first_queued_at
             if (
                 not chunk.size
                 or float(np.sqrt(np.mean(chunk * chunk))) < flow["silence_threshold"]
@@ -240,27 +242,47 @@ def _capture_chunks(
                 return True
             sequence += 1
             if handle is not None:
-                inference_started = time.perf_counter()
+                if first_queued_at is None:
+                    first_queued_at = (
+                        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                    )
+                    output_queue.put(
+                        {
+                            "type": "audio_queued",
+                            "source_id": source_id,
+                            "first_queued_at": first_queued_at,
+                        }
+                    )
+                queued_at = time.perf_counter()
                 inference_error = None
-                try:
-                    transcript = handle._transcribe(chunk, flow)
+                with handle._inference_lock:
+                    handle._check()
+                    inference_started = time.perf_counter()
+                    queue_wait = max(0.0, inference_started - queued_at)
+                    try:
+                        transcript = handle._transcribe(chunk, flow)
+                    except Exception as exc:
+                        inference_error = exc
+                    inference_seconds = max(
+                        0.0, time.perf_counter() - inference_started
+                    )
+                if inference_error is None:
                     transcript = str(transcript).strip()
-                    if transcript:
-                        _put_event(
-                            output_queue,
-                            "transcript",
-                            source_id,
-                            sequence=sequence,
-                            text=transcript,
-                        )
-                except Exception as exc:
-                    inference_error = exc
+                if inference_error is None and transcript:
+                    _put_event(
+                        output_queue,
+                        "transcript",
+                        source_id,
+                        sequence=sequence,
+                        text=transcript,
+                    )
+                elif inference_error is not None:
                     _put_event(
                         output_queue,
                         "error",
                         source_id,
                         code="CHUNK_INFERENCE_FAILED",
-                        message=str(exc),
+                        message=str(inference_error),
                         sequence=sequence,
                         fatal=False,
                     )
@@ -270,7 +292,8 @@ def _capture_chunks(
                     source_id=source_id,
                     sequence=sequence,
                     audio_seconds=len(chunk) / TARGET_RATE,
-                    inference_seconds=max(0.0, time.perf_counter() - inference_started),
+                    inference_seconds=inference_seconds,
+                    queue_wait_seconds=queue_wait,
                     status="failed" if inference_error else "completed",
                     error=inference_error,
                 )
@@ -281,6 +304,17 @@ def _capture_chunks(
                     ("chunk", source_id, sequence, chunk, flow, time.perf_counter()),
                     timeout=model_config["enqueue_timeout_seconds"],
                 )
+                if first_queued_at is None:
+                    first_queued_at = (
+                        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                    )
+                    output_queue.put(
+                        {
+                            "type": "audio_queued",
+                            "source_id": source_id,
+                            "first_queued_at": first_queued_at,
+                        }
+                    )
                 return True
             except Full:
                 discarded = input_queue.retire_source(source_id)
@@ -503,12 +537,24 @@ def _shared_model_worker(
                 _, source_id, sequence, audio, flow, queued_at = item
                 if source_id in retired:
                     continue
-                inference_started = time.perf_counter()
-                try:
-                    text = str(handle._transcribe(audio, flow)).strip()
-                    inference_seconds = time.perf_counter() - inference_started
+                inference_error = None
+                text = None
+                with handle._inference_lock:
+                    handle._check()
+                    inference_started = time.perf_counter()
+                    queue_wait = max(0.0, inference_started - queued_at)
+                    try:
+                        text = handle._transcribe(audio, flow)
+                    except Exception as exc:
+                        inference_error = exc
+                    inference_seconds = max(
+                        0.0, time.perf_counter() - inference_started
+                    )
+                if inference_error is None:
+                    text = str(text).strip()
+                duration = len(audio) / TARGET_RATE
+                if inference_error is None:
                     apply_controls()
-                    duration = len(audio) / TARGET_RATE
                     record = publish_inference_measurement(
                         None,
                         operation="microphone-process-group",
@@ -516,6 +562,7 @@ def _shared_model_worker(
                         sequence=sequence,
                         audio_seconds=duration,
                         inference_seconds=inference_seconds,
+                        queue_wait_seconds=queue_wait,
                     )
                     input_queue.publish_model_event(record)
                     telemetry_queue.put(
@@ -523,9 +570,11 @@ def _shared_model_worker(
                             "source_id": source_id,
                             "sequence": sequence,
                             "queue_wait_seconds": max(0, inference_started - queued_at),
+                            "elapsed_seconds": queue_wait + inference_seconds,
                             "inference_seconds": inference_seconds,
                             "chunk_duration_seconds": duration,
-                            "rtf": inference_seconds / max(duration, 1e-9),
+                            "rtf": (queue_wait + inference_seconds)
+                            / max(duration, 1e-9),
                             "discarded_inflight": source_id in retired,
                             "pid": os.getpid(),
                         }
@@ -539,11 +588,8 @@ def _shared_model_worker(
                                 "text": text,
                             }
                         )
-                except Exception as exc:
+                else:
                     apply_controls()
-                    inference_seconds = max(
-                        0.0, time.perf_counter() - inference_started
-                    )
                     record = publish_inference_measurement(
                         None,
                         operation="microphone-process-group",
@@ -551,8 +597,9 @@ def _shared_model_worker(
                         sequence=sequence,
                         audio_seconds=len(audio) / TARGET_RATE,
                         inference_seconds=inference_seconds,
+                        queue_wait_seconds=queue_wait,
                         status="failed",
-                        error=exc,
+                        error=inference_error,
                     )
                     input_queue.publish_model_event(record)
                     if source_id not in retired:
@@ -561,7 +608,7 @@ def _shared_model_worker(
                                 "type": "error",
                                 "source_id": source_id,
                                 "code": "CHUNK_INFERENCE_FAILED",
-                                "message": str(exc),
+                                "message": str(inference_error),
                                 "sequence": sequence,
                                 "fatal": False,
                                 "pid": os.getpid(),

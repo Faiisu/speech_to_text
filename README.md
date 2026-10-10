@@ -5,8 +5,7 @@ Speech-to-Text is a modular Python package for loading speech models, transcribi
 ## Install
 
 ```bash
-uv venv .venv
-uv pip install --python .venv/bin/python -e .
+uv sync --locked
 ```
 
 The repository provides a React frontend, a FastAPI backend, and callable feature and workflow modules. See [Getting Started](docs/getting-started.md) for setup and [API Interfaces](docs/api.md) for the backend API.

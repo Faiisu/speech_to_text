@@ -6,6 +6,7 @@ import math
 import os
 import threading
 import time
+from datetime import datetime, timezone
 import uuid
 from collections import deque
 from queue import Empty, Full, Queue
@@ -56,6 +57,7 @@ class TranscriptionSession:
         self._shutdown_next = 0
         self._shutdown_end_enqueued = False
         self._last_sequence = -1
+        self._first_queued_at = None
         self._pending = 0
         self._capture_done = False
         self._buffer = np.empty(0, dtype=np.float32)
@@ -338,7 +340,7 @@ class TranscriptionSession:
                 self._last_sequence = sequence
             try:
                 self.model_handle._ingress_queue.put(
-                    ("chunk", self, sequence, chunk.copy(), time.perf_counter()),
+                    ("chunk", self, sequence, chunk.copy()),
                     timeout=timeout,
                 )
             except Full:
@@ -361,47 +363,53 @@ def model_worker(handle):
             continue
         try:
             if session._active:
-                inference_started = time.perf_counter()
                 inference_error = None
                 transcript = None
-                try:
-                    transcript = handle._transcribe(audio, session.settings)
-                    transcript = str(transcript).strip()
-                except Exception as exc:
-                    inference_error = exc
-                finally:
-                    elapsed = max(0.0, time.perf_counter() - inference_started)
-                    measurement_sink = getattr(handle, "_measurement_sink", None)
-                    record = publish_inference_measurement(
-                        measurement_sink,
-                        operation=getattr(
-                            handle, "_measurement_operation", "microphone-session"
-                        ),
-                        source_id=session.source_id,
-                        sequence=sequence,
-                        audio_seconds=len(audio) / TARGET_RATE,
-                        inference_seconds=elapsed,
-                        status="failed" if inference_error else "completed",
-                        error=inference_error,
+                with handle._inference_lock:
+                    handle._check()
+                    inference_started = time.perf_counter()
+                    queue_wait = max(0.0, inference_started - queued_at)
+                    try:
+                        transcript = handle._transcribe(audio, session.settings)
+                    except Exception as exc:
+                        inference_error = exc
+                    inference_elapsed = max(
+                        0.0, time.perf_counter() - inference_started
                     )
-                    if session._active:
-                        session.result_queue.put(record)
-                    sink = getattr(handle, "_telemetry_sink", None)
-                    if sink is not None:
-                        duration = len(audio) / TARGET_RATE
-                        sink.put(
-                            {
-                                "source_id": session.source_id,
-                                "sequence": sequence,
-                                "queue_wait_seconds": max(
-                                    0, inference_started - queued_at
-                                ),
-                                "inference_seconds": elapsed,
-                                "chunk_duration_seconds": duration,
-                                "rtf": elapsed / max(duration, 1e-9),
-                                "pid": os.getpid(),
-                            }
-                        )
+                if inference_error is None:
+                    transcript = str(transcript).strip()
+                measurement_sink = getattr(handle, "_measurement_sink", None)
+                record = publish_inference_measurement(
+                    measurement_sink,
+                    operation=getattr(
+                        handle, "_measurement_operation", "microphone-session"
+                    ),
+                    source_id=session.source_id,
+                    sequence=sequence,
+                    audio_seconds=len(audio) / TARGET_RATE,
+                    inference_seconds=inference_elapsed,
+                    queue_wait_seconds=queue_wait,
+                    status="failed" if inference_error else "completed",
+                    error=inference_error,
+                )
+                if session._active:
+                    session.result_queue.put(record)
+                sink = getattr(handle, "_telemetry_sink", None)
+                if sink is not None:
+                    duration = len(audio) / TARGET_RATE
+                    sink.put(
+                        {
+                            "source_id": session.source_id,
+                            "sequence": sequence,
+                            "queue_wait_seconds": queue_wait,
+                            "elapsed_seconds": queue_wait + inference_elapsed,
+                            "inference_seconds": inference_elapsed,
+                            "chunk_duration_seconds": duration,
+                            "rtf": (queue_wait + inference_elapsed)
+                            / max(duration, 1e-9),
+                            "pid": os.getpid(),
+                        }
+                    )
                 session._complete_work(
                     sequence,
                     transcript=transcript if transcript else None,
@@ -426,16 +434,28 @@ def ingress_worker(handle):
             if item[0] == "end":
                 item[1]._capture_finished()
                 continue
-            _, session, sequence, audio, queued_at = item
+            _, session, sequence, audio = item
             with session._condition:
                 if not session._active:
                     continue
                 session._pending += 1
+            queued_at = time.perf_counter()
             try:
                 handle._work_queue.put(
                     (session, sequence, audio, queued_at),
                     timeout=handle.config["enqueue_timeout_seconds"],
                 )
+                if session._first_queued_at is None:
+                    session._first_queued_at = (
+                        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                    )
+                    session.result_queue.put(
+                        {
+                            "type": "audio_queued",
+                            "source_id": session.source_id,
+                            "first_queued_at": session._first_queued_at,
+                        }
+                    )
             except Full:
                 with session._condition:
                     session._pending = max(0, session._pending - 1)

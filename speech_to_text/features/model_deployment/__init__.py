@@ -1,7 +1,7 @@
 """Callable public interface for speech-to-text model deployment.
 
 Model configuration defaults to ``turbo`` + ``openvino-gpu`` + source
-checkpoint precision. Flow configuration defaults to Thai, 30 second chunks,
+checkpoint precision. Flow configuration defaults to its configured language, 30 second chunks,
 and an RMS silence threshold of 0.05. Use ``load_model`` once per owning
 process and reuse that handle for clips or microphone flows.
 """

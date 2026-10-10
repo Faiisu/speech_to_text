@@ -1,4 +1,4 @@
-"""Thai keyword and phrase matching using literal substring searches."""
+"""Keyword and phrase matching using literal substring searches."""
 
 import unicodedata
 from dataclasses import dataclass

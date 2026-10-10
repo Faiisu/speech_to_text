@@ -5,6 +5,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from inspect import Parameter, signature
 
 from speech_to_text.features.model_deployment import (
     list_microphone_devices,
@@ -26,6 +27,7 @@ class PipelineResult:
     source_id: str
     forwarding_receipt: object | None
     forwarding_error: Exception | None = None
+    latest_rtf: float | None = None
 
 
 def _send(forwarder, record):
@@ -60,8 +62,30 @@ def _validate_matching_config(config):
     return config
 
 
+def _accepts_keyword_argument(callable_, name):
+    try:
+        parameters = signature(callable_).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        (
+            parameter.name == name
+            and parameter.kind
+            in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+        )
+        or parameter.kind is Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+
+
 def transcribe_clip_and_forward(
-    clip, model_handle, forwarder, matching_config, flow_config=None
+    clip,
+    model_handle,
+    forwarder,
+    matching_config,
+    flow_config=None,
+    *,
+    measurement_callback=None,
 ):
     """Transcribe one finite clip, match the full result, then forward it."""
     matching_config = _validate_matching_config(matching_config)
@@ -73,7 +97,20 @@ def transcribe_clip_and_forward(
         raise WordMatchingError(
             f"Matching language {matching_config.language!r} must match transcript language {language!r}"
         )
-    transcript = transcribe_clip(clip, model_handle, flow_config, source_id=source_id)
+    latest_rtf = None
+
+    def record_measurement(measurement):
+        nonlocal latest_rtf
+        latest_rtf = measurement.get("rtf")
+        if measurement_callback is not None:
+            measurement_callback(measurement)
+
+    transcription_options = {"source_id": source_id}
+    if _accepts_keyword_argument(transcribe_clip, "measurement_sink"):
+        transcription_options["measurement_sink"] = record_measurement
+    transcript = transcribe_clip(
+        clip, model_handle, flow_config, **transcription_options
+    )
     matched = match_keywords(transcript, matching_config)
     receipt = None
     error = None
@@ -85,17 +122,27 @@ def transcribe_clip_and_forward(
             )
         except Exception as exc:  # Preserve the completed transcript and match results.
             error = exc
-    return PipelineResult(transcript, matched.matches, source_id, receipt, error)
+    return PipelineResult(
+        transcript, matched.matches, source_id, receipt, error, latest_rtf
+    )
 
 
 class SessionWorkflow:
     """Expose ordered source events plus derived match and delivery events."""
 
-    def __init__(self, session, forwarder, matching_config, on_finished=None):
+    def __init__(
+        self,
+        session,
+        forwarder,
+        matching_config,
+        on_finished=None,
+        on_stop_error=None,
+    ):
         self.session = session
         self.forwarder = forwarder
         self.matching_config = _validate_matching_config(matching_config)
         self._on_finished = on_finished
+        self._on_stop_error = on_stop_error
         self.source_id = session.source_id
         self.output_queue = queue.Queue()
         self.result_queue = self.output_queue
@@ -204,7 +251,33 @@ class SessionWorkflow:
         with self._stop_lock:
             if not self._stop_requested:
                 self._stop_requested = True
-                self.session.stop(timeout=timeout)
+                try:
+                    self.session.stop(timeout=timeout)
+                except Exception as exc:
+                    error = str(exc).strip() or type(exc).__name__
+                    if self._on_stop_error is not None:
+                        try:
+                            self._on_stop_error()
+                        except Exception as cleanup_error:
+                            cleanup_message = (
+                                str(cleanup_error).strip()
+                                or type(cleanup_error).__name__
+                            )
+                            error = f"{error}; forced shutdown failed: {cleanup_message}"
+                    self.session.result_queue.put(
+                        {
+                            "type": "workflow_error",
+                            "source_id": self.source_id,
+                            "error": error,
+                        }
+                    )
+                    self.session.result_queue.put(
+                        {
+                            "type": "completed",
+                            "source_id": self.source_id,
+                            "status": "failed",
+                        }
+                    )
         if not self._finished.wait(timeout):
             raise TimeoutError(
                 f"Transcript workflow {self.source_id!r} did not finish before timeout"
@@ -218,21 +291,42 @@ class SessionWorkflow:
             )
 
 
-def forward_session(session, forwarder, matching_config, *, on_finished=None):
+def forward_session(
+    session,
+    forwarder,
+    matching_config,
+    *,
+    on_finished=None,
+    on_stop_error=None,
+):
     """Wrap one Feature 01 source, including a process-backed session."""
     if not hasattr(session, "result_queue") or not hasattr(session, "source_id"):
         raise TypeError("session must expose source_id and result_queue")
     if not callable(getattr(session, "stop", None)):
         raise TypeError("session must expose stop(timeout=...)")
-    return SessionWorkflow(session, forwarder, matching_config, on_finished)
+    return SessionWorkflow(
+        session,
+        forwarder,
+        matching_config,
+        on_finished,
+        on_stop_error,
+    )
 
 
 def start_microphone_and_forward(
-    device, model_handle, forwarder, matching_config, flow_config=None
+    device,
+    model_handle,
+    forwarder,
+    matching_config,
+    flow_config=None,
+    *,
+    on_finished=None,
 ):
     """Start and wrap one Feature 01 microphone session as a workflow."""
     session = start_microphone_flow(device, model_handle, flow_config)
-    return forward_session(session, forwarder, matching_config)
+    return forward_session(
+        session, forwarder, matching_config, on_finished=on_finished
+    )
 
 
 def list_available_microphones():

@@ -39,6 +39,55 @@ def start_microphone_workflow(
 ):
     """Start one microphone workflow and register its run for API monitoring."""
     runtime = request.app.state.backend_runtime
+    if profile_id is not None:
+        with runtime.profile_run_start_lock:
+            existing = runtime.get_active_profile_run(profile_id)
+            if existing is not None:
+                with existing.lock:
+                    if existing.status in {"starting", "recording", "stopping"}:
+                        return {
+                            "workflow_id": existing.workflow_id,
+                            "status": existing.status,
+                            "first_queued_at": existing.first_queued_at,
+                            "last_response_at": existing.last_response_at,
+                        }
+            return _start_microphone_workflow(
+                request,
+                keywords=keywords,
+                device=device,
+                execution_mode=execution_mode,
+                silence_threshold=silence_threshold,
+                model=model,
+                selected_runtime=selected_runtime,
+                profile_id=profile_id,
+                profile_name=profile_name,
+            )
+    return _start_microphone_workflow(
+        request,
+        keywords=keywords,
+        device=device,
+        execution_mode=execution_mode,
+        silence_threshold=silence_threshold,
+        model=model,
+        selected_runtime=selected_runtime,
+        profile_id=profile_id,
+        profile_name=profile_name,
+    )
+
+
+def _start_microphone_workflow(
+    request,
+    *,
+    keywords,
+    device,
+    execution_mode,
+    silence_threshold=None,
+    model=None,
+    selected_runtime=None,
+    profile_id=None,
+    profile_name=None,
+):
+    runtime = request.app.state.backend_runtime
     effective_model = model
     if effective_model is None:
         effective_model = getattr(runtime.workflow_service, "default_model", None)
@@ -99,7 +148,15 @@ def start_microphone_workflow(
         name=f"api-events-{workflow_id}",
         daemon=True,
     ).start()
-    return {"workflow_id": workflow_id, "status": "recording"}
+    with record.lock:
+        first_queued_at = record.first_queued_at
+        last_response_at = record.last_response_at
+    return {
+        "workflow_id": workflow_id,
+        "status": "recording",
+        "first_queued_at": first_queued_at,
+        "last_response_at": last_response_at,
+    }
 
 
 def _pump_microphone(runtime, record, workflow):
@@ -121,6 +178,20 @@ def _pump_microphone(runtime, record, workflow):
             if event.get("type") == "match_results":
                 with record.lock:
                     record.matches = event.get("matches", [])
+            if event.get("type") == "measurement":
+                with record.lock:
+                    record.latest_rtf = event.get("rtf")
+                    completed_at = event.get("completed_at")
+                    record.last_response_at = (
+                        completed_at[:-6] + "Z"
+                        if isinstance(completed_at, str)
+                        and completed_at.endswith("+00:00")
+                        else completed_at
+                    )
+            if event.get("type") == "audio_queued":
+                with record.lock:
+                    if record.first_queued_at is None:
+                        record.first_queued_at = event.get("first_queued_at")
             if event.get("type") == "completed":
                 saw_completion = True
                 with record.lock:

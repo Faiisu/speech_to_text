@@ -3,6 +3,8 @@
 import tempfile
 import threading
 import uuid
+from datetime import datetime, timezone
+from inspect import Parameter, signature
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
@@ -24,15 +26,41 @@ from speech_to_text.backend.dependencies import (
 router = APIRouter(prefix="/transcriptions")
 
 
+def _accepts_keyword_argument(callable_, name):
+    try:
+        parameters = signature(callable_).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        (
+            parameter.name == name
+            and parameter.kind
+            in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+        )
+        or parameter.kind is Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+
+
 def _clip_worker(runtime, record, clip):
     with record.lock:
         record.status = "running"
     runtime.append_event(record, {"type": "started", "workflow_id": record.workflow_id})
     try:
-        result = runtime.workflow_service.transcribe_clip(
+        def record_measurement(measurement):
+            with record.lock:
+                record.latest_rtf = measurement.get("rtf")
+                record.last_response_at = _as_utc_z(measurement.get("completed_at"))
+
+        transcribe_clip = runtime.workflow_service.transcribe_clip
+        transcription_options = {}
+        if _accepts_keyword_argument(transcribe_clip, "measurement_callback"):
+            transcription_options["measurement_callback"] = record_measurement
+        result = transcribe_clip(
             clip,
             record.keywords,
             {"language": "th", "source_id": record.workflow_id},
+            **transcription_options,
         )
         matches = [
             {"keyword": item.keyword, "count": item.count} for item in result.matches
@@ -40,6 +68,8 @@ def _clip_worker(runtime, record, clip):
         with record.lock:
             record.transcript = result.transcript
             record.matches = matches
+            record.latest_rtf = getattr(result, "latest_rtf", record.latest_rtf)
+            record.last_response_at = _utc_now()
             record.status = "completed"
         runtime.append_event(
             record,
@@ -70,6 +100,7 @@ def _clip_worker(runtime, record, clip):
         with record.lock:
             record.status = "failed"
             record.error = str(exc)
+            record.last_response_at = _utc_now()
         runtime.append_event(
             record,
             {
@@ -84,6 +115,16 @@ def _clip_worker(runtime, record, clip):
         )
     finally:
         Path(clip).unlink(missing_ok=True)
+
+
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _as_utc_z(value):
+    if isinstance(value, str) and value.endswith("+00:00"):
+        return value[:-6] + "Z"
+    return value
 
 
 @router.post("/clips", status_code=202)
@@ -122,12 +163,19 @@ async def transcribe_clip(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     runtime.append_event(record, {"type": "queued", "workflow_id": workflow_id})
     try:
-        runtime.executor.submit(_clip_worker, runtime, record, clip_path)
+        with record.lock:
+            runtime.executor.submit(_clip_worker, runtime, record, clip_path)
+            record.first_queued_at = _utc_now()
     except Exception:
         runtime.remove_run(workflow_id)
         Path(clip_path).unlink(missing_ok=True)
         raise
-    return {"workflow_id": workflow_id, "status": "queued"}
+    return {
+        "workflow_id": workflow_id,
+        "status": "queued",
+        "first_queued_at": record.first_queued_at,
+        "last_response_at": record.last_response_at,
+    }
 
 
 @router.post("/microphones", status_code=202)
@@ -200,8 +248,37 @@ def stop_transcription(workflow_id: str, request: Request):
                 record, {"type": "stopping", "workflow_id": workflow_id}
             )
             threading.Thread(
-                target=record.workflow.stop,
+                target=_stop_microphone_workflow,
+                args=(runtime, record),
                 name=f"api-stop-{workflow_id}",
                 daemon=True,
             ).start()
     return {"workflow_id": workflow_id, "status": record.status}
+
+
+def _stop_microphone_workflow(runtime, record):
+    """Run shutdown in the background and publish failures as terminal state."""
+    try:
+        record.workflow.stop()
+    except Exception as exc:
+        error = str(exc).strip() or type(exc).__name__
+        with record.lock:
+            if record.status != "stopping":
+                return
+            record.status = "failed"
+            record.error = error
+        runtime.append_event(
+            record,
+            {
+                "type": "workflow_error",
+                "workflow_id": record.workflow_id,
+                "error": error,
+            },
+        )
+        record.workflow.output_queue.put(
+            {
+                "type": "completed",
+                "source_id": record.workflow_id,
+                "status": "failed",
+            }
+        )

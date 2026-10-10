@@ -264,6 +264,34 @@ def test_session_stop_delegates_and_waits_for_public_completion():
     assert drain_events(wrapped)[-1] == source_events[-1]
 
 
+def test_session_stop_failure_aborts_owned_resources_and_emits_failure():
+    session = FakeSession([], source_id="source-18")
+    cleanup_calls = []
+
+    def fail_stop(*, timeout=None):
+        raise TimeoutError("source did not stop")
+
+    session.stop = fail_stop
+    wrapped = workflow.forward_session(
+        session,
+        None,
+        WordMatchingConfig(keywords=("สวัสดี",)),
+        on_stop_error=lambda: cleanup_calls.append("aborted"),
+    )
+
+    wrapped.stop(timeout=2)
+
+    events = drain_events(wrapped)
+    assert cleanup_calls == ["aborted"]
+    assert [event["type"] for event in events] == [
+        "workflow_error",
+        "match_results",
+        "completed",
+    ]
+    assert events[0]["error"] == "source did not stop"
+    assert events[-1]["status"] == "failed"
+
+
 def test_microphone_start_and_discovery_are_exposed_through_workflow(monkeypatch):
     session = FakeSession(
         [{"type": "completed", "source_id": "mic-1", "status": "stopped"}],
@@ -388,7 +416,7 @@ def test_per_workflow_process_mode_owns_group_through_natural_completion(monkeyp
                 "runtime": "ctranslate2",
                 "precision": "int8",
                 "queue_capacity": 6,
-                "enqueue_timeout_seconds": 1.0,
+                "enqueue_timeout_seconds": 30.0,
             },
             "topology": "per-input-model",
             "flow_configs": [{"source_id": "process-1"}],

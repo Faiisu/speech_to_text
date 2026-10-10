@@ -76,6 +76,13 @@ def test_spawned_capture_and_model_processes_route_ordered_partial_chunks(api):
         assert all(record["pid"] == inference_pid for record in measurements)
         assert all(record["rtf"] >= 0 and record["completed_at"].endswith("+00:00") for record in measurements)
         assert [record["audio_seconds"] for record in measurements] == pytest.approx([.1, .025])
+        assert all(record["queue_wait_seconds"] >= 0 for record in measurements)
+        assert [record["elapsed_seconds"] for record in measurements] == pytest.approx(
+            [record["queue_wait_seconds"] + record["inference_seconds"] for record in measurements]
+        )
+        assert [record["rtf"] for record in measurements] == pytest.approx(
+            [record["elapsed_seconds"] / record["audio_seconds"] for record in measurements]
+        )
         assert events.index(measurements[-1]) < next(i for i, event in enumerate(events) if event["type"] == "completed")
 
 
@@ -115,7 +122,7 @@ def test_shared_ipc_keeps_per_source_flow_settings_independent(api):
     group = api.start_multiprocess_microphone_flows(
         ["left", "right"], model_config={},
         flow_config={"silence_threshold": 0},
-        flow_configs=[{"source_id": "thai-short", "language": "th", "chunk_seconds": 0.1},
+        flow_configs=[{"source_id": "short-language", "language": "th", "chunk_seconds": 0.1},
                       {"source_id": "english-long", "language": "en", "chunk_seconds": 0.2}],
         topology="shared-model", runtime_factory=PerFlowRuntimeFactory(),
         audio_source_factory=ProcessAudioSource,
@@ -123,7 +130,7 @@ def test_shared_ipc_keeps_per_source_flow_settings_independent(api):
     try:
         group.stop(timeout=10)
         results = {session.source_id: collect_until_completed(session, timeout=2) for session in group.sessions}
-        assert texts(results["thai-short"]) == ["th:1600", "th:400"]
+        assert texts(results["short-language"]) == ["th:1600", "th:400"]
         assert texts(results["english-long"]) == ["en:2000"]
     finally:
         if group._manager is not None:

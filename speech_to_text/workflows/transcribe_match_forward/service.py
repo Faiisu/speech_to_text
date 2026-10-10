@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import threading
 from queue import Empty
@@ -60,6 +61,38 @@ class _ProcessGroupOwner:
             finally:
                 self._closed = True
 
+    def abort(self):
+        with self._lock:
+            if self._closed:
+                return
+            try:
+                self.group.abort()
+            finally:
+                self._closed = True
+
+
+class _ModelLease:
+    """Idempotent reference to a cached handle used by one active operation."""
+
+    def __init__(self, service, cache_key, handle):
+        self._service = service
+        self.cache_key = cache_key
+        self.handle = handle
+        self._lock = threading.Lock()
+        self._released = False
+
+    @property
+    def released(self):
+        with self._lock:
+            return self._released
+
+    def release(self):
+        with self._lock:
+            if self._released:
+                return
+            self._released = True
+        self._service._release_model(self.cache_key, self.handle)
+
 
 class TranscriptionService:
     """Lazily own one model handle for clip and microphone workflows."""
@@ -68,10 +101,17 @@ class TranscriptionService:
         self._model_config = None if model_config is None else dict(model_config)
         self._model_handle = None
         self._model_handles = {}
-        self._model_lock = threading.Lock()
+        self._model_users = {}
+        self._models_closing = 0
+        self._closing_model_keys = set()
+        self._model_lock = threading.RLock()
+        self._model_users_changed = threading.Condition(self._model_lock)
+        self._closing = False
         self._microphone_start_lock = threading.Lock()
         self._process_groups_lock = threading.Lock()
         self._process_groups = set()
+        self._shared_workflows_lock = threading.Lock()
+        self._shared_workflows = set()
 
     def _config_from_environment(self):
         return {
@@ -90,7 +130,7 @@ class TranscriptionService:
             "runtime": "openvino-gpu",
             "precision": "source",
             "queue_capacity": 6,
-            "enqueue_timeout_seconds": 1.0,
+            "enqueue_timeout_seconds": 30.0,
         }
         config.update(self._config_from_environment())
         if self._model_config is not None:
@@ -159,7 +199,11 @@ class TranscriptionService:
 
     def _get_model_config(self, config):
         cache_key = tuple(sorted(config.items()))
-        with self._model_lock:
+        with self._model_users_changed:
+            while cache_key in self._closing_model_keys:
+                self._model_users_changed.wait()
+            if self._closing:
+                raise WorkflowUnavailableError("Transcription service is closing")
             handle = self._model_handles.get(cache_key)
             if handle is None:
                 try:
@@ -172,6 +216,94 @@ class TranscriptionService:
                 if self._model_handle is None:
                     self._model_handle = handle
             return handle
+
+    def _acquire_model_config(self, config):
+        """Acquire one shared model lease for an operation or microphone workflow."""
+        cache_key = tuple(sorted(config.items()))
+        with self._model_lock:
+            handle = self._get_model_config(config)
+            self._model_users[cache_key] = self._model_users.get(cache_key, 0) + 1
+        return _ModelLease(self, cache_key, handle)
+
+    def _release_model(self, cache_key, handle):
+        close_handle = False
+        with self._model_users_changed:
+            if self._model_handles.get(cache_key) is not handle:
+                return
+            users = self._model_users.get(cache_key, 0)
+            if users <= 1:
+                self._model_users.pop(cache_key, None)
+                self._model_handles.pop(cache_key, None)
+                if self._model_handle is handle:
+                    self._model_handle = next(iter(self._model_handles.values()), None)
+                close_handle = True
+                self._models_closing += 1
+                self._closing_model_keys.add(cache_key)
+            else:
+                self._model_users[cache_key] = users - 1
+            self._model_users_changed.notify_all()
+        if close_handle:
+            try:
+                handle.close()
+            finally:
+                with self._model_users_changed:
+                    self._models_closing -= 1
+                    self._closing_model_keys.discard(cache_key)
+                    self._model_users_changed.notify_all()
+
+    @staticmethod
+    def _supports_keyword(callable_, name):
+        try:
+            parameters = inspect.signature(callable_).parameters.values()
+        except (TypeError, ValueError):
+            return True
+        return any(
+            parameter.name == name or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+
+    def _start_shared_microphone(self, device, lease, matching, flow_config):
+        holder = {"workflow": None}
+
+        def finished():
+            with self._shared_workflows_lock:
+                workflow = holder["workflow"]
+                if workflow is not None:
+                    self._shared_workflows.discard(workflow)
+                lease.release()
+
+        if self._supports_keyword(start_microphone_and_forward, "on_finished"):
+            workflow = start_microphone_and_forward(
+                device,
+                lease.handle,
+                None,
+                matching,
+                flow_config,
+                on_finished=finished,
+            )
+        else:
+            # Keep compatibility with injected workflow factories that predate
+            # the completion callback. The watcher only owns lease release.
+            workflow = start_microphone_and_forward(
+                device, lease.handle, None, matching, flow_config
+            )
+            threading.Thread(
+                target=lambda: self._wait_and_release(workflow, finished),
+                name=f"model-lease-{id(workflow):x}",
+                daemon=True,
+            ).start()
+        holder["workflow"] = workflow
+        with self._shared_workflows_lock:
+            if not lease.released:
+                self._shared_workflows.add(workflow)
+        return workflow
+
+    @staticmethod
+    def _wait_and_release(workflow, finished):
+        try:
+            workflow.wait()
+        finally:
+            finished()
 
     @staticmethod
     def _matching_config(keywords):
@@ -188,12 +320,20 @@ class TranscriptionService:
         """Validate API keyword input without exposing feature configuration types."""
         return self._matching_config(keywords).keywords
 
-    def transcribe_clip(self, clip, keywords, flow_config=None):
+    def transcribe_clip(
+        self, clip, keywords, flow_config=None, *, measurement_callback=None
+    ):
         """Transcribe and match one clip without configuring external forwarding."""
         matching = self._matching_config(keywords)
         try:
+            lease = self._acquire_model_config(self._effective_model_config())
             return transcribe_clip_and_forward(
-                clip, self._get_model(), None, matching, flow_config
+                clip,
+                lease.handle,
+                None,
+                matching,
+                flow_config,
+                measurement_callback=measurement_callback,
             )
         except (ConfigurationError, WordMatchingError, TypeError) as exc:
             raise WorkflowConfigurationError(str(exc)) from exc
@@ -201,6 +341,9 @@ class TranscriptionService:
             raise WorkflowInputError(str(exc)) from exc
         except ModelLoadError as exc:
             raise WorkflowUnavailableError(str(exc)) from exc
+        finally:
+            if "lease" in locals():
+                lease.release()
 
     @staticmethod
     def _audio_error(exc):
@@ -231,19 +374,16 @@ class TranscriptionService:
         try:
             with self._microphone_start_lock:
                 if execution_mode == "shared":
-                    if runtime is None:
-                        model_handle = (
-                            self._get_model()
-                            if model is None
-                            else self._get_model(model)
-                        )
-                    else:
-                        model_handle = self._get_model_config(
-                            self._effective_model_config(model, runtime)
-                        )
-                    return start_microphone_and_forward(
-                        device, model_handle, None, matching, flow_config
+                    lease = self._acquire_model_config(
+                        self._effective_model_config(model, runtime)
                     )
+                    try:
+                        return self._start_shared_microphone(
+                            device, lease, matching, flow_config
+                        )
+                    except Exception:
+                        lease.release()
+                        raise
 
                 model_config = self._effective_model_config(model, runtime)
                 group = start_multiprocess_microphone_flows(
@@ -263,9 +403,20 @@ class TranscriptionService:
                         with self._process_groups_lock:
                             self._process_groups.discard(owner)
 
+                def abort_group():
+                    try:
+                        owner.abort()
+                    finally:
+                        with self._process_groups_lock:
+                            self._process_groups.discard(owner)
+
                 try:
                     return forward_session(
-                        group.sessions[0], None, matching, on_finished=finish_group
+                        group.sessions[0],
+                        None,
+                        matching,
+                        on_finished=finish_group,
+                        on_stop_error=abort_group,
                     )
                 except Exception:
                     group.abort()
@@ -311,7 +462,17 @@ class TranscriptionService:
             raise WorkflowUnavailableError(str(exc)) from exc
 
     def close(self):
-        """Stop owned process groups and close the shared model handle."""
+        """Stop owned workflows and close cached shared model handles."""
+        with self._microphone_start_lock:
+            with self._model_lock:
+                self._closing = True
+            with self._shared_workflows_lock:
+                shared_workflows = tuple(self._shared_workflows)
+        for workflow in shared_workflows:
+            try:
+                workflow.stop()
+            except Exception:
+                pass
         with self._process_groups_lock:
             process_groups = tuple(self._process_groups)
         group_error = None
@@ -323,9 +484,12 @@ class TranscriptionService:
             finally:
                 with self._process_groups_lock:
                     self._process_groups.discard(owner)
-        with self._model_lock:
+        with self._model_users_changed:
+            while any(self._model_users.values()) or self._models_closing:
+                self._model_users_changed.wait()
             handles = tuple(self._model_handles.values())
             self._model_handles.clear()
+            self._model_users.clear()
             self._model_handle = None
             close_error = None
             for handle in handles:

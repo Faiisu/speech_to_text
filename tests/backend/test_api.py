@@ -296,6 +296,36 @@ def test_microphone_can_start_and_stop_through_api(api):
     assert "completed" in event_types
 
 
+def test_failed_microphone_stop_does_not_leave_workflow_stopping(api):
+    client, service = api
+    started = client.post(
+        "/api/v1/transcriptions/microphones",
+        json={"keywords": ["alpha"], "device": "Studio Mic"},
+    )
+    workflow_id = started.json()["workflow_id"]
+    workflow = service.microphone_workflow
+    stop_finished = threading.Event()
+
+    def wait_while_capture_is_active(timeout=0):
+        raise TimeoutError("workflow is still active")
+
+    def fail_to_stop(timeout=30):
+        stop_finished.set()
+        raise RuntimeError("capture device refused to stop")
+
+    workflow.wait = wait_while_capture_is_active
+    workflow.stop = fail_to_stop
+
+    response = client.post(f"/api/v1/transcriptions/{workflow_id}/stop")
+    assert response.status_code == 202
+    assert stop_finished.wait(timeout=1)
+
+    status = wait_for_status(client, workflow_id, "failed")
+    assert status["error"] == "capture device refused to stop"
+    completed, _ = wait_for_event_type(client, workflow_id, "completed")
+    assert completed["status"] == "failed"
+
+
 def test_microphone_api_selects_per_workflow_process_mode(api):
     client, service = api
 

@@ -72,6 +72,7 @@ def test_default_configuration_reaches_runtime_and_handle(api):
         assert factory.configs[0]["model"] == "turbo"
         assert factory.configs[0]["runtime"] == "openvino-gpu"
         assert factory.configs[0]["precision"] == "source"
+        assert factory.configs[0]["enqueue_timeout_seconds"] == 30.0
         assert handle.state == "ready"
         assert handle.model == "turbo"
         assert handle.runtime == "openvino-gpu"

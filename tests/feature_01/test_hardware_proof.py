@@ -84,7 +84,7 @@ def test_real_microphone_produces_text_and_stops_cleanly(api, record_property):
     session = None
     try:
         session = api.start_microphone_flow(device, handle, {"source_id": "hardware-proof"})
-        # Speak a Thai phrase during this explicit live-proof window.
+        # Speak a phrase during this explicit live-proof window.
         time.sleep(6)
         session.stop(timeout=30)
         events = collect_until_completed(session, timeout=30)

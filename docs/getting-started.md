@@ -14,20 +14,25 @@ This guide installs the callable Python package, optional API server, and fronte
 From the repository root:
 
 ```bash
-uv venv .venv
-uv pip install --python .venv/bin/python -e .
+uv sync --locked
 ```
+
+The root `uv.lock` pins the resolved dependency versions. `--locked` installs from that lockfile and fails if it no longer matches `pyproject.toml`.
 
 ## Install optional runtimes and microphone support
 
 Install only the extras needed for your work:
 
 ```bash
-uv pip install --python .venv/bin/python -e '.[openvino]'
+uv sync --locked --extra openvino
 ```
 
 ```bash
-uv pip install --python .venv/bin/python -e '.[microphone]'
+uv sync --locked --extra microphone
+```
+
+```bash
+uv sync --locked --extra ctranslate2
 ```
 
 For other runtime choices, see the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults). OpenVINO GPU availability depends on the host and its drivers; a Mac development environment does not prove Linux target-hardware support.
@@ -35,7 +40,7 @@ For other runtime choices, see the [Feature 01 configuration contract](../.scrat
 ## Run the backend API
 
 ```bash
-uv pip install --python .venv/bin/python -e '.[backend,microphone,openvino]'
+uv sync --locked --extra backend --extra microphone --extra openvino --extra ctranslate2
 uv run --no-sync uvicorn speech_to_text.backend.app:app --host 127.0.0.1 --port 8000
 ```
 
@@ -75,7 +80,7 @@ Feature 01 accepts WAV paths or bytes at its Python callable boundary. Its [spec
 Install the test extra if it is not already present, then run the feature contract suite:
 
 ```bash
-uv pip install --python .venv/bin/python -e '.[test]'
+uv sync --locked --extra test
 .venv/bin/pytest -q
 ```
 

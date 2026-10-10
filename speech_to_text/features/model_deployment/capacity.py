@@ -290,7 +290,7 @@ def main():
     parser.add_argument("--chunk-seconds", type=float, default=30)
     parser.add_argument("--silence-threshold", type=float, default=0.05)
     parser.add_argument("--queue-capacity", type=int, default=6)
-    parser.add_argument("--enqueue-timeout", type=float, default=1)
+    parser.add_argument("--enqueue-timeout", type=float, default=30)
     parser.add_argument(
         "--output", help="Write JSON evidence to this path instead of stdout"
     )
