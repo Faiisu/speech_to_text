@@ -453,7 +453,18 @@ detect_lan
 render_device=$(find /dev/dri -maxdepth 1 -type c -name 'renderD*' -print -quit)
 [[ -n "$render_device" ]] || fail "Could not locate a GPU render device under /dev/dri."
 RENDER_GID=$(stat -c '%g' "$render_device")
-AUDIO_GID=$(stat -c '%g' /dev/snd)
+audio_capture_device=""
+for device in /dev/snd/pcmC*D*c; do
+  if [[ -c "$device" ]]; then
+    audio_capture_device="$device"
+    break
+  fi
+done
+if [[ -n "$audio_capture_device" ]]; then
+  AUDIO_GID=$(stat -c '%g' "$audio_capture_device")
+else
+  AUDIO_GID=$(stat -c '%g' /dev/snd)
+fi
 [[ "$RENDER_GID" =~ ^[0-9]+$ && "$AUDIO_GID" =~ ^[0-9]+$ ]] || fail "Could not detect numeric device group IDs."
 port_is_free_or_owned
 [[ ! -L "$INSTALL_DIR" ]] || fail "$INSTALL_DIR is a symbolic link; refusing to write outside the application directory."

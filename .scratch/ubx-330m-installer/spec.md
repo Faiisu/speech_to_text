@@ -24,7 +24,7 @@ Operator-facing deployment behavior remains authoritative in the [deployment pla
 - [x] A repeatable Bash installer is placed under `scripts/` and linked from the root README.
 - [x] The installer validates Ubuntu 24.04, x86_64, `/dev/dri`, `/dev/snd`, LAN access, and port availability before host changes. `sudo` is optional when Docker and Compose are installed, running, and accessible to the current user.
 - [x] A non-root run continues with accessible Docker and skips privileged host setup, including UFW changes with a clear firewall reminder. A root run can install a supported Ubuntu Docker package without removing conflicting packages or start the existing Engine; if a safe install is not possible, it stops with a clear message.
-- [x] It detects the LAN IPv4 address/subnet plus the numeric GIDs for the GPU render and audio devices without prompting for values.
+- [x] It detects the LAN IPv4 address/subnet plus numeric GIDs for the GPU render and ALSA capture devices without prompting for values.
 - [x] It creates its Compose/data paths under ignored checkout `data/ubx330m`; the invoking checkout owner owns those paths, and the app's UID 10001 receives that GID for profile database writes.
 - [x] It checks port 8000 before starting, and aborts without stopping or changing any existing service if the port is occupied.
 - [x] Its seven ordered stages are: validate host; prepare Docker; prepare/load export dependencies; prepare/reuse the pinned model; build the application image from the current checkout; configure/start the service; check readiness.
