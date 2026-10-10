@@ -14,6 +14,7 @@ services:
       - "${AUDIO_GID:-29}"
     volumes:
       - ./data:/data
+      - ./models:/opt/models:ro
     environment:
       SPEECH_TO_TEXT_MODELS_DIR: /opt/models
       SPEECH_TO_TEXT_MODEL: turbo

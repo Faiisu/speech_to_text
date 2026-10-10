@@ -12,12 +12,6 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --python /usr/bin/python3.12 --locked --no-dev --no-install-project \
     --extra backend --extra microphone --extra openvino
 
-FROM python-deps AS model-export
-COPY scripts/export_openvino_model.py /build/scripts/export_openvino_model.py
-RUN mkdir -p /opt/models \
-    && HF_HUB_DISABLE_TELEMETRY=1 uv run --no-sync python scripts/export_openvino_model.py \
-       --destination /opt/models/openvino-turbo-source
-
 FROM node:22.14.0-bookworm-slim AS frontend-build
 WORKDIR /build/frontend
 COPY speech_to_text/frontend/package.json speech_to_text/frontend/package-lock.json ./
@@ -48,7 +42,6 @@ COPY --from=python-deps /build/.venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 COPY speech_to_text/ /app/speech_to_text/
 COPY audio/test-audio.wav /app/audio/test-audio.wav
-COPY --from=model-export /opt/models/openvino-turbo-source /opt/models/openvino-turbo-source
 COPY --from=frontend-build /build/frontend/dist/ /app/frontend/
 USER app
 EXPOSE 8000

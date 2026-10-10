@@ -10,6 +10,7 @@ This document is the source of truth for where project files belong. Follow it w
 .
 ├── .scratch/                   # Feature specifications, issues, and task evidence
 ├── audio/                      # Audio inputs and reference samples
+├── data/                       # Ignored persistent runtime and generated deployment state
 ├── docs/                       # Maintained project documentation
 │   └── agents/                  # Instructions for repository workflows
 ├── legacies-poc/               # Archived proof of concept; isolated from new code
@@ -93,6 +94,7 @@ Frontend code calls the backend API. Backend routes validate requests and call w
 - Put container build assets at the repository root (`Dockerfile`, `.dockerignore`, and `compose.yaml`), model-export utilities under `scripts/`, and GitHub automation under `.github/workflows/`.
 - Keep new application code outside `legacies-poc/`. Modify the archive only when a task explicitly targets legacy code.
 - Keep downloaded or machine-specific model artifacts under `models/`, audio inputs under `audio/`, and reusable project commands under `scripts/`. Do not place these assets inside Python packages.
+- Keep ignored persistent runtime data and generated deployment state under `data/`.
 - Name modules after their responsibility. Put inbound API route modules under `backend/api/routes/`; do not put HTTP endpoints in feature or workflow modules.
 
 When a task introduces a lasting folder category or changes ownership boundaries, update this document in the same change. For documentation topics, first update their existing authoritative document and link to it rather than copying its content here.

@@ -4,30 +4,49 @@
 
 ## Goal
 
-Deploy the current Speech-to-Text application on the UBX-330M Linux host as a simple LAN service. This document is the operator guide for the Docker image and Compose deployment.
+Deploy the current Speech-to-Text application on the UBX-330M Linux host as a simple LAN service. The supported installer path starts from a source checkout without model weights, prepares the model, builds the local Docker images, and starts the Compose service. This document is the operator guide for that path and for the separately recorded GHCR trial.
 
 ## Shape
 
-- Build one `linux/amd64` Docker image on Ubuntu 24.04 containing the Python backend, the built React frontend, the converted `turbo` OpenVINO source-precision model, and the Intel OpenCL runtime. The model is exported in a CPU-only build stage from a pinned Hugging Face revision; runtime uses OpenVINO GPU and the host's Intel kernel driver through `/dev/dri`. FastAPI serves the frontend assets and `/api/v1` from the same origin, with `/healthz` as a model-free health endpoint.
+- Build two local `linux/amd64` images from the source checkout: a dependency image used only to export the model, and an application image containing the Python backend, built React frontend, and Intel OpenCL runtime. The application image does not contain model weights. The pinned `turbo` OpenVINO source-precision export is stored under checkout `./models` and mounted read-only at `/opt/models`. Runtime uses OpenVINO GPU and the host's Intel kernel driver through `/dev/dri`. FastAPI serves the frontend assets and `/api/v1` from the same origin, with `/healthz` as a model-free health endpoint.
 - Run one backend process in one Docker Compose service. Publish port `8000` to the LAN and open `http://<UBX-330M-IP>:8000` in a browser.
 - Use HTTP without login for LAN users. Restrict access to the LAN through the host firewall.
 - Pass the Intel GPU device (`/dev/dri`) and the host microphone/audio devices into the container. Use the existing OpenVINO GPU model setup.
-- Keep only the SQLite profile database on a host-mounted path. The default model ships in each versioned image, so rollback also restores the matching model.
+- Keep the SQLite profile database under `./data` and model artifacts under `./models`, both on host-mounted paths. The model mount is read-only inside the app container; its files remain available when the app image is rolled back or replaced.
 
 ## Image release and update
 
-GitHub Actions builds and tags a `linux/amd64` image for each `v*` release tag, then pushes it to the public package `ghcr.io/faiisu/speech_to_text` using the same `vX.Y.Z` tag plus `latest`. UBX-330M can pull the image without registry credentials. The model-export stage runs without GPU access; its first build downloads the pinned checkpoint and converts it to OpenVINO IR, which can use substantial memory and disk space. A host operator selects the image version with `SPEECH_TO_TEXT_IMAGE` in the Compose environment, pulls it, and recreates the service. Keep the previous image tag available for rollback. Deployments may briefly interrupt active workflows; run status and events are process-local and are lost when the service restarts.
+GitHub Actions builds and tags a `linux/amd64` image when a `v*` Git tag is pushed, then pushes it to `ghcr.io/faiisu/speech_to_text` with a semantic-version tag and `latest`. The existing GHCR trial below is a separate, previously published-image deployment. The installer does not pull an application image from GHCR: it builds both images from the checked-out source. During those builds Docker may download base images and install OS and application packages. Separately, the model-export step downloads the pinned checkpoint from Hugging Face when `./models` does not already contain a complete export for the pinned repository and revision. Thus a source-only checkout can be deployed, but the first install needs outbound access to the relevant registries, package sources, and Hugging Face. Conversion can use substantial memory and disk space. Deployments may briefly interrupt active workflows; run status and events are process-local and are lost when the service restarts.
 
-The current UBX-330M trial uses `ghcr.io/faiisu/speech_to_text:v0.1.3` on host port `18000`. Its Compose checkout is `~/apps/speech_to_text-trial`; the `.env` file pins the image and sets the host device group IDs. The tested entry point is `http://<UBX-330M-IP>:18000/`. This deployment is ready for technical evaluation, but user go-live remains gated on connecting and verifying outbound forwarding.
+The existing GHCR trial is pinned to image tag `v0.1.3`, which predates the image change in this checkout and still contains the bundled model. A future GHCR image built from the current source will omit model weights. The installer defaults to the local tag `speech-to-text-ubx330m:v0.1.3`; this tag labels the image built from the current checkout and does not make the installer pull `v0.1.3` from GHCR. Pass a version argument or set `SPEECH_TO_TEXT_VERSION` to choose another local image tag.
+
+The separately recorded GHCR trial uses `ghcr.io/faiisu/speech_to_text:v0.1.3` on host port `18000`. Its Compose checkout is `~/apps/speech_to_text-trial`; the `.env` file pins the image and sets the host device group IDs. Its tested entry point is `http://<UBX-330M-IP>:18000/`. This is not the source-checkout installer path described below. The trial was ready for technical evaluation, but normal user go-live remains gated on connecting and verifying outbound forwarding.
 
 ## Host data and configuration
 
-The image contains `openvino-turbo-source` under `/opt/models`; do not mount a models directory over it. Compose mounts `./data` at `/data` and sets `SPEECH_TO_TEXT_PROFILE_DB=/data/profiles.sqlite3`. The container runs as UID/GID `10001`; give that user ownership of the host bind-mount directory before the first start:
+Compose mounts `./data` at `/data` and `./models` at `/opt/models` read-only, and sets `SPEECH_TO_TEXT_PROFILE_DB=/data/profiles.sqlite3`. The default `openvino-turbo-source` model must exist under the host `./models` directory before the app starts. The container runs as UID/GID `10001`; give that user ownership of the profile bind-mount directory before the first start. Model files need to be readable by UID `10001`:
 
 ```bash
 mkdir -p data
 sudo chown -R 10001:10001 data
 ```
+
+Generate the pinned export into the checkout's `models/` directory before starting Compose. The exporter reuses an export only when its required OpenVINO weights and provenance manifest match the pinned Hugging Face repository and revision. It writes a staged export and replaces the destination only after all required files are present; exports without matching metadata are regenerated, while the prior directory remains intact if that export fails. For a manual source-checkout deployment, build and run the same dependency image used by the installer:
+
+```bash
+mkdir -p models
+EXPORT_DEPS_IMAGE=speech-to-text-ubx330m-export-deps:v0.1.3
+docker build --platform linux/amd64 --target python-deps \
+  --tag "$EXPORT_DEPS_IMAGE" --file Dockerfile .
+docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" \
+  --volume "$PWD/scripts/export_openvino_model.py:/tmp/export_openvino_model.py:ro" \
+  --volume "$PWD/models:/models" \
+  --env HF_HUB_DISABLE_TELEMETRY=1 \
+  --entrypoint /build/.venv/bin/python "$EXPORT_DEPS_IMAGE" \
+  /tmp/export_openvino_model.py --destination /models/openvino-turbo-source
+```
+
+The dependency image's tag is only a local label; the command builds it from this checkout. Missing or partial exports fail before Compose starts; an existing complete export is retained if a refresh fails. Keep the `models/` directory with the deployment checkout during upgrades and rollback.
 
 The application creates the SQLite file on first use. Keep only this database in that directory. Profiles are shared by all LAN users and survive container replacement. The project does not create an additional backup. Run records, transcripts, matches, and events remain in memory and are lost on restart.
 
@@ -37,7 +56,13 @@ Compose publishes `${HOST_PORT:-8000}:8000`, so the trial uses host port `18000`
 
 ## Build, trial, rollback
 
-For a local image build, run `docker compose build`. This builds the frontend, exports the pinned turbo model in the build stage, and assembles the runtime image. The UBX-330M trial is deployed from a published image; no model download or image build is needed on that host. To update that trial to a released version, run these commands on UBX-330M:
+For a local image build on an `amd64` host, run `docker compose build`. On Apple Silicon or another non-`amd64` host, set the target platform because the runtime image requires the Intel OpenCL package:
+
+```bash
+DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose build
+```
+
+This builds the frontend and assembles the runtime image without model weights. The existing GHCR `v0.1.3` trial image still contains its legacy bundled model; the UBX-330M installer instead builds from the source checkout and exports weights into that checkout's `./models` directory. A later GHCR image built from this checkout will omit weights. To update the separate GHCR trial to a published version, run these commands on UBX-330M:
 
 ```bash
 cd ~/apps/speech_to_text-trial
@@ -71,21 +96,30 @@ To trial on a different Compose checkout, set `SPEECH_TO_TEXT_IMAGE` to a versio
 
 ## UBX-330M installer
 
-First clone or copy a repository checkout onto the UBX-330M. From the checkout root on that host, run the installer as root:
+Clone the GitHub repository onto the UBX-330M; model weights are not stored in Git. For example:
 
 ```bash
-sudo ./scripts/install_ubx330m.sh
+git clone https://github.com/Faiisu/speech_to_text.git
+cd speech_to_text
 ```
 
-It defaults to the pinned public image `ghcr.io/faiisu/speech_to_text:v0.1.2`. To install the currently trialed release, pass `v0.1.3` explicitly; pass another published release tag to select a different version:
+From the checkout root, run the installer as the normal user when Docker Engine and Compose are already installed, running, and accessible to that user:
+
+```bash
+./scripts/install_ubx330m.sh
+```
+
+Use `sudo` when Docker or Compose needs installation, Docker needs to be started with host privileges, or an active UFW firewall needs the installer's LAN allow rule. The installer uses `SUDO_UID` and `SUDO_GID` to keep the checkout's generated model and installer files owned by the invoking user. It defaults to the local image tag `speech-to-text-ubx330m:v0.1.3`; pass another version tag to select a different local image:
 
 ```bash
 sudo ./scripts/install_ubx330m.sh v0.1.3
 ```
 
-The installer accepts only Ubuntu 24.04 on x86_64 and checks root access, `/dev/dri`, `/dev/snd`, the LAN route, device group IDs, and TCP port 8000 before it changes the host. It detects the LAN IPv4 address and subnet, render GID, and audio GID automatically, and rejects Tailscale/CGNAT routes. It reuses a working Docker Engine and Compose plugin. If either is missing, it refreshes Ubuntu package metadata, simulates the package installation, and stops if apt would remove any installed package; it does not purge conflicting packages. It never installs a GPU driver, enables UFW, or stops unrelated containers or services.
+The installer runs seven stages in this order: validate host; prepare Docker; prepare/load export dependencies; prepare model; build application image; configure/start service; check readiness. It accepts only Ubuntu 24.04 on x86_64 and checks `/dev/dri`, `/dev/snd`, the LAN route, device group IDs, and TCP port 8000 before host changes. It detects the LAN IPv4 address and subnet, render GID, and audio GID automatically, and rejects Tailscale/CGNAT routes. `sudo` is optional when Docker Engine and Compose are already running and accessible to the invoking user. Without that access, a non-root run stops with host setup guidance. A root run reuses a working Docker Engine and Compose plugin; if either is missing, it refreshes Ubuntu package metadata, simulates the package installation, and stops if apt would remove any installed package. It does not purge conflicting packages, install Python application/model dependencies on the host, install a GPU driver, enable UFW, or stop unrelated containers or services.
 
-The installer pulls the selected image, writes its Compose configuration under `/opt/speech_to_text/`, and stores only the profile SQLite database under `/opt/speech_to_text/data/`, owned by UID/GID `10001:10001`. It binds port 8000 to the detected LAN address. When UFW is already active, it adds an allow rule for TCP port 8000 from only the detected LAN subnet. Re-running the installer updates the installer-owned Compose service to the selected pinned image and preserves the profile database. To roll back, rerun it with the previous release tag. The installer waits for the image healthcheck, checks `/healthz`, confirms that `turbo` is installed and `openvino-gpu` is ready with source precision available, and lists discovered microphone devices. It stops with an actionable error if no microphone devices are found.
+The dependency and application images use deterministic local tags based on the selected version. Compose references the locally built application image and starts with `--no-build`; the installer does not pull an app image from GHCR. The exporter runs inside the local dependency image and writes the pinned export into the checkout's `./models/openvino-turbo-source`. It records the Hugging Face repository and revision in a provenance manifest, reuses only a matching export, and keeps the prior model directory intact if refresh fails. Compose mounts checkout `./models` read-only at `/opt/models`. The application image is built from the current checkout without model weights. Installer Compose configuration and profile data live under the ignored `./data/ubx330m/` directory; container UID `10001` receives the checkout owner's group so it can write the profile database without changing ownership outside the checkout. Docker needs outbound access for missing base images and build dependencies, and the exporter container needs Hugging Face access when no matching export exists. If Docker is missing, Ubuntu package mirrors are also needed to install Docker safely.
+
+The installer binds port 8000 to the detected LAN address. When run as root and UFW is already active, it adds an allow rule for TCP port 8000 from only the detected LAN subnet. A non-root run skips firewall changes and prints a reminder to allow that LAN traffic; clients may be unable to connect until the host firewall permits it. Re-running the installer rebuilds the selected local image tag from the current checkout and updates only the installer-owned Compose service; the profile database and complete model export remain in place. To roll back to an earlier application build, run the installer from the corresponding earlier repository checkout with its previous version tag. The installer waits for the image healthcheck, checks `/healthz`, confirms that `turbo` is installed and `openvino-gpu` is ready with source precision available, and lists discovered microphone devices. It stops with an actionable error if no microphone devices are found.
 
 An installer success confirms service readiness only. Outbound HTTP forwarding still must be connected and its delivery verified before normal user go-live, as described in [Go-live gate](#go-live-gate).
 
