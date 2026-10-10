@@ -42,7 +42,19 @@ This document is the source of truth for where project files belong. Follow it w
 └── requirements-test.txt        # Test dependency list
 ```
 
-The frontend package reserves the UI boundary. The implemented backend module layout is:
+The frontend owns UI code in `speech_to_text/frontend/src/`. Shared navigation, API transport, and UI primitives live under `src/shared/`; page behavior lives under `src/features/`:
+
+```text
+speech_to_text/frontend/src/
+├── shared/
+└── features/
+    ├── dashboard/
+    ├── profiles/
+    ├── runs/
+    └── stress-tests/             # Capacity matrix controls, polling, and reports
+```
+
+The implemented backend module layout is:
 
 ```text
 speech_to_text/backend/

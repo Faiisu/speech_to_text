@@ -29,7 +29,7 @@ The suites are organized by boundary:
 - `tests/word_matching/` verifies Thai literal substring matching and configuration validation.
 - `tests/workflows/` verifies transcription and matching orchestration through workflow interfaces.
 - `tests/backend/` verifies HTTP requests, run monitoring, microphone discovery, and lifecycle responses through the FastAPI app.
-- `speech_to_text/frontend/e2e/` drives the browser through profile creation, workflow output monitoring, and stop against the backend API. Its deterministic backend fixture is in `tests/frontend_e2e/`.
+- `speech_to_text/frontend/e2e/` drives the browser through profile creation, workflow output monitoring, and stop against the backend API. Its deterministic backend fixture is in `tests/frontend_e2e/`. Capacity lab browser scenarios use mocked HTTP responses to exercise matrix rendering, configuration, polling, and recovery.
 
 Run the frontend browser flow from `speech_to_text/frontend/` after installing the frontend dependencies and Chromium once:
 
@@ -39,7 +39,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-The E2E backend uses a deterministic fake microphone workflow, so it does not require a physical microphone or a speech model. It still runs the frontend against the real FastAPI routes and run registry.
+The microphone E2E backend uses a deterministic fake microphone workflow, so it does not require a physical microphone or a speech model. Those scenarios run the frontend against the real FastAPI routes and run registry. Mocked Capacity lab browser scenarios prove frontend behavior; backend and hardware capacity proof remain separate.
 
 Tests marked `hardware` are skipped unless explicitly enabled. Real model proof requires the reference audio and verified transcript settings described in `tests/feature_01/test_hardware_proof.py`. A physical microphone proof also requires a connected, named input device. Keep injected-boundary test results distinct from target hardware evidence.
 

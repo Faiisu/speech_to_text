@@ -77,7 +77,7 @@ For each chunk that reaches inference, record audio duration, queue wait, and mo
 
 **Decisions resolved for Feature 01:** Model catalog discovery is dynamic and local, with install/readiness and runtime compatibility exposed to the caller; known downloadable models may appear before installation. Initial default precision is the source checkpoint precision (`bf16` for `turbo`), while int8 remains selectable. Verification clips are PCM16 WAV files supplied by path or bytes, mono/stereo at 8–48 kHz, normalized internally to 16 kHz mono. The shared FIFO queue defaults to 6 chunks with a 30-second enqueue timeout; timeout terminates only the microphone source that cannot enqueue. Session events follow the typed contract above. The first capacity target is three microphones on the UBX-330M. Real-model transcript acceptance uses a verified Thai reference set and normalized character error rate no greater than 20%; deterministic function tests use exact expected fake-runtime outputs.
 
-**Application hosting:** This repository currently exposes callable Python feature modules and a capacity CLI; it does not provide a frontend or inbound HTTP server. A host application owns transport, authentication, and deployment and calls the documented feature interfaces.
+**Application hosting:** The repository's React frontend and FastAPI backend call the feature through workflow interfaces. Feature 01 remains independent of transport and UI; the host application owns transport and deployment. See the [architecture](../../docs/architecture.md).
 
 **Recorded hardware verification:** On the UBX-330M, `turbo` with `openvino-gpu` at source precision loaded and completed real clip inference; see [`linux-local-rtf-20261009.json`](evidence/linux-local-rtf-20261009.json). The 21.129-second Thai clip produced five ordered measurements, with RTF below 1 for the first four chunks and above 1 for the final partial chunk. Independent Thai CER and three-microphone capacity in both real-model topologies remain unverified. These are execution proofs against the decisions above, not open product/interface decisions.
 
@@ -122,7 +122,7 @@ Desktop wireframe:
 └───────────────────────────────┴──────────────────────────────────────────────────────┘
 ```
 
-On narrow screens, stack the topology columns and keep each topology's 1/2/4 progression together. Use semantic table/list markup for measurements, visible keyboard focus, text labels alongside color, and respect reduced-motion preferences. The frontend API contract is maintained in the [backend transcription API specification](../../backend-transcription-api/spec.md#post-stress-tests).
+On narrow screens, stack the topology columns and keep each topology's 1/2/4 progression together. Use semantic table/list markup for measurements, visible keyboard focus, text labels alongside color, and respect reduced-motion preferences. The frontend API contract is maintained in the [backend transcription API specification](../backend-transcription-api/spec.md#post-stress-tests).
 
 ## Feature 01 executable acceptance contract
 
@@ -193,4 +193,4 @@ Recorded software verification: Feature 01 contract suites have passed in the de
 
 Feature 01 work is tracked in tickets under `issues/`: model catalog/runtime handles, finite clips, microphone sessions, process topologies/capacity tooling, file-replay stress measurement, and target hardware acceptance. Earlier tickets for the retired Control Center host bridge and container deployment are retained as project history, not current interfaces. Target hardware ticket 05 remains `ready-for-human` with execution pending prerequisites. The archived application remains unchanged.
 
-Frontend and backend adapters are not part of the current Feature 01 package. A future host application should call Feature 01 through the callable interface documented above.
+Frontend and backend adapters live outside the Feature 01 package and call it through the callable interfaces documented above. The current host application is described in the [architecture](../../docs/architecture.md).

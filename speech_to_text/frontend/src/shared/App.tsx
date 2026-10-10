@@ -3,6 +3,7 @@ import Dashboard from '../features/dashboard/Dashboard'
 import ProfileList from '../features/profiles/ProfileList'
 import ProfileEditor from '../features/profiles/ProfileEditor'
 import RunDetail from '../features/runs/RunDetail'
+import StressTests from '../features/stress-tests/StressTests'
 
 function Shell() {
   return <div className="app-shell">
@@ -12,6 +13,7 @@ function Shell() {
       <nav className="main-nav">
         <NavLink to="/" end><span className="nav-icon">◫</span>Overview</NavLink>
         <NavLink to="/profiles"><span className="nav-icon">◉</span>Microphones & profiles</NavLink>
+        <NavLink to="/stress-tests"><span className="nav-icon">⌁</span>Stress test</NavLink>
       </nav>
       <div className="sidebar-bottom"><div className="sidebar-note"><span className="tiny-signal" />API v1 <span>LOCAL</span></div><p>Every word<br />starts here</p></div>
     </aside>
@@ -23,6 +25,7 @@ function Shell() {
         <Route path="/profiles/new" element={<ProfileEditor />} />
         <Route path="/profiles/:profileId" element={<ProfileEditor />} />
         <Route path="/runs/:workflowId" element={<RunDetail />} />
+        <Route path="/stress-tests" element={<StressTests />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
       <footer className="footer"><span>EchoDesk <i>●</i> Transcription workflows</span><span>Run status from the current backend</span></footer>

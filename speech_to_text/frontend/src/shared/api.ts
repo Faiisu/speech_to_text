@@ -3,7 +3,7 @@ import type { Microphone, ModelChoice, Profile, ProfileDefinition, Transcription
 const API_ROOT = '/api/v1'
 
 export class ApiRequestError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly detail: unknown = message) {
     super(message)
     this.name = 'ApiRequestError'
   }
@@ -20,12 +20,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error('Cannot reach the API. Make sure the backend is running at localhost:8000, then try again.')
   }
   if (!response.ok) {
-    let detail = `Request failed (${response.status})`
+    let detail: unknown = `Request failed (${response.status})`
     try {
       const body = await response.json()
-      if (typeof body.detail === 'string') detail = body.detail
+      if (body && 'detail' in body) detail = body.detail
     } catch { /* Keep the status message when the body is not JSON. */ }
-    throw new ApiRequestError(detail, response.status)
+    const message = typeof detail === 'string' ? detail : `Request failed (${response.status})`
+    throw new ApiRequestError(message, response.status, detail)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
@@ -44,4 +45,7 @@ export const api = {
   transcription: (id: string) => request<Transcription>(`/transcriptions/${encodeURIComponent(id)}`),
   events: (id: string, after: number) => request<{ events: WorkflowEvent[]; next_cursor: number }>(`/transcriptions/${encodeURIComponent(id)}/events?after=${after}`),
   stop: (id: string) => request<{ workflow_id: string; status: string }>(`/transcriptions/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
+  startStressTest: (settings: { model?: string; runtime?: string; precision?: string }) => request<{ stress_test_id: string; status: string }>('/stress-tests', { method: 'POST', body: JSON.stringify(settings) }),
+  stressTest: (id: string) => request<import('./types').StressTest>(`/stress-tests/${encodeURIComponent(id)}`),
+  stressEvents: (id: string, after: number) => request<{ stress_test_id: string; events: import('./types').StressEvent[]; next_cursor: number }>(`/stress-tests/${encodeURIComponent(id)}/events?after=${after}`),
 }

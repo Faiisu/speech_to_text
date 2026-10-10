@@ -150,3 +150,4 @@
   .profile-carousel-actions{width:100%;justify-content:space-between}
   .dashboard-page .profile-card{flex-basis:92%}
 }
+@media(max-width:760px){.main-nav{grid-template-columns:repeat(3,minmax(0,1fr))}.main-nav a{justify-content:center;height:43px;padding:0 3px;gap:4px;font-size:9px;white-space:nowrap}.main-nav .nav-icon{width:14px;font-size:13px}}

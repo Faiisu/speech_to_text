@@ -2,7 +2,7 @@
 
 # Architecture
 
-The current system consists of a React frontend, a FastAPI backend API, and callable feature and workflow modules. The frontend manages saved microphone profiles and monitors workflow runs through the backend API. Feature contracts are maintained in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md), [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md), and [backend transcription API specification](../.scratch/backend-transcription-api/spec.md).
+The current system consists of a React frontend, a FastAPI backend API, and callable feature and workflow modules. The frontend manages saved microphone profiles, monitors workflow runs, and operates the stress-test capacity matrix through the backend API. Feature contracts are maintained in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md), [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md), and [backend transcription API specification](../.scratch/backend-transcription-api/spec.md).
 
 ## Backend boundary
 
