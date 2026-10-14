@@ -31,6 +31,7 @@ export type Profile = {
   silence_threshold: number
   model: string
   runtime: RuntimeChoice['key']
+  destination_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -51,8 +52,58 @@ export type Transcription = {
   matches: { keyword: string; count: number }[] | null
   latest_rtf: number | null
   error: string | null
+  destination_id?: string | null
+  delivery?: DeliveryStatus | null
   created_at: string
 }
+
+export type DeliveryStatus = {
+  status: 'disabled' | 'pending' | 'delivered' | 'failed' | string
+  destination_id?: string | null
+  event_id?: string | null
+  attempts?: number
+  http_status?: number | null
+  last_attempt_at?: string | null
+  error_code?: string | null
+}
+
+export type DestinationSummary = {
+  destination_id: string
+  name: string
+  endpoint_origin: string
+  method: 'POST' | 'PUT' | 'PATCH'
+  auth_type: 'none' | 'bearer' | 'basic' | 'api_key_header'
+  payload_format: 'match_results_v1'
+  created_at: string
+  updated_at: string
+}
+
+export type DestinationDefinition = {
+  name: string
+  endpoint_url: string
+  method: 'POST' | 'PUT' | 'PATCH'
+  headers: Record<string, string>
+  auth: {
+    type: 'none' | 'bearer' | 'basic' | 'api_key_header'
+    secret_ref?: string | null
+    username_secret_ref?: string | null
+    password_secret_ref?: string | null
+    header_name?: string | null
+  }
+  timeout_seconds: number
+  max_attempts: number
+  backoff_seconds: number
+  max_backoff_seconds: number
+  max_retry_after_seconds: number
+  follow_redirects: boolean
+  idempotency_header: string | null
+  payload_format: 'match_results_v1'
+  tls_ca_bundle_ref: string | null
+  tls_client_certificate_ref: string | null
+  tls_client_key_ref: string | null
+}
+
+export type Destination = DestinationSummary & { config: Omit<DestinationDefinition, 'name'> }
 
 export type WorkflowEvent = {
   cursor: number
@@ -116,4 +167,4 @@ export type StressEvent = {
   [key: string]: unknown
 }
 
-export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime'>
+export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime'> & { destination_id?: string | null }

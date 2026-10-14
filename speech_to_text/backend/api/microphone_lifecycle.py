@@ -3,6 +3,8 @@
 import queue
 import threading
 import uuid
+from datetime import datetime, timezone
+from inspect import Parameter, signature
 
 from fastapi import HTTPException
 
@@ -19,11 +21,30 @@ from speech_to_text.workflows.transcribe_match_forward import (
 )
 
 
+def _accepts_keyword_argument(callable_, name):
+    try:
+        parameters = signature(callable_).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        (parameter.name == name and parameter.kind in (
+            Parameter.POSITIONAL_OR_KEYWORD,
+            Parameter.KEYWORD_ONLY,
+        ))
+        or parameter.kind is Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+
+
 def validate_keywords(workflow_service, keywords):
     try:
         return workflow_service.validate_keywords(keywords)
     except WorkflowConfigurationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def start_microphone_workflow(
@@ -37,6 +58,8 @@ def start_microphone_workflow(
     selected_runtime=None,
     profile_id=None,
     profile_name=None,
+    destination_id=None,
+    forwarder=None,
 ):
     """Start one microphone workflow and register its run for API monitoring."""
     runtime = request.app.state.backend_runtime
@@ -62,6 +85,8 @@ def start_microphone_workflow(
                 selected_runtime=selected_runtime,
                 profile_id=profile_id,
                 profile_name=profile_name,
+                destination_id=destination_id,
+                forwarder=forwarder,
             )
     return _start_microphone_workflow(
         request,
@@ -73,6 +98,8 @@ def start_microphone_workflow(
         selected_runtime=selected_runtime,
         profile_id=profile_id,
         profile_name=profile_name,
+        destination_id=destination_id,
+        forwarder=forwarder,
     )
 
 
@@ -87,6 +114,8 @@ def _start_microphone_workflow(
     selected_runtime=None,
     profile_id=None,
     profile_name=None,
+    destination_id=None,
+    forwarder=None,
 ):
     runtime = request.app.state.backend_runtime
     effective_model = model
@@ -108,6 +137,16 @@ def _start_microphone_workflow(
         silence_threshold=silence_threshold,
         model=effective_model,
         runtime=effective_runtime,
+        destination_id=destination_id,
+        delivery={
+            "status": "pending" if destination_id is not None else "disabled",
+            "destination_id": destination_id,
+            "event_id": workflow_id,
+            "attempts": 0,
+            "http_status": None,
+            "last_attempt_at": None,
+            "error_code": None,
+        },
     )
     try:
         runtime.add_run(record)
@@ -122,6 +161,10 @@ def _start_microphone_workflow(
         start_options = {"execution_mode": execution_mode, "model": effective_model}
         if selected_runtime is not None:
             start_options["runtime"] = selected_runtime
+        if _accepts_keyword_argument(
+            runtime.workflow_service.start_microphone, "forwarder"
+        ):
+            start_options["forwarder"] = forwarder
         workflow = runtime.workflow_service.start_microphone(
             device, keywords, flow_config, **start_options
         )
@@ -195,6 +238,29 @@ def _pump_microphone(runtime, record, workflow):
                 with record.lock:
                     if record.first_queued_at is None:
                         record.first_queued_at = event.get("first_queued_at")
+            if event.get("type") == "forwarded":
+                receipt = event.get("receipt")
+                with record.lock:
+                    record.delivery.update(
+                        {
+                            "status": "delivered",
+                            "attempts": getattr(receipt, "attempts", 1),
+                            "http_status": getattr(receipt, "status_code", None),
+                            "last_attempt_at": _utc_now(),
+                            "error_code": None,
+                        }
+                    )
+            if event.get("type") == "forwarding_error":
+                with record.lock:
+                    record.delivery.update(
+                        {
+                            "status": "failed",
+                            "attempts": event.get("attempts") or 1,
+                            "http_status": event.get("status_code"),
+                            "last_attempt_at": _utc_now(),
+                            "error_code": event.get("error_code", "delivery_failed"),
+                        }
+                    )
             if event.get("type") == "completed":
                 saw_completion = True
                 with record.lock:
@@ -220,6 +286,10 @@ def _pump_microphone(runtime, record, workflow):
             )
         status = record.status
         error = record.error
+        if record.destination_id is not None and record.delivery["status"] == "pending":
+            record.delivery.update(
+                {"status": "failed", "error_code": "not_attempted"}
+            )
     if status == "failed" and error and not saw_error:
         runtime.append_event(record, {"type": "workflow_error", "error": error})
     if status == "failed" and not saw_completion:

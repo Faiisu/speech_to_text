@@ -48,7 +48,7 @@ Start a microphone workflow using the selected profile. The route reads the prof
 
 Accept `multipart/form-data` with a `.wav` upload in `file` and one or more repeated `keywords` fields. Keywords must be unique and non-empty; matching uses the Thai configuration and literal substring rules in the [matching workflow contract](../transcript-matching-forwarding/spec.md#matching-contract). Feature 01 accepts PCM signed 16-bit mono or stereo WAV at 8–48 kHz.
 
-The route validates the request, copies the upload to a temporary WAV file in 1 MiB chunks, and closes the upload before queueing the independent run. The worker passes the temporary path to `transcribe_clip_and_forward` and deletes it on completion or failure. The workflow uses `forwarder=None` and `language="th"`. The route returns HTTP 202 without waiting for transcription:
+The route validates the request, copies the upload to a temporary WAV file in 1 MiB chunks, and closes the upload before queueing the independent run. The worker passes the temporary path to `transcribe_clip_and_forward` and deletes it on completion or failure. The workflow uses `language="th"` and an optional forwarder selected by the multipart `destination_id` field; omission retains `forwarder=None`. The route returns HTTP 202 without waiting for transcription:
 
 ```json
 {"workflow_id":"<id>","status":"queued","first_queued_at":"<UTC timestamp>","last_response_at":null}
@@ -112,13 +112,36 @@ Return `{ "stress_test_id": ..., "events": [...], "next_cursor": n }` using the 
 
 ## Validation and errors
 
-Invalid input, duplicate or empty keywords, unsupported workflow configuration, and unselectable microphone names return HTTP 422. Missing microphone dependencies, model runtime failures, a full run registry, or reaching the per-process limit of 16 active microphone workflows return HTTP 503. Clip audio decode errors occur in the queued worker and appear as a failed status and `workflow_error` event because the API has already returned 202. No outbound forwarding is configured by this API; workflows do not emit fake `forwarded` events when `forwarder=None`.
+Invalid input, duplicate or empty keywords, unsupported workflow configuration, and unselectable microphone names return HTTP 422. Missing microphone dependencies, model runtime failures, a full run registry, or reaching the per-process limit of 16 active microphone workflows return HTTP 503. Clip audio decode errors occur in the queued worker and appear as a failed status and `workflow_error` event because the API has already returned 202. Outbound forwarding is selected by optional `destination_id`; workflows do not emit fake `forwarded` events when the destination is omitted.
 
 ## Lifecycle and limits
 
 In `shared` mode, the workflow service caches a `ModelHandle` per effective model configuration while at least one active clip operation or microphone workflow uses it. Concurrent clips and microphone workflows using the same configuration share that handle. Each operation or workflow holds a thread-safe lease from before model use until the clip returns or the microphone workflow reaches its terminal completion, including inference already in flight. When the last lease is released, the service removes the handle from the cache and closes it; a later operation loads a fresh handle. Distinct effective configurations have independent handles and leases. In `per_workflow_process` mode, each microphone workflow owns a spawned process that loads and closes its selected model in the capture process cleanup path on normal completion, stop, or failure; the application process owns each process group and relays its events. A profile cannot own more than one active workflow within one backend runtime. Backend routes call only this workflow service; they do not call Feature 01 directly. A thread-safe in-process backend registry isolates each workflow's lifecycle and bounded event buffer, and serializes profile starts. Terminal runs are retained until capacity pressure evicts them; active runs are retained. At most 16 microphone workflows may be active per backend process across both execution modes. Registry state is process-local and non-durable: restart loses runs and events, and multiple server worker processes have independent registries and model handles. Deployments requiring cross-process monitoring or durable history need shared state outside this feature's scope.
 
 The SQLite profile store is separate from the in-memory run registry. Profiles survive restart and are local to the configured database file; each server process may open the same SQLite file. SQLite stores profile definitions only, not workflow status, transcripts, matches, or events. Starting from a profile copies its definition into the run, so the run remains independently monitorable through the existing status, events, and stop endpoints.
+
+## Output destination selection
+
+Implemented extension dated 2026-10-14. The [workflow destination contract](../transcript-matching-forwarding/spec.md#current-destination-interface) owns configuration, payloads, egress policy, secrets, TLS, retries, and the remaining later-stage scope.
+
+Profile definitions and direct microphone requests accept nullable `destination_id` (default null); clip multipart requests accept an optional field of the same name. Profiles persist the selected ID. Runs bind a start-time destination configuration/credential snapshot and use the same terminal forwarding behavior for shared and process-isolated microphones. Editing a destination or profile affects future runs. Invalid destination selection returns HTTP 422, and unavailable approved secret/TLS resources return HTTP 503 before audio starts. No endpoint accepts secret values or arbitrary filesystem paths.
+
+Status responses include `destination_id` and `delivery`, with `status` (`disabled|pending|delivered|failed`), destination/event IDs, attempts, nullable `http_status`, nullable UTC `last_attempt_at`, and nullable sanitized `error_code`. Existing `forwarded`/`forwarding_error` events report delivery outcomes. Transcription success and delivery failure remain distinguishable. Omitted destination selection preserves no-forwarder behavior; no network request or synthetic forwarded event is produced.
+
+### Destination endpoints
+
+| Endpoint under `/api/v1` | Behavior |
+| --- | --- |
+| `GET /destinations` | Public listing `{ "destinations": [...] }` with ID, name, endpoint origin, method, auth type, payload format, and UTC created/updated timestamps. Excludes the full configuration and secret references. |
+| `POST /destinations` | Local operator creates a destination; HTTP 201 returns summary fields plus `config`. |
+| `GET /destinations/{destination_id}` | Local operator reads summary plus editable configuration. |
+| `PUT /destinations/{destination_id}` | Local operator replaces name/configuration, preserving ID and creation time. |
+| `DELETE /destinations/{destination_id}` | Local operator deletes an unreferenced entry; HTTP 204. A profile reference returns HTTP 409. Active runs keep their already bound sender. |
+| `POST /destinations/{destination_id}/test` | Local operator sends a real synthetic terminal JSON record; returns `status`, `event_id`, `attempts`, `http_status`, and a sanitized `error_code` on failure. HTTP 2xx, including 202/204, counts as accepted delivery. This synchronous route submits delivery to the backend workflow executor and waits in FastAPI's worker pool. |
+
+Create/replace bodies contain `name` and the workflow destination fields except `destination_id`, which the backend generates. Responses place editable settings under `config`. Unknown/invalid configuration fields return HTTP 422. Store failures return a safe HTTP 503. Destination CRUD uses the same SQLite file as profiles; existing databases gain a nullable profile `destination_id` and a destination definitions table without deleting existing records. Saved definitions contain secret/resource reference names only, never resolved credentials.
+
+Operator access requires an actual loopback client and a local Host on `SPEECH_TO_TEXT_API_PORT` (default `8000`) or the approved frontend Origin port. Local GET requests without Origin also accept the default frontend port `5173`. Mutations and synthetic tests require an Origin in `SPEECH_TO_TEXT_OPERATOR_ORIGINS`, defaulting to `http://127.0.0.1:5173,http://localhost:5173`. Browser-style local GET detail requests may omit Origin; supplied Origins are still checked. Forwarded headers cannot grant access. The frontend development proxy uses `changeOrigin: true` so the backend receives its own Host. Unapproved operator requests return HTTP 403. Remote callers may list safe summaries and select saved IDs; they cannot manage destination definitions.
 
 ## Non-goals
 

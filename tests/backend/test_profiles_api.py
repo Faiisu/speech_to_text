@@ -191,6 +191,21 @@ def test_profiles_can_be_created_listed_replaced_and_deleted(api):
     assert client.get("/api/v1/profiles").json() == {"profiles": []}
 
 
+def test_unknown_destination_is_rejected_before_profile_or_microphone_start(api):
+    client, service = api
+    created = client.post(
+        "/api/v1/profiles",
+        json=profile_body(destination_id="missing-destination"),
+    )
+    assert created.status_code == 422
+    started = client.post(
+        "/api/v1/transcriptions/microphones",
+        json={"keywords": ["สวัสดี"], "destination_id": "missing-destination"},
+    )
+    assert started.status_code == 422
+    assert service.microphone_start_options == []
+
+
 def test_repeated_profile_run_start_returns_the_existing_active_run(api):
     client, service = api
     profile = client.post(

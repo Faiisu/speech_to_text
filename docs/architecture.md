@@ -2,13 +2,13 @@
 
 # Architecture
 
-The current system consists of a React frontend, a FastAPI backend API, and callable feature and workflow modules. The frontend manages saved microphone profiles, monitors workflow runs, and operates the stress-test capacity matrix through the backend API. Feature contracts are maintained in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md), [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md), and [backend transcription API specification](../.scratch/backend-transcription-api/spec.md).
+The current system consists of a React frontend, a FastAPI backend API, and callable feature and workflow modules. The frontend manages saved microphone profiles and output destinations, monitors workflow runs, and operates the stress-test capacity matrix through the backend API. Feature contracts are maintained in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md), [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md), and [backend transcription API specification](../.scratch/backend-transcription-api/spec.md).
 
 ## Backend boundary
 
 The application flow is `frontend → backend API → workflow → features`. The workflow returns results to the backend, which responds to or streams them to the frontend. A workflow can also send results to another backend or external system when its use case requires it. The backend owns a process-local run registry and bounded event buffers. Microphone workflows can either share one lazy model handle in the backend process or own a spawned input process that loads its own model.
 
-`backend/api/` owns inbound API transport: request validation, route dispatch, and mapping workflow results to API responses. `dependencies.py` owns the process-local workflow service, executor, and run registry. `profile_store.py` persists reusable microphone workflow profiles in SQLite; run status and events remain process-local and non-durable. The workflow service owns model configuration, lazy model loading, and close lifecycle; backend routes call only its public interface. Features own domain capabilities; workflows own use-case orchestration and output choices, including outbound delivery. The [project structure guide](project-structure.md) defines folder ownership.
+`backend/api/` owns inbound API transport: request validation, route dispatch, and mapping workflow results to API responses. `dependencies.py` owns the process-local workflow service, executor, and run registry. `profile_store.py` persists reusable microphone workflow profiles and output destination definitions in SQLite; run status and events remain process-local and non-durable. The workflow service owns model configuration, lazy model loading, and close lifecycle; backend routes call only its public interface. Features own domain capabilities; workflows own use-case orchestration and output choices, including outbound delivery. The [project structure guide](project-structure.md) defines folder ownership.
 
 ```mermaid
 flowchart LR
@@ -41,7 +41,7 @@ Microphone capture and clip decoding are normalized inside Feature 01. Inference
 
 ## Local RTF measurements
 
-Feature 01 creates one measurement for each chunk that reaches inference. Clip responses return the records, microphone sessions publish them as events, and process-group results include their measurements. The authoritative record fields and timing semantics are defined in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#per-chunk-performance-measurement). Measurements are not persisted; the application has no historical telemetry store, host sampler, or Grafana service. The backend's SQLite database stores reusable microphone profiles only; run details and events remain in memory.
+Feature 01 creates one measurement for each chunk that reaches inference. Clip responses return the records, microphone sessions publish them as events, and process-group results include their measurements. The authoritative record fields and timing semantics are defined in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#per-chunk-performance-measurement). Measurements are not persisted; the application has no historical telemetry store, host sampler, or Grafana service. The backend's SQLite database stores reusable microphone profiles and destination definitions; run details and events remain in memory.
 
 ## See also
 

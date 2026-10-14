@@ -87,7 +87,7 @@ def test_clip_publishes_per_chunk_rtf_with_completion_time_pid_and_no_silence_re
     handle = api.load_model({}, runtime_factory=RuntimeFactory(runtime))
     history = MeasurementCollector()
     timestamp = datetime(2026, 10, 9, 12, 30, tzinfo=timezone.utc)
-    clock_values = iter([1.0, 1.5])
+    clock_values = iter([1.0, 1.2, 1.7])
     try:
         result = api.transcribe_clip(wav_bytes([0] * 1600 + [10000] * 1600), handle,
             {"chunk_seconds": 0.1}, measurement_sink=history.record, source_id="clip-rtt-test",
@@ -102,8 +102,10 @@ def test_clip_publishes_per_chunk_rtf_with_completion_time_pid_and_no_silence_re
         assert record["completed_at"] == "2026-10-09T12:30:00+00:00"
         assert (record["source_id"], record["sequence"]) == ("clip-rtt-test", 1)
         assert record["audio_seconds"] == pytest.approx(0.1)
+        assert record["queue_wait_seconds"] == pytest.approx(0.2)
         assert record["inference_seconds"] == pytest.approx(0.5)
-        assert record["rtf"] == pytest.approx(5.0)
+        assert record["elapsed_seconds"] == pytest.approx(0.7)
+        assert record["rtf"] == pytest.approx(record["elapsed_seconds"] / record["audio_seconds"])
     finally:
         handle.close()
 

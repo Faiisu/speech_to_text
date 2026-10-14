@@ -118,6 +118,7 @@ def test_live_session_publishes_timestamped_pid_and_sequence_measurements(api):
     try:
         source.push(np.full(1600, 0.3))
         session.stop(timeout=3)
+        session_events = collect_until_completed(session)
         deadline = time.monotonic() + 1
         records = []
         while time.monotonic() < deadline:
@@ -130,8 +131,16 @@ def test_live_session_publishes_timestamped_pid_and_sequence_measurements(api):
         assert record["pid"] == __import__("os").getpid()
         assert (record["source_id"], record["sequence"]) == ("measurement-live", 0)
         assert record["audio_seconds"] == pytest.approx(0.1)
+        queued, = [event for event in session_events if event["type"] == "audio_queued"]
         assert record["inference_seconds"] >= 0
-        assert record["rtf"] == pytest.approx(record["inference_seconds"] / record["audio_seconds"])
+        assert record["queue_wait_seconds"] >= 0
+        assert record["elapsed_seconds"] == pytest.approx(
+            record["queue_wait_seconds"] + record["inference_seconds"]
+        )
+        assert record["rtf"] == pytest.approx(record["elapsed_seconds"] / record["audio_seconds"])
+        assert queued["source_id"] == "measurement-live"
+        event_record, = [event for event in session_events if event["type"] == "measurement"]
+        assert session_events.index(queued) < session_events.index(event_record)
         assert record["completed_at"].endswith("+00:00")
     finally:
         stop_and_close(handle, session)

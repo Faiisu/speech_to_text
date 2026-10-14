@@ -53,6 +53,7 @@ speech_to_text/frontend/src/
 └── features/
     ├── dashboard/
     ├── profiles/
+    ├── destinations/             # Saved HTTP/HTTPS receiver settings and synthetic delivery tests
     ├── runs/
     └── stress-tests/             # Capacity matrix controls, polling, and reports
 ```
@@ -63,11 +64,12 @@ The implemented backend module layout is:
 speech_to_text/backend/
 ├── app.py                      # FastAPI app factory and process lifecycle
 ├── dependencies.py             # Own workflow service, worker pool, and run registries
-├── profile_store.py            # Persist reusable microphone profiles in SQLite
+├── profile_store.py            # Persist microphone profiles and output destinations in SQLite
 └── api/
     ├── router.py               # Combine and mount inbound API routes
     ├── microphone_lifecycle.py # Shared microphone start/stop lifecycle helpers
     ├── routes/                  # Endpoint handlers grouped by resource or use case
+    │   ├── destinations.py      # Local operator configuration and synthetic delivery tests
     │   ├── microphones.py
     │   ├── models.py
     │   ├── profiles.py
@@ -79,6 +81,10 @@ speech_to_text/backend/
 ```
 
 Frontend code calls the backend API. Backend routes validate requests and call workflow functions. A workflow calls features, receives their results, and owns the use case's output choices: it returns results to the backend and can send them to another backend or system. The backend maps returned results to frontend responses or streams. Feature logic stays under `features/`; use-case orchestration and delivery behavior stay under `workflows/`.
+
+The transcribe-match-forward workflow owns destination configuration and validation in `destinations.py`, and outbound JSON/HTTP transport in `http_output.py`. The backend's destination routes manage stored definitions through the existing profile store and call the workflow's public sender for synthetic tests. Destination credentials remain deployment-managed references, not database secret values. The [workflow output specification](../.scratch/transcript-matching-forwarding/spec.md) owns their configuration contract.
+
+The canonical outgoing payload schema is packaged as `workflows/transcribe_match_forward/match_results_v1.schema.json`. Browser-only receiver fixtures belong under `tests/frontend_e2e/`, including `fake_receiver.py`; browser assertions remain in `frontend/e2e/`.
 
 ## Placement rules
 

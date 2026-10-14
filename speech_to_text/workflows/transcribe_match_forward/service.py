@@ -266,7 +266,9 @@ class TranscriptionService:
             for parameter in parameters
         )
 
-    def _start_shared_microphone(self, device, lease, matching, flow_config):
+    def _start_shared_microphone(
+        self, device, lease, matching, flow_config, forwarder=None
+    ):
         holder = {"workflow": None}
 
         def finished():
@@ -280,7 +282,7 @@ class TranscriptionService:
             workflow = start_microphone_and_forward(
                 device,
                 lease.handle,
-                None,
+                forwarder,
                 matching,
                 flow_config,
                 on_finished=finished,
@@ -289,7 +291,7 @@ class TranscriptionService:
             # Keep compatibility with injected workflow factories that predate
             # the completion callback. The watcher only owns lease release.
             workflow = start_microphone_and_forward(
-                device, lease.handle, None, matching, flow_config
+                device, lease.handle, forwarder, matching, flow_config
             )
             threading.Thread(
                 target=lambda: self._wait_and_release(workflow, finished),
@@ -325,16 +327,22 @@ class TranscriptionService:
         return self._matching_config(keywords).keywords
 
     def transcribe_clip(
-        self, clip, keywords, flow_config=None, *, measurement_callback=None
+        self,
+        clip,
+        keywords,
+        flow_config=None,
+        *,
+        measurement_callback=None,
+        forwarder=None,
     ):
-        """Transcribe and match one clip without configuring external forwarding."""
+        """Transcribe and match one clip, with optional configured output."""
         matching = self._matching_config(keywords)
         try:
             lease = self._acquire_model_config(self._effective_model_config())
             return transcribe_clip_and_forward(
                 clip,
                 lease.handle,
-                None,
+                forwarder,
                 matching,
                 flow_config,
                 measurement_callback=measurement_callback,
@@ -368,6 +376,7 @@ class TranscriptionService:
         execution_mode="shared",
         model=None,
         runtime=None,
+        forwarder=None,
     ):
         """Start one microphone workflow in shared or child-process mode."""
         matching = self._matching_config(keywords)
@@ -383,7 +392,7 @@ class TranscriptionService:
                     )
                     try:
                         return self._start_shared_microphone(
-                            device, lease, matching, flow_config
+                            device, lease, matching, flow_config, forwarder
                         )
                     except Exception:
                         lease.release()
@@ -417,7 +426,7 @@ class TranscriptionService:
                 try:
                     return forward_session(
                         group.sessions[0],
-                        None,
+                        forwarder,
                         matching,
                         on_finished=finish_group,
                         on_stop_error=abort_group,

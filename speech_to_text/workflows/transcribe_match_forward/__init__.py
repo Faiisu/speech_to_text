@@ -9,10 +9,21 @@ from .api import (
     transcribe_clip_and_forward,
 )
 from .http_output import (
+    EgressPolicy,
     ForwardingError,
     ForwardingReceipt,
     HttpForwarder,
     HttpForwarderConfig,
+)
+from .destinations import (
+    AuthConfig,
+    DestinationConfig,
+    DestinationConfigurationError,
+    DestinationRegistry,
+    DestinationUnavailableError,
+    build_forwarder,
+    destination_summary,
+    validate_destination_config,
 )
 from .service import (
     TranscriptionService,
@@ -23,6 +34,12 @@ from .service import (
 )
 
 __all__ = [
+    "AuthConfig",
+    "DestinationConfig",
+    "DestinationConfigurationError",
+    "DestinationRegistry",
+    "DestinationUnavailableError",
+    "EgressPolicy",
     "ForwardingError",
     "ForwardingReceipt",
     "HttpForwarder",
@@ -34,8 +51,11 @@ __all__ = [
     "WorkflowInputError",
     "WorkflowServiceError",
     "WorkflowUnavailableError",
+    "build_forwarder",
+    "destination_summary",
     "forward_session",
     "list_available_microphones",
     "start_microphone_and_forward",
     "transcribe_clip_and_forward",
+    "validate_destination_config",
 ]

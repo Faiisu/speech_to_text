@@ -60,6 +60,16 @@ Open the Vite URL printed in the terminal (normally `http://localhost:5173`). Th
 
 To build frontend assets, run `npm run build` from `speech_to_text/frontend/`. The Vite development server is the local preview path. For production hosting on the UBX-330M, follow the [deployment guide](deployment.md).
 
+### Start both services on macOS
+
+Install `uv`, Node.js, and npm, then run this from the repository root:
+
+```bash
+./scripts/run_macos.sh
+```
+
+The script installs the backend, microphone, and CTranslate2 extras, installs frontend dependencies when needed, and starts both development servers. Open `http://127.0.0.1:5173`; press Ctrl-C in the terminal to stop them. The default model runtime is CTranslate2 with int8 precision. Model files must still be available locally; see [Configuration](configuration.md).
+
 ## Call Feature 01
 
 ```python

@@ -336,14 +336,28 @@ def test_service_defaults_to_shared_microphone_mode(monkeypatch):
         [{"type": "completed", "source_id": "shared-1", "status": "stopped"}],
         source_id="shared-1",
     )
+    class ModelHandle:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    handle = ModelHandle()
     service_instance = service.TranscriptionService(model_config={"model": "turbo"})
-    monkeypatch.setattr(service_instance, "_get_model", lambda: "shared-model")
+
+    monkeypatch.setattr(service, "load_model", lambda _config: handle)
+
+    def start(device, model, forwarder, matching, flow_config, *, on_finished=None):
+        calls.append((device, model, forwarder, flow_config))
+        return workflow.forward_session(
+            session, forwarder, matching, on_finished=on_finished
+        )
+
     monkeypatch.setattr(
         service,
         "start_microphone_and_forward",
-        lambda device, model, forwarder, matching, flow_config: calls.append(
-            (device, model, forwarder, flow_config)
-        ) or workflow.forward_session(session, forwarder, matching),
+        start,
     )
 
     result = service_instance.start_microphone(
@@ -351,7 +365,9 @@ def test_service_defaults_to_shared_microphone_mode(monkeypatch):
     )
     result.wait(timeout=1)
 
-    assert calls == [("USB mic", "shared-model", None, {"source_id": "shared-1"})]
+    assert calls == [("USB mic", handle, None, {"source_id": "shared-1"})]
+    assert handle.close_calls == 1
+    assert service_instance._model_handles == {}
 
 
 @pytest.mark.parametrize("execution_mode", ["processes", []])

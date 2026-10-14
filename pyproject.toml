@@ -29,3 +29,6 @@ test = [
 
 [tool.setuptools.packages.find]
 include = ["speech_to_text*"]
+
+[tool.setuptools.package-data]
+"speech_to_text.workflows.transcribe_match_forward" = ["*.schema.json"]

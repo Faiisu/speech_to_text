@@ -1,4 +1,4 @@
-import type { Microphone, ModelChoice, Profile, ProfileDefinition, Transcription, WorkflowEvent } from './types'
+import type { Destination, DestinationDefinition, DestinationSummary, Microphone, ModelChoice, Profile, ProfileDefinition, Transcription, WorkflowEvent } from './types'
 
 const API_ROOT = '/api/v1'
 
@@ -40,6 +40,12 @@ export const api = {
   createProfile: (definition: ProfileDefinition) => request<Profile>('/profiles', { method: 'POST', body: JSON.stringify(definition) }),
   updateProfile: (id: string, definition: ProfileDefinition) => request<Profile>(`/profiles/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(definition) }),
   deleteProfile: (id: string) => request<void>(`/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  destinations: async () => (await request<{ destinations: DestinationSummary[] }>('/destinations')).destinations,
+  destination: (id: string) => request<Destination>(`/destinations/${encodeURIComponent(id)}`),
+  createDestination: (definition: DestinationDefinition) => request<Destination>('/destinations', { method: 'POST', body: JSON.stringify(definition) }),
+  updateDestination: (id: string, definition: DestinationDefinition) => request<Destination>(`/destinations/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(definition) }),
+  deleteDestination: (id: string) => request<void>(`/destinations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  testDestination: (id: string) => request<{ status: 'delivered' | 'failed'; event_id: string; attempts: number; http_status: number | null; error_code?: string }>(`/destinations/${encodeURIComponent(id)}/test`, { method: 'POST' }),
   startProfile: (id: string) => request<{ workflow_id: string; status: string }>(`/profiles/${encodeURIComponent(id)}/runs`, { method: 'POST' }),
   transcriptions: async () => (await request<{ transcriptions: Transcription[] }>('/transcriptions')).transcriptions,
   transcription: (id: string) => request<Transcription>(`/transcriptions/${encodeURIComponent(id)}`),

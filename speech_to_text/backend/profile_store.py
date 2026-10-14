@@ -26,6 +26,10 @@ class ProfileNameConflictError(ValueError):
     """Raised when a new or updated profile name matches another profile."""
 
 
+class UnknownDestinationError(ValueError):
+    """Raised when a profile selects a destination that is no longer saved."""
+
+
 def _normalized_name(name: str) -> str:
     return unicodedata.normalize("NFC", name.strip()).casefold()
 
@@ -52,7 +56,11 @@ class SQLiteProfileStore:
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA foreign_keys = ON")
             if str(self.database_path) != ":memory:":
-                connection.execute("PRAGMA journal_mode = WAL")
+                try:
+                    connection.execute("PRAGMA journal_mode = WAL")
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc).lower():
+                        raise
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS workflow_profiles (
@@ -69,6 +77,15 @@ class SQLiteProfileStore:
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS workflow_destinations (
+                    destination_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
             )
             columns = {
                 row["name"]
@@ -103,6 +120,16 @@ class SQLiteProfileStore:
                 connection.execute(
                     "UPDATE workflow_profiles SET runtime = ?", (legacy_runtime,)
                 )
+            if "destination_id" not in columns:
+                try:
+                    connection.execute(
+                        "ALTER TABLE workflow_profiles ADD COLUMN destination_id TEXT"
+                    )
+                except sqlite3.OperationalError as exc:
+                    # A second process may finish this additive migration after our
+                    # PRAGMA read and before this ALTER runs.
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             connection.commit()
             self._connection = connection
         return self._connection
@@ -120,6 +147,7 @@ class SQLiteProfileStore:
             "silence_threshold": row["silence_threshold"],
             "model": row["model"],
             "runtime": row["runtime"],
+            "destination_id": row["destination_id"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -146,12 +174,14 @@ class SQLiteProfileStore:
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 self._ensure_name_available(connection, profile["name"])
+                self._ensure_destination_exists(connection, profile.get("destination_id"))
                 connection.execute(
                     """
                     INSERT INTO workflow_profiles
                         (profile_id, name, device, execution_mode, keywords_json,
-                         silence_threshold, model, runtime, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         silence_threshold, model, runtime, destination_id,
+                         created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         profile["profile_id"],
@@ -162,6 +192,7 @@ class SQLiteProfileStore:
                         profile["silence_threshold"],
                         profile["model"],
                         profile["runtime"],
+                        profile.get("destination_id"),
                         now,
                         now,
                     ),
@@ -189,11 +220,13 @@ class SQLiteProfileStore:
                     connection.commit()
                     return None
                 self._ensure_name_available(connection, profile["name"], profile_id)
+                self._ensure_destination_exists(connection, profile.get("destination_id"))
                 connection.execute(
                     """
                     UPDATE workflow_profiles
                     SET name = ?, device = ?, execution_mode = ?, keywords_json = ?,
-                        silence_threshold = ?, model = ?, runtime = ?, updated_at = ?
+                        silence_threshold = ?, model = ?, runtime = ?, destination_id = ?,
+                        updated_at = ?
                     WHERE profile_id = ?
                     """,
                     (
@@ -204,6 +237,7 @@ class SQLiteProfileStore:
                         profile["silence_threshold"],
                         profile["model"],
                         profile["runtime"],
+                        profile.get("destination_id"),
                         _utc_now(),
                         profile_id,
                     ),
@@ -233,6 +267,14 @@ class SQLiteProfileStore:
         ):
             raise ProfileNameConflictError("A profile with this name already exists.")
 
+    @staticmethod
+    def _ensure_destination_exists(connection, destination_id):
+        if destination_id is not None and connection.execute(
+            "SELECT 1 FROM workflow_destinations WHERE destination_id = ?",
+            (destination_id,),
+        ).fetchone() is None:
+            raise UnknownDestinationError("The selected destination no longer exists.")
+
     def delete_profile(self, profile_id: str) -> bool:
         with self._lock:
             cursor = self._db().execute(
@@ -240,6 +282,85 @@ class SQLiteProfileStore:
             )
             self._db().commit()
             return cursor.rowcount > 0
+
+    @staticmethod
+    def _serialize_destination(row):
+        if row is None:
+            return None
+        return {
+            "destination_id": row["destination_id"],
+            "name": row["name"],
+            "config": json.loads(row["config_json"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def list_destinations(self):
+        with self._lock:
+            rows = self._db().execute(
+                "SELECT * FROM workflow_destinations ORDER BY name, destination_id"
+            ).fetchall()
+            return [self._serialize_destination(row) for row in rows]
+
+    def get_destination(self, destination_id: str):
+        with self._lock:
+            row = self._db().execute(
+                "SELECT * FROM workflow_destinations WHERE destination_id = ?",
+                (destination_id,),
+            ).fetchone()
+            return self._serialize_destination(row)
+
+    def save_destination(self, destination_id: str, name: str, config: dict):
+        now = _utc_now()
+        with self._lock:
+            connection = self._db()
+            previous = connection.execute(
+                "SELECT created_at FROM workflow_destinations WHERE destination_id = ?",
+                (destination_id,),
+            ).fetchone()
+            created_at = previous["created_at"] if previous else now
+            connection.execute(
+                """INSERT INTO workflow_destinations
+                   (destination_id, name, config_json, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(destination_id) DO UPDATE SET
+                     name = excluded.name, config_json = excluded.config_json,
+                     updated_at = excluded.updated_at""",
+                (
+                    destination_id,
+                    name,
+                    json.dumps(config, ensure_ascii=False),
+                    created_at,
+                    now,
+                ),
+            )
+            connection.commit()
+            return self.get_destination(destination_id)
+
+    def destination_is_referenced(self, destination_id: str) -> bool:
+        with self._lock:
+            return self._db().execute(
+                "SELECT 1 FROM workflow_profiles WHERE destination_id = ? LIMIT 1",
+                (destination_id,),
+            ).fetchone() is not None
+
+    def delete_destination(self, destination_id: str) -> bool:
+        with self._lock:
+            connection = self._db()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                if self.destination_is_referenced(destination_id):
+                    connection.rollback()
+                    return False
+                cursor = connection.execute(
+                    "DELETE FROM workflow_destinations WHERE destination_id = ?",
+                    (destination_id,),
+                )
+                connection.commit()
+                return cursor.rowcount > 0
+            except Exception:
+                connection.rollback()
+                raise
 
     def close(self):
         with self._lock:

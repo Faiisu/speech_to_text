@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "match_results_v1.schema.json",
+  "title": "Transcript match results v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_type",
+    "event_id",
+    "source_id",
+    "language",
+    "transcript",
+    "matches",
+    "status",
+    "completed_at"
+  ],
+  "properties": {
+    "event_type": {"const": "transcription.match_results"},
+    "event_id": {"type": "string", "minLength": 1},
+    "source_id": {"type": "string", "minLength": 1},
+    "language": {"type": "string", "minLength": 1},
+    "transcript": {"type": "string"},
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["keyword", "count"],
+        "properties": {
+          "keyword": {"type": "string", "minLength": 1},
+          "count": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "status": {"enum": ["completed", "stopped", "failed"]},
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$"
+    }
+  }
+}

@@ -55,7 +55,7 @@ An installer success means the service health check passed, `/healthz` responded
 
 ## Go-live gate
 
-The current backend does not connect its HTTP API workflows to `HttpForwarder`. Complete that integration and verify delivery before opening the service for normal LAN use. Once connected, configure the destination and any outbound credential through the deployment environment, not in the image. Forwarding retries are bounded in memory and are not retained across restarts.
+The backend connects HTTP workflows to the selected saved destination. Before normal LAN use, configure a destination locally, select it in a profile, and verify both synthetic delivery and a terminal workflow result against the actual receiver. Approve required LAN CIDRs and credential/TLS resource references through the deployment environment, not in the image; see [output configuration](configuration.md#transcript-matching-and-forwarding). Forwarding retries remain bounded in memory and are not retained across restarts. Destination administration is restricted to the local operator API; remote clients can select saved IDs.
 
 ## See also
 

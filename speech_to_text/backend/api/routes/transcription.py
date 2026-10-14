@@ -22,6 +22,10 @@ from speech_to_text.backend.dependencies import (
     events_after,
     run_snapshot,
 )
+from speech_to_text.workflows.transcribe_match_forward.destinations import (
+    DestinationConfigurationError,
+    DestinationUnavailableError,
+)
 
 router = APIRouter(prefix="/transcriptions")
 
@@ -42,7 +46,7 @@ def _accepts_keyword_argument(callable_, name):
     )
 
 
-def _clip_worker(runtime, record, clip):
+def _clip_worker(runtime, record, clip, forwarder=None):
     with record.lock:
         record.status = "running"
     runtime.append_event(record, {"type": "started", "workflow_id": record.workflow_id})
@@ -56,6 +60,8 @@ def _clip_worker(runtime, record, clip):
         transcription_options = {}
         if _accepts_keyword_argument(transcribe_clip, "measurement_callback"):
             transcription_options["measurement_callback"] = record_measurement
+        if _accepts_keyword_argument(transcribe_clip, "forwarder"):
+            transcription_options["forwarder"] = forwarder
         result = transcribe_clip(
             clip,
             record.keywords,
@@ -71,6 +77,27 @@ def _clip_worker(runtime, record, clip):
             record.latest_rtf = getattr(result, "latest_rtf", record.latest_rtf)
             record.last_response_at = _utc_now()
             record.status = "completed"
+            result_receipt = getattr(result, "forwarding_receipt", None)
+            result_error = getattr(result, "forwarding_error", None)
+            if record.destination_id is not None:
+                delivered = result_receipt is not None and result_error is None
+                record.delivery.update(
+                    {
+                        "status": "delivered" if delivered else "failed",
+                        "attempts": getattr(result_receipt or result_error, "attempts", 0),
+                        "http_status": getattr(
+                            result_receipt or result_error, "status_code", None
+                        ),
+                        "last_attempt_at": _utc_now()
+                        if result_receipt is not None or result_error is not None
+                        else None,
+                        "error_code": (
+                            getattr(result_error, "code", "delivery_failed")
+                            if result_error is not None
+                            else None if delivered else "no_receipt"
+                        ),
+                    }
+                )
         runtime.append_event(
             record,
             {
@@ -88,6 +115,26 @@ def _clip_worker(runtime, record, clip):
                 "matches": matches,
             },
         )
+        if record.destination_id is not None:
+            with record.lock:
+                delivery = dict(record.delivery)
+            runtime.append_event(
+                record,
+                {
+                    "type": "forwarded"
+                    if delivery["status"] == "delivered"
+                    else "forwarding_error",
+                    "source_id": record.workflow_id,
+                    "destination_id": record.destination_id,
+                    "receipt": result_receipt,
+                    **delivery,
+                    **(
+                        {"error": "delivery failed"}
+                        if delivery["status"] == "failed"
+                        else {}
+                    ),
+                },
+            )
         runtime.append_event(
             record,
             {
@@ -101,6 +148,10 @@ def _clip_worker(runtime, record, clip):
             record.status = "failed"
             record.error = str(exc)
             record.last_response_at = _utc_now()
+            if record.destination_id is not None and record.delivery["status"] == "pending":
+                record.delivery.update(
+                    {"status": "failed", "error_code": "transcription_failed"}
+                )
         runtime.append_event(
             record,
             {
@@ -132,12 +183,14 @@ async def transcribe_clip(
     request: Request,
     file: UploadFile = File(...),
     keywords: list[str] = Form(...),
+    destination_id: str | None = Form(default=None),
 ):
     clip_path = None
+    runtime = request.app.state.backend_runtime
+    forwarder = _resolve_forwarder(runtime, destination_id)
     try:
         if not file.filename or not file.filename.lower().endswith(".wav"):
             raise HTTPException(status_code=422, detail="file must be a WAV file")
-        runtime = request.app.state.backend_runtime
         validated_keywords = validate_keywords(runtime.workflow_service, keywords)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as clip_file:
             clip_path = clip_file.name
@@ -155,7 +208,22 @@ async def transcribe_clip(
         Path(clip_path).unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail="file must not be empty")
     workflow_id = uuid.uuid4().hex
-    record = RunRecord(workflow_id, "clip", "queued", validated_keywords)
+    record = RunRecord(
+        workflow_id,
+        "clip",
+        "queued",
+        validated_keywords,
+        destination_id=destination_id,
+        delivery={
+            "status": "pending" if destination_id is not None else "disabled",
+            "destination_id": destination_id,
+            "event_id": workflow_id,
+            "attempts": 0,
+            "http_status": None,
+            "last_attempt_at": None,
+            "error_code": None,
+        },
+    )
     try:
         runtime.add_run(record)
     except RunRegistryFullError as exc:
@@ -164,7 +232,7 @@ async def transcribe_clip(
     runtime.append_event(record, {"type": "queued", "workflow_id": workflow_id})
     try:
         with record.lock:
-            runtime.executor.submit(_clip_worker, runtime, record, clip_path)
+            runtime.executor.submit(_clip_worker, runtime, record, clip_path, forwarder)
             record.first_queued_at = _utc_now()
     except Exception:
         runtime.remove_run(workflow_id)
@@ -188,12 +256,28 @@ def start_microphone(request: Request, body: MicrophoneTranscriptionRequest):
             status_code=422,
             detail="device must be an exact non-empty microphone name or omitted",
         )
+    forwarder = _resolve_forwarder(runtime, body.destination_id)
     return start_microphone_workflow(
         request,
         keywords=keywords,
         device=device,
         execution_mode=body.execution_mode,
+        destination_id=body.destination_id,
+        forwarder=forwarder,
     )
+
+
+def _resolve_forwarder(runtime, destination_id):
+    if destination_id is None:
+        return None
+    if runtime.destination_registry.get_config(destination_id) is None:
+        raise HTTPException(status_code=422, detail="unknown destination_id")
+    try:
+        return runtime.destination_registry.build_forwarder(destination_id)
+    except DestinationConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except DestinationUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("")

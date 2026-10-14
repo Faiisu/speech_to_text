@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+import os
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -12,6 +13,10 @@ from datetime import datetime, timezone
 from speech_to_text.backend.profile_store import SQLiteProfileStore
 from speech_to_text.workflows.file_replay_stress import run_file_replay_stress
 from speech_to_text.workflows.transcribe_match_forward import TranscriptionService
+from speech_to_text.workflows.transcribe_match_forward.destinations import (
+    DestinationConfig,
+    DestinationRegistry,
+)
 
 
 class RunRegistryFullError(RuntimeError):
@@ -50,6 +55,8 @@ class RunRecord:
     silence_threshold: float | None = None
     model: str | None = None
     runtime: str | None = None
+    destination_id: str | None = None
+    delivery: dict = field(default_factory=dict)
     events: deque = field(default_factory=deque)
     next_cursor: int = 1
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -84,6 +91,7 @@ class BackendRuntime:
         workflow_service=None,
         profile_store=None,
         stress_workflow=None,
+        destination_registry=None,
     ):
         if event_limit < 1 or max_runs < 1 or max_microphone_runs < 1:
             raise ValueError("event_limit and run limits must be positive integers")
@@ -100,6 +108,7 @@ class BackendRuntime:
         self.profile_store = (
             SQLiteProfileStore() if profile_store is None else profile_store
         )
+        self.destination_registry = destination_registry or self._load_destination_registry()
         self.stress_workflow = (
             run_file_replay_stress if stress_workflow is None else stress_workflow
         )
@@ -108,6 +117,38 @@ class BackendRuntime:
         self.executor = ThreadPoolExecutor(
             max_workers=worker_count, thread_name_prefix="speech-api"
         )
+
+    @staticmethod
+    def _csv_environment(name):
+        return tuple(
+            item.strip()
+            for item in os.environ.get(name, "").split(",")
+            if item.strip()
+        )
+
+    def _load_destination_registry(self):
+        configs = []
+        listing = getattr(self.profile_store, "list_destinations", None)
+        if callable(listing):
+            for item in listing():
+                configs.append(
+                    DestinationConfig.from_mapping(
+                        {**item["config"], "destination_id": item["destination_id"]}
+                    )
+                )
+        return DestinationRegistry(
+            configs,
+            allowed_origins=self._csv_environment(
+                "SPEECH_TO_TEXT_DESTINATION_ALLOWED_ORIGINS"
+            ),
+            allowed_networks=self._csv_environment(
+                "SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS"
+            ),
+        )
+
+    def reload_destination_registry(self):
+        self.destination_registry = self._load_destination_registry()
+        return self.destination_registry
 
     def add_run(self, record):
         with self.registry_lock:
@@ -273,6 +314,8 @@ def run_snapshot(record):
             "silence_threshold": record.silence_threshold,
             "model": record.model,
             "runtime": record.runtime,
+            "destination_id": record.destination_id,
+            "delivery": dict(record.delivery),
             "transcript": record.transcript,
             "matches": record.matches,
             "latest_rtf": record.latest_rtf,

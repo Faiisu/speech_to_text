@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../../shared/api'
-import type { Microphone, ModelChoice, Profile, ProfileDefinition, RuntimeChoice } from '../../shared/types'
+import type { DestinationSummary, Microphone, ModelChoice, Profile, ProfileDefinition, RuntimeChoice } from '../../shared/types'
 import { ApiError, Loading } from '../../shared/States'
 
 export default function ProfileEditor() {
@@ -14,6 +14,9 @@ export default function ProfileEditor() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [devices, setDevices] = useState<Microphone[]>([])
   const [models, setModels] = useState<ModelChoice[]>([])
+  const [destinations, setDestinations] = useState<DestinationSummary[]>([])
+  const [destinationId, setDestinationId] = useState('')
+  const [destinationError, setDestinationError] = useState('')
   const [name, setName] = useState('')
   const [device, setDevice] = useState('')
   const [mode, setMode] = useState<ProfileDefinition['execution_mode']>('shared')
@@ -28,12 +31,15 @@ export default function ProfileEditor() {
   const load = useCallback(async () => {
     setLoadError('')
     const sourceProfile = editing ? api.profile(profileId!) : duplicating ? api.profile(duplicateSourceId!) : Promise.resolve(null)
-    const outcomes = await Promise.allSettled([api.microphones(), sourceProfile, api.models()])
+    const outcomes = await Promise.allSettled([api.microphones(), sourceProfile, api.models(), api.destinations()])
     const deviceResult = outcomes[0]
     if (deviceResult.status === 'fulfilled') setDevices(deviceResult.value)
     else setLoadError(deviceResult.reason instanceof Error ? deviceResult.reason.message : 'Could not load audio input devices.')
     const profileResult = outcomes[1]
     const modelResult = outcomes[2]
+    const destinationsResult = outcomes[3]
+    if (destinationsResult.status === 'fulfilled') setDestinations(destinationsResult.value)
+    else setDestinationError('Saved receivers could not be loaded. You can still save without selecting one, or retry after checking the API connection.')
     if (modelResult.status === 'fulfilled') {
       setModels(modelResult.value.models)
       if (!editing && !duplicating) {
@@ -51,6 +57,7 @@ export default function ProfileEditor() {
       setRuntime(p.runtime)
       setKeywordText(p.keywords.join('\n'))
       setSilenceThreshold(String(p.silence_threshold))
+      setDestinationId(p.destination_id || '')
     } else if (profileResult.status === 'rejected') {
       setLoadError(duplicating
         ? `Could not load the profile to duplicate. Check that it still exists, then return to profiles and try again. ${profileResult.reason instanceof Error ? profileResult.reason.message : ''}`
@@ -68,7 +75,7 @@ export default function ProfileEditor() {
     if (new Set(keywords).size !== keywords.length) { setError('Keywords must be unique.'); return }
     const threshold = Number(silenceThreshold)
     if (!Number.isFinite(threshold) || threshold < 0 || threshold >= 1) { setError('Noise floor must be at least 0 and less than 1.'); return }
-    const body: ProfileDefinition = { name: name.trim(), device: device || null, execution_mode: mode, keywords, silence_threshold: threshold, model, runtime }
+    const body: ProfileDefinition = { name: name.trim(), device: device || null, execution_mode: mode, keywords, silence_threshold: threshold, model, runtime, destination_id: destinationId || null }
     setSaving(true)
     try { const saved = editing ? await api.updateProfile(profileId!, body) : await api.createProfile(body); navigate('/profiles', { state: { notice: `Saved profile “${saved.name}”.` } }) }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not save the profile.') }
@@ -92,6 +99,7 @@ export default function ProfileEditor() {
         <section className="form-section"><div className="form-section-title"><span className="section-symbol">05</span><div><h2>Transcription model</h2><p>Choose the model this profile loads for each workflow.</p></div></div><label className="field-label" htmlFor="profile-model">Model</label><select id="profile-model" value={model} onChange={e => { const nextModel = models.find(item => item.key === e.target.value); setModel(e.target.value); if (nextModel && !nextModel.runtimes.some(item => item.key === runtime && item.compatible)) { const preferred = nextModel.runtimes.find(item => item.key === runtime && item.compatible) || nextModel.runtimes.find(item => item.key === 'openvino-gpu' && item.compatible) || nextModel.runtimes.find(item => item.compatible); if (preferred) setRuntime(preferred.key) } }}>{models.map(m => <option key={m.key} value={m.key}>{m.display_name} ({m.key}){m.ready ? '' : m.installed ? ' · installed, runtime unavailable' : ' · not installed'}</option>)}{!models.some(m => m.key === model) && <option value={model}>{model}</option>}</select><small className="field-hint">Model downloads are not managed here.</small></section>
         <section className="form-section"><div className="form-section-title"><span className="section-symbol">06</span><div><h2>Model runtime</h2><p>Choose a runtime supported by the selected model.</p></div></div><label className="field-label" htmlFor="profile-runtime">Runtime</label><select id="profile-runtime" value={runtime} onChange={e => setRuntime(e.target.value as RuntimeChoice['key'])}>{runtimeChoices.map(option => <option key={option.key} value={option.key}>{option.key}{option.ready ? ' · ready' : ' · unavailable'}</option>)}{!runtimeChoices.some(option => option.key === runtime) && <option value={runtime}>{runtime} · unsupported for this model</option>}</select><small className="field-hint">{selectedRuntime?.ready ? 'This runtime and model are ready on the backend host.' : selectedRuntime?.reason || 'Runtime readiness is checked on the backend host.'}</small></section>
         <section className="form-section"><div className="form-section-title"><span className="section-symbol">07</span><div><h2>Execution mode</h2><p>Choose how the transcription model is managed.</p></div></div><div className="mode-options"><label className={`mode-option ${mode === 'shared' ? 'selected' : ''}`}><input type="radio" name="mode" value="shared" checked={mode === 'shared'} onChange={() => setMode('shared')} /><span className="mode-radio" /><span><b>Shared model</b><small>Starts faster; workflows share one model instance.</small></span><span className="mode-badge">RECOMMENDED</span></label><label className={`mode-option ${mode === 'per_workflow_process' ? 'selected' : ''}`}><input type="radio" name="mode" value="per_workflow_process" checked={mode === 'per_workflow_process'} onChange={() => setMode('per_workflow_process')} /><span className="mode-radio" /><span><b>Separate process</b><small>Each workflow loads its own model instance.</small></span></label></div></section>
+        <section className="form-section profile-output-section"><div className="form-section-title"><span className="section-symbol">08</span><div><h2>Output destination</h2><p>Optionally send completed transcript matches to one saved receiver.</p></div></div><label className="field-label" htmlFor="profile-destination">Destination</label><select id="profile-destination" value={destinationId} onChange={event => setDestinationId(event.target.value)}><option value="">No output destination</option>{destinationId && !destinations.some(destination => destination.destination_id === destinationId) && <option value={destinationId}>Saved destination unavailable · {destinationId.slice(0, 8)}</option>}{destinations.map(destination => <option key={destination.destination_id} value={destination.destination_id}>{destination.name} · {destination.method} · {destination.endpoint_origin}</option>)}</select>{destinationError ? <small className="field-hint">{destinationError} <Link to="/destinations">Manage destinations</Link></small> : <small className="field-hint">Forwarding happens once when the source completes. <Link to="/destinations">Manage destinations</Link></small>}{destinationId && !destinations.some(destination => destination.destination_id === destinationId) && <small className="field-hint profile-destination-warning">This profile points to a destination that is unavailable. Choose another destination or clear the selection before saving.</small>}</section>
         <div className="form-actions"><Link to="/profiles" className="button button-outline">Cancel</Link><button className="button button-dark" disabled={saving || Boolean(loadError) || (editing && !profile)}>{saving ? 'Saving…' : 'Save profile'} <span>↗</span></button></div>
       </div>
       <aside className="editor-aside"><div className="aside-wave"><div className="eyebrow">AUDIO NOTE</div><div className="mini-wave">{Array.from({ length: 24 }, (_, i) => <i key={i} style={{ height: `${14 + Math.abs(Math.sin(i * 1.7)) * 54}px` }} />)}</div></div><h3>Configure once.<br />Reuse anytime.</h3><p>Profiles are stored by the backend. Changes apply to workflows started after saving.</p><div className="aside-divider" /><small>Running workflows keep the keyword set they received at startup. Track them from the overview.</small></aside>

@@ -1,6 +1,7 @@
 """External runtime/audio doubles; no system chunking or scheduling is implemented here."""
 
 from collections import deque
+from datetime import datetime
 from io import BytesIO
 from queue import Empty
 from threading import Event
@@ -101,8 +102,11 @@ def collect_until_completed(session, *, timeout=3):
             raise AssertionError("Session did not emit its terminal completed event") from None
         assert isinstance(event, dict)
         assert isinstance(event["source_id"], str)
-        assert event["type"] in {"measurement", "transcript", "error", "completed"}
-        if event["type"] == "measurement":
+        assert event["type"] in {"audio_queued", "measurement", "transcript", "error", "completed"}
+        if event["type"] == "audio_queued":
+            assert isinstance(event.get("first_queued_at"), str)
+            datetime.fromisoformat(event["first_queued_at"].replace("Z", "+00:00"))
+        elif event["type"] == "measurement":
             assert {"completed_at", "pid", "sequence", "source_id", "audio_seconds",
                     "inference_seconds", "rtf", "status"} <= event.keys()
             assert event["status"] in {"completed", "failed"}

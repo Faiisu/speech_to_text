@@ -10,10 +10,17 @@ from speech_to_text.backend.api.microphone_lifecycle import (
     validate_keywords,
 )
 from speech_to_text.backend.api.schemas.transcription import MicrophoneProfileDefinition
-from speech_to_text.backend.profile_store import ProfileNameConflictError
+from speech_to_text.backend.profile_store import (
+    ProfileNameConflictError,
+    UnknownDestinationError,
+)
 from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowUnavailableError,
+)
+from speech_to_text.workflows.transcribe_match_forward.destinations import (
+    DestinationConfigurationError,
+    DestinationUnavailableError,
 )
 
 router = APIRouter(prefix="/profiles")
@@ -39,6 +46,10 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except WorkflowUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    destination_id = body.destination_id
+    if destination_id is not None:
+        if runtime.destination_registry.get_config(destination_id) is None:
+            raise HTTPException(status_code=422, detail="unknown destination_id")
     return {
         "name": name,
         "device": device,
@@ -47,6 +58,7 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
         "silence_threshold": body.silence_threshold,
         "model": model,
         "runtime": selected_runtime,
+        "destination_id": destination_id,
     }
 
 
@@ -57,6 +69,8 @@ def _store_call(callback):
         raise HTTPException(
             status_code=409, detail="A profile with this name already exists."
         ) from exc
+    except UnknownDestinationError as exc:
+        raise HTTPException(status_code=422, detail="unknown destination_id") from exc
     except (OSError, sqlite3.Error) as exc:
         raise HTTPException(status_code=503, detail="profile database unavailable") from exc
 
@@ -121,6 +135,15 @@ def start_profile_run(profile_id: str, request: Request):
     if profile is None:
         raise HTTPException(status_code=404, detail="profile not found")
     keywords = validate_keywords(runtime.workflow_service, profile["keywords"])
+    forwarder = None
+    destination_id = profile.get("destination_id")
+    if destination_id is not None:
+        try:
+            forwarder = runtime.destination_registry.build_forwarder(destination_id)
+        except DestinationConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except DestinationUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     return start_microphone_workflow(
         request,
         keywords=keywords,
@@ -131,4 +154,6 @@ def start_profile_run(profile_id: str, request: Request):
         selected_runtime=profile["runtime"],
         profile_id=profile["profile_id"],
         profile_name=profile["name"],
+        destination_id=destination_id,
+        forwarder=forwarder,
     )
