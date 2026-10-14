@@ -41,7 +41,7 @@ For other runtime choices, see the [Feature 01 configuration contract](../.scrat
 
 ```bash
 uv sync --locked --extra backend --extra microphone --extra openvino --extra ctranslate2
-uv run --no-sync uvicorn speech_to_text.backend.app:app --host 127.0.0.1 --port 8000
+uv run --no-sync python -m uvicorn speech_to_text.backend.app:app --host 127.0.0.1 --port 8000
 ```
 
 The workflow service loads the model on the first transcription request. See [Configuration](configuration.md#local-environment-variables) to override its model settings, and the [Backend API v1 contract](../.scratch/backend-transcription-api/spec.md) for endpoints and process-local state limits.

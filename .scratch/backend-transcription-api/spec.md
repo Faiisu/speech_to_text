@@ -155,7 +155,7 @@ Run with the optional backend dependencies:
 
 ```bash
 uv sync --locked --extra backend --extra microphone --extra openvino --extra ctranslate2
-uv run --no-sync uvicorn speech_to_text.backend.app:app --host 127.0.0.1 --port 8000
+uv run --no-sync python -m uvicorn speech_to_text.backend.app:app --host 127.0.0.1 --port 8000
 ```
 
 The command binds to localhost by default. Choose a different host explicitly when the API must accept remote connections.
