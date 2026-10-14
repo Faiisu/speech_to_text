@@ -41,7 +41,7 @@ fi
 export SPEECH_TO_TEXT_RUNTIME SPEECH_TO_TEXT_PRECISION
 
 printf 'Starting backend at http://127.0.0.1:8000\n'
-uv run --no-sync uvicorn speech_to_text.backend.app:app --host 127.0.0.1 --port 8000 &
+uv run --no-sync python -m uvicorn speech_to_text.backend.app:app --host 127.0.0.1 --port 8000 &
 BACKEND_PID=$!
 trap cleanup EXIT
 trap 'exit 130' INT
