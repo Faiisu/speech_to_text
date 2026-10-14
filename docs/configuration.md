@@ -38,7 +38,7 @@ The [workflow destination contract](../.scratch/transcript-matching-forwarding/s
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS` | Empty | Comma-separated IPv4/IPv6 CIDRs explicitly approving private/loopback receivers; prefer a single receiver address such as `192.168.1.50/32`. |
+| `SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS` | Empty locally; the UBX-330M installer sets `0.0.0.0/0,::/0` in its generated Compose file | Comma-separated IPv4/IPv6 CIDRs approving private/loopback receivers. The UBX-330M default permits destinations on any network; link-local and metadata addresses remain blocked. |
 | `SPEECH_TO_TEXT_DESTINATION_ALLOWED_ORIGINS` | Empty | Additional approved origins; locally saved destination definitions also approve their own origin. |
 | `SPEECH_TO_TEXT_DESTINATION_SECRET_REFS` | Empty | Comma-separated names of environment variables allowed to supply bearer, Basic, API-key, or MQTT username/password credentials. Set those variables separately to their secret values. |
 | `SPEECH_TO_TEXT_DESTINATION_RESOURCE_REFS` | Empty | Comma-separated names of environment variables allowed to supply absolute CA/client-certificate/client-key paths. |

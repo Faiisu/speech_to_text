@@ -38,6 +38,8 @@ The installer completes these stages in order: validate the host, prepare Docker
 
 Before the installer builds images, create the external Docker network `shared-network` if it does not already exist: `docker network create shared-network`. The managed `speech-to-text` service joins this network through the Compose network key `shared`; the installer checks that the named network exists and stops with this command if it is missing. The network remains operator-managed, and the standalone MQTT Compose service is not attached to it automatically.
 
+The generated Compose file sets `SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS` to `"0.0.0.0/0,::/0"`, allowing configured destinations on any IPv4 or IPv6 network. Link-local and known metadata addresses remain blocked by the destination egress policy, including IPv4-mapped IPv6 equivalents.
+
 The service bind-mounts `/dev/snd` and allows read/write access to ALSA character devices, so a USB microphone connected after container startup can be discovered without recreating the container. The host must recognize the microphone as an ALSA capture device and assign its `/dev/snd` nodes to the `audio` group. Request the microphone list again after connecting a device to refresh discovery.
 
 If Docker Engine or its Compose plugin is missing, a root run can install the required Docker packages. Before installing, the script simulates the apt transaction and stops if apt would remove an installed package. The installer does not purge conflicting packages, install a GPU driver, enable UFW, or stop unrelated containers or services.
