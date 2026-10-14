@@ -65,6 +65,9 @@ export type DeliveryStatus = {
   http_status?: number | null
   last_attempt_at?: string | null
   error_code?: string | null
+  transport?: 'http' | 'mqtt' | null
+  mqtt_topic?: string | null
+  mqtt_qos?: number | null
 }
 
 export type DestinationSummary = {
@@ -72,7 +75,11 @@ export type DestinationSummary = {
   name: string
   endpoint_origin: string
   method: 'POST' | 'PUT' | 'PATCH'
-  auth_type: 'none' | 'bearer' | 'basic' | 'api_key_header'
+  auth_type: 'none' | 'bearer' | 'basic' | 'api_key_header' | 'username_password'
+  protocol?: 'http' | 'mqtt'
+  mqtt_topic?: string | null
+  mqtt_qos?: number | null
+  mqtt_retain?: boolean | null
   payload_format: 'match_results_v1'
   created_at: string
   updated_at: string
@@ -84,7 +91,7 @@ export type DestinationDefinition = {
   method: 'POST' | 'PUT' | 'PATCH'
   headers: Record<string, string>
   auth: {
-    type: 'none' | 'bearer' | 'basic' | 'api_key_header'
+    type: 'none' | 'bearer' | 'basic' | 'api_key_header' | 'username_password'
     secret_ref?: string | null
     username_secret_ref?: string | null
     password_secret_ref?: string | null
@@ -101,6 +108,10 @@ export type DestinationDefinition = {
   tls_ca_bundle_ref: string | null
   tls_client_certificate_ref: string | null
   tls_client_key_ref: string | null
+  protocol?: 'http' | 'mqtt'
+  mqtt_topic?: string | null
+  mqtt_qos?: number
+  mqtt_retain?: boolean
 }
 
 export type Destination = DestinationSummary & { config: Omit<DestinationDefinition, 'name'> }

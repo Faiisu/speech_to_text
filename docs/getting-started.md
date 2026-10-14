@@ -40,7 +40,7 @@ For other runtime choices, see the [Feature 01 configuration contract](../.scrat
 ## Run the backend API
 
 ```bash
-uv sync --locked --extra backend --extra microphone --extra openvino --extra ctranslate2
+uv sync --locked --extra backend --extra microphone --extra mqtt --extra openvino --extra ctranslate2
 uv run --no-sync python -m uvicorn speech_to_text.backend.app:app --host 127.0.0.1 --port 8000
 ```
 
@@ -68,7 +68,7 @@ Install `uv`, Node.js, and npm, then run this from the repository root:
 ./scripts/run_macos.sh
 ```
 
-The script installs the backend, microphone, and CTranslate2 extras, installs frontend dependencies when needed, and starts both development servers. Open `http://127.0.0.1:5173`; press Ctrl-C in the terminal to stop them. The default model runtime is CTranslate2 with int8 precision. Model files must still be available locally; see [Configuration](configuration.md).
+The script installs the backend, microphone, MQTT, and CTranslate2 extras, installs frontend dependencies when needed, and starts both development servers. Open `http://127.0.0.1:5173`; press Ctrl-C in the terminal to stop them. The default model runtime is CTranslate2 with int8 precision. Model files must still be available locally; see [Configuration](configuration.md).
 
 ## Call Feature 01
 
@@ -86,6 +86,8 @@ finally:
 Feature 01 accepts WAV paths or bytes at its Python callable boundary. Its [specification](../.scratch/new-speech-to-text/spec.md) documents model configuration, clip and microphone behavior, session events, and process topologies.
 
 ## Run tests
+
+For the complete macOS/Linux software gate, run `./scripts/run_full_tests.sh` from the repository root. See [Contributing](contributing.md#tests-and-validation) for Docker, browser dependencies, and hardware test requirements.
 
 Install the test extra if it is not already present, then run the feature contract suite:
 

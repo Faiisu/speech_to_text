@@ -25,6 +25,7 @@ from .destinations import (
     destination_summary,
     validate_destination_config,
 )
+from .mqtt_output import MqttForwarder, MqttForwarderConfig, MqttForwardingReceipt
 from .service import (
     TranscriptionService,
     WorkflowConfigurationError,
@@ -44,6 +45,9 @@ __all__ = [
     "ForwardingReceipt",
     "HttpForwarder",
     "HttpForwarderConfig",
+    "MqttForwarder",
+    "MqttForwarderConfig",
+    "MqttForwardingReceipt",
     "PipelineResult",
     "SessionWorkflow",
     "TranscriptionService",

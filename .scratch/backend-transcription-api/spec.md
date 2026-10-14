@@ -126,7 +126,9 @@ Implemented extension dated 2026-10-14. The [workflow destination contract](../t
 
 Profile definitions and direct microphone requests accept nullable `destination_id` (default null); clip multipart requests accept an optional field of the same name. Profiles persist the selected ID. Runs bind a start-time destination configuration/credential snapshot and use the same terminal forwarding behavior for shared and process-isolated microphones. Editing a destination or profile affects future runs. Invalid destination selection returns HTTP 422, and unavailable approved secret/TLS resources return HTTP 503 before audio starts. No endpoint accepts secret values or arbitrary filesystem paths.
 
-Status responses include `destination_id` and `delivery`, with `status` (`disabled|pending|delivered|failed`), destination/event IDs, attempts, nullable `http_status`, nullable UTC `last_attempt_at`, and nullable sanitized `error_code`. Existing `forwarded`/`forwarding_error` events report delivery outcomes. Transcription success and delivery failure remain distinguishable. Omitted destination selection preserves no-forwarder behavior; no network request or synthetic forwarded event is produced.
+Status responses include `destination_id` and `delivery`, with `status` (`disabled|pending|delivered|failed`), destination/event IDs, `transport`, nullable `mqtt_topic`/`mqtt_qos`, attempts, nullable `http_status`, nullable UTC `last_attempt_at`, and nullable sanitized `error_code`. Existing `forwarded`/`forwarding_error` events report delivery outcomes. Transcription success and delivery failure remain distinguishable. Omitted destination selection preserves no-forwarder behavior; no network request or synthetic forwarded event is produced.
+
+MQTT destination bodies additionally select `protocol: "mqtt"`, an `mqtt://` or `mqtts://` broker URL, `mqtt_topic`, `mqtt_qos`, and `mqtt_retain`, as defined by the [MQTT output contract](../transcript-matching-forwarding/spec.md#mqtt-destination-contract). Existing configurations omit `protocol` and continue using HTTP; MQTT needs no new database columns. MQTT summaries add protocol/topic/QoS/retain, and synthetic delivery receipts add `transport`, `mqtt_topic`, and `mqtt_qos` with `http_status: null`.
 
 ### Destination endpoints
 
@@ -154,7 +156,7 @@ Operator access requires an actual loopback client and a local Host on `SPEECH_T
 Run with the optional backend dependencies:
 
 ```bash
-uv sync --locked --extra backend --extra microphone --extra openvino --extra ctranslate2
+uv sync --locked --extra backend --extra microphone --extra mqtt --extra openvino --extra ctranslate2
 uv run --no-sync python -m uvicorn speech_to_text.backend.app:app --host 127.0.0.1 --port 8000
 ```
 

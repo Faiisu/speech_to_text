@@ -2,6 +2,54 @@ import { expect, test } from '@playwright/test'
 
 const receiver = 'http://127.0.0.1:8767'
 
+test('MQTT settings persist and publish real JSON to the selected topic', async ({ page }) => {
+  test.skip(!process.env.MQTT_TEST_BROKER_URL, 'run scripts/run_full_tests.sh for the real MQTT broker')
+  const topic = `speech/e2e/${Date.now()}`
+  await page.goto('/destinations')
+  await page.getByLabel('Name', { exact: true }).fill('MQTT receiver')
+  await page.getByLabel('Transport').selectOption('mqtt')
+  await page.getByLabel('Broker URL').fill(process.env.MQTT_TEST_BROKER_URL!)
+  await page.getByLabel('Topic', { exact: true }).fill(topic)
+  await page.getByLabel('QoS', { exact: true }).selectOption('2')
+  await page.getByLabel('Retain the latest result on this topic').check()
+  await expect(page.getByLabel('Custom headers (JSON)')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Save destination' }).click()
+  await expect(page.getByRole('status')).toContainText('Saved “MQTT receiver”.')
+  await page.reload()
+  await page.getByRole('button', { name: /MQTT receiver/ }).click()
+  await expect(page.getByLabel('Transport')).toHaveValue('mqtt')
+  await expect(page.getByLabel('Topic', { exact: true })).toHaveValue(topic)
+  await expect(page.getByLabel('QoS', { exact: true })).toHaveValue('2')
+  await expect(page.getByLabel('Retain the latest result on this topic')).toBeChecked()
+  await page.getByRole('button', { name: 'Send test JSON' }).click()
+  await expect(page.getByRole('status')).toContainText('Published to MQTT broker')
+  await expect.poll(async () => {
+    const result = await page.request.get(`${receiver}/mqtt-records`).then(response => response.json())
+    return result.records.find((record: { topic: string }) => record.topic === topic)
+  }).toMatchObject({ topic, qos: 2, body: { event_type: 'transcription.match_results', transcript: 'Synthetic destination test' } })
+  await page.screenshot({ path: '/tmp/echodesk-mqtt-desktop.png', fullPage: true })
+  await page.setViewportSize({ width: 360, height: 820 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false)
+  await page.screenshot({ path: '/tmp/echodesk-mqtt-mobile.png', fullPage: true })
+})
+
+test('MQTT form rejects wildcard topics and keeps HTTP settings separate', async ({ page }) => {
+  await page.goto('/destinations')
+  await page.getByLabel('Name', { exact: true }).fill('Invalid MQTT receiver')
+  await page.getByLabel('Transport').selectOption('mqtt')
+  await page.getByLabel('Topic', { exact: true }).fill('speech/#')
+  await page.getByRole('button', { name: 'Save destination' }).click()
+  await expect(page.getByRole('alert')).toContainText('publish topic')
+  await page.getByLabel('Authentication', { exact: true }).selectOption('username_password')
+  await page.getByLabel('Topic', { exact: true }).fill('speech/e2e/results')
+  await page.getByRole('button', { name: 'Save destination' }).click()
+  await expect(page.getByRole('alert')).toContainText('encrypted')
+  await page.getByLabel('Transport').selectOption('http')
+  await expect(page.getByLabel('Endpoint URL')).toBeVisible()
+  await expect(page.getByLabel('Custom headers (JSON)')).toBeVisible()
+  await expect(page.getByLabel('Topic', { exact: true })).toHaveCount(0)
+})
+
 test.afterEach(async ({ request }) => {
   const origin = { origin: 'http://127.0.0.1:4173' }
   const profiles = await request.get('/api/v1/profiles').then(response => response.json())

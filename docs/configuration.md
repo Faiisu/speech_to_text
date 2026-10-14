@@ -30,7 +30,7 @@ No credentials or database server are required to call Feature 01 locally. The b
 
 ## Transcript matching and forwarding
 
-Configure target keywords with `WordMatchingConfig` and workflow output delivery with `HttpForwarderConfig`. Matching uses normalized literal substring searches and requires no optional tokenizer dependency. The workflow owns whether and where results are sent. Keep bearer tokens in the caller's secret configuration. The backend selects an optional saved destination through `destination_id`; local operators manage destination definitions and test delivery through the [destination API](../.scratch/backend-transcription-api/spec.md#destination-endpoints). Profiles retain their selection, and each run uses a start-time sender snapshot. Matching defaults, retry behavior, and the forwarded JSON contract are maintained in the [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md).
+Configure target keywords with `WordMatchingConfig` and workflow output delivery with `HttpForwarderConfig` or `MqttForwarderConfig`. Matching uses normalized literal substring searches and requires no optional tokenizer dependency. The workflow owns whether and where results are sent. Keep bearer tokens in the caller's secret configuration. The backend selects an optional saved destination through `destination_id`; local operators manage destination definitions and test delivery through the [destination API](../.scratch/backend-transcription-api/spec.md#destination-endpoints). Profiles retain their selection, and each run uses a start-time sender snapshot. Matching defaults, retry behavior, and the forwarded JSON contract are maintained in the [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md).
 
 ### Output deployment settings
 
@@ -40,7 +40,7 @@ The [workflow destination contract](../.scratch/transcript-matching-forwarding/s
 | --- | --- | --- |
 | `SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS` | Empty | Comma-separated IPv4/IPv6 CIDRs explicitly approving private/loopback receivers; prefer a single receiver address such as `192.168.1.50/32`. |
 | `SPEECH_TO_TEXT_DESTINATION_ALLOWED_ORIGINS` | Empty | Additional approved origins; locally saved destination definitions also approve their own origin. |
-| `SPEECH_TO_TEXT_DESTINATION_SECRET_REFS` | Empty | Comma-separated names of environment variables allowed to supply bearer, Basic, or API-key credentials. Set those variables separately to their secret values. |
+| `SPEECH_TO_TEXT_DESTINATION_SECRET_REFS` | Empty | Comma-separated names of environment variables allowed to supply bearer, Basic, API-key, or MQTT username/password credentials. Set those variables separately to their secret values. |
 | `SPEECH_TO_TEXT_DESTINATION_RESOURCE_REFS` | Empty | Comma-separated names of environment variables allowed to supply absolute CA/client-certificate/client-key paths. |
 | `SPEECH_TO_TEXT_OPERATOR_ORIGINS` | `http://127.0.0.1:5173,http://localhost:5173` | Browser origins permitted for local destination administration and synthetic tests. |
 | `SPEECH_TO_TEXT_API_PORT` | `8000` | Expected local API Host port for operator requests; configure alongside the server's actual listening port. |
@@ -53,6 +53,19 @@ bash scripts/run_macos.sh
 ```
 
 Configure its actual URL and method in the destination settings, run the synthetic test, and select that destination in a microphone profile. A saved entry is not proof that the receiver accepts the payload. Secret-bearing receivers require HTTPS; use a deployment-approved private CA for an internal certificate.
+
+### MQTT destination setup
+
+Install the `mqtt` extra for a manually launched backend; `scripts/run_macos.sh` and the application Docker image include it. Start the [managed MQTT broker](deployment.md#mqtt-broker), then approve its loopback address before launching a host backend:
+
+```bash
+export SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS=127.0.0.1/32
+./scripts/run_macos.sh
+```
+
+In `/destinations`, select MQTT, set broker URL `mqtt://127.0.0.1:1883`, choose a topic such as `speech/transcriptions`, save, and send the synthetic JSON test. Select that destination in a profile. The [MQTT contract](../.scratch/transcript-matching-forwarding/spec.md#mqtt-destination-contract) defines QoS, retain, TLS, credentials, retry, and acknowledgement semantics. Authenticated remote brokers require `mqtts://` and approved environment secret references.
+
+For a backend inside a container, loopback refers to that container. Use a reachable broker hostname/address on its Docker network or host and approve the corresponding private network; do not copy the host loopback URL into an isolated application container.
 
 ## Capacity command-line options
 

@@ -11,5 +11,5 @@ One clip transcription or microphone session, with status and events held in the
 _Avoid_: Persistent job
 
 **Forwarding**:
-Sending a completed transcript and its keyword-match results to a downstream HTTP service.
+Sending a completed transcript and its keyword-match results to a downstream HTTP service or MQTT broker.
 _Avoid_: Data storage

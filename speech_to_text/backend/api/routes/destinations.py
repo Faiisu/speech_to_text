@@ -180,6 +180,10 @@ def _detail(entry):
             )
         )["endpoint_origin"],
         "method": config.get("method", "POST"),
+        "protocol": config.get("protocol", "http"),
+        "mqtt_topic": config.get("mqtt_topic"),
+        "mqtt_qos": config.get("mqtt_qos") if config.get("protocol") == "mqtt" else None,
+        "mqtt_retain": config.get("mqtt_retain") if config.get("protocol") == "mqtt" else None,
         "auth_type": auth.get("type", "none"),
         "payload_format": config.get("payload_format", "match_results_v1"),
         "config": config,
@@ -307,4 +311,7 @@ def test_destination(destination_id: str, request: Request):
         "event_id": receipt.event_id,
         "attempts": receipt.attempts,
         "http_status": receipt.status_code,
+        "transport": getattr(receipt, "transport", "http"),
+        "mqtt_topic": getattr(receipt, "topic", None),
+        "mqtt_qos": getattr(receipt, "qos", None),
     }

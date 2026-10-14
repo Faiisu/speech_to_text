@@ -6,8 +6,10 @@ import os
 import re
 from types import MappingProxyType
 from typing import Mapping
+from urllib.parse import urlsplit
 
 from .http_output import EgressPolicy, HttpForwarder, HttpForwarderConfig, _check_endpoint, _validate_header
+from .mqtt_output import MqttForwarder, MqttForwarderConfig, parse_broker_url
 
 
 class DestinationConfigurationError(ValueError):
@@ -30,11 +32,11 @@ class AuthConfig:
     password_secret_ref: str | None = None
 
     def __post_init__(self):
-        if self.type not in {"none", "bearer", "basic", "api_key_header"}:
-            raise DestinationConfigurationError("auth.type must be none, bearer, basic, or api_key_header")
+        if self.type not in {"none", "bearer", "basic", "api_key_header", "username_password"}:
+            raise DestinationConfigurationError("unsupported auth.type")
         if self.type in {"bearer", "api_key_header"} and not _valid_ref(self.secret_ref):
             raise DestinationConfigurationError("auth.secret_ref must name an approved environment variable")
-        if self.type == "basic" and not all(
+        if self.type in {"basic", "username_password"} and not all(
             _valid_ref(ref) for ref in (self.username_secret_ref, self.password_secret_ref)
         ):
             raise DestinationConfigurationError("basic auth requires username and password secret refs")
@@ -51,7 +53,7 @@ class AuthConfig:
             raise DestinationConfigurationError("bearer auth accepts only secret_ref")
         if self.type == "api_key_header" and any((self.username_secret_ref, self.password_secret_ref)):
             raise DestinationConfigurationError("API key auth accepts only secret_ref and header_name")
-        if self.type == "basic" and any((self.secret_ref, self.header_name)):
+        if self.type in {"basic", "username_password"} and any((self.secret_ref, self.header_name)):
             raise DestinationConfigurationError("basic auth accepts only username and password secret refs")
 
 
@@ -77,10 +79,23 @@ class DestinationConfig:
     tls_ca_bundle_ref: str | None = None
     tls_client_certificate_ref: str | None = None
     tls_client_key_ref: str | None = None
+    protocol: str = "http"
+    mqtt_topic: str | None = None
+    mqtt_qos: int = 1
+    mqtt_retain: bool = False
 
     def __post_init__(self):
         if not isinstance(self.destination_id, str) or not self.destination_id or len(self.destination_id) > 128:
             raise DestinationConfigurationError("destination_id must be a non-empty string of at most 128 characters")
+        if self.protocol not in {"http", "mqtt"}:
+            raise DestinationConfigurationError("protocol must be http or mqtt")
+        if self.protocol == "mqtt":
+            self._validate_mqtt()
+            return
+        if self.mqtt_topic is not None or self.mqtt_qos != 1 or self.mqtt_retain is not False:
+            raise DestinationConfigurationError("MQTT settings require protocol=mqtt")
+        if isinstance(self.auth, AuthConfig) and self.auth.type == "username_password":
+            raise DestinationConfigurationError("username_password auth requires protocol=mqtt")
         try:
             parsed = _check_endpoint(self.endpoint_url)
         except ValueError as exc:
@@ -147,6 +162,31 @@ class DestinationConfig:
         except (TypeError, ValueError) as exc:
             raise DestinationConfigurationError(str(exc)) from exc
 
+    def _validate_mqtt(self):
+        try:
+            parsed = parse_broker_url(self.endpoint_url)
+            MqttForwarderConfig(self.endpoint_url, self.mqtt_topic, self.mqtt_qos,
+                                self.mqtt_retain, self.timeout_seconds, self.max_attempts,
+                                self.backoff_seconds, self.max_backoff_seconds)
+        except (TypeError, ValueError) as exc:
+            raise DestinationConfigurationError(str(exc)) from exc
+        if not isinstance(self.auth, AuthConfig) or self.auth.type not in {"none", "username_password"}:
+            raise DestinationConfigurationError("MQTT auth must be none or username_password")
+        if self.auth.type != "none" and parsed.scheme != "mqtts":
+            raise DestinationConfigurationError("MQTT credentials require mqtts://")
+        if self.headers or self.method != "POST" or self.follow_redirects is not False:
+            raise DestinationConfigurationError("HTTP headers, methods, and redirects do not apply to MQTT")
+        if self.payload_format != "match_results_v1":
+            raise DestinationConfigurationError("payload_format must be match_results_v1")
+        for ref in (self.tls_ca_bundle_ref, self.tls_client_certificate_ref, self.tls_client_key_ref):
+            if ref is not None and not _valid_ref(ref):
+                raise DestinationConfigurationError("TLS resource refs must name environment variables")
+        if bool(self.tls_client_certificate_ref) != bool(self.tls_client_key_ref):
+            raise DestinationConfigurationError("client certificate and key refs must be configured together")
+        if parsed.scheme != "mqtts" and any((self.tls_ca_bundle_ref, self.tls_client_certificate_ref, self.tls_client_key_ref)):
+            raise DestinationConfigurationError("TLS resources require mqtts://")
+        object.__setattr__(self, "headers", MappingProxyType({}))
+
     @classmethod
     def from_mapping(cls, values):
         """Build from JSON-compatible destination fields without accepting secret values."""
@@ -158,6 +198,7 @@ class DestinationConfig:
             "max_attempts", "backoff_seconds", "max_backoff_seconds", "max_retry_after_seconds",
             "follow_redirects", "idempotency_header", "payload_format", "tls_ca_bundle_ref",
             "tls_client_certificate_ref", "tls_client_key_ref",
+            "protocol", "mqtt_topic", "mqtt_qos", "mqtt_retain",
         }
         unexpected = set(data) - allowed
         if unexpected:
@@ -183,13 +224,16 @@ def validate_destination_config(config):
 
 def destination_summary(config):
     config = validate_destination_config(config)
-    parsed = _check_endpoint(config.endpoint_url)
+    parsed = parse_broker_url(config.endpoint_url) if config.protocol == "mqtt" else _check_endpoint(config.endpoint_url)
     return {
         "destination_id": config.destination_id,
         "endpoint_origin": f"{parsed.scheme}://{parsed.netloc}",
         "method": config.method,
         "auth_type": config.auth.type,
         "payload_format": config.payload_format,
+        **({"protocol": "mqtt", "mqtt_topic": config.mqtt_topic,
+            "mqtt_qos": config.mqtt_qos, "mqtt_retain": config.mqtt_retain}
+           if config.protocol == "mqtt" else {}),
     }
 
 
@@ -247,9 +291,11 @@ def build_forwarder(config, *, allowed_origins, allowed_networks=(), secret_reso
     origin = next((item for item in allowed_origins if _origin_text(item) == _origin_text(config.endpoint_url)), None)
     if origin is None:
         raise DestinationConfigurationError("destination origin is not deployment-approved")
-    policy = EgressPolicy(frozenset({_origin_text(origin)}), tuple(allowed_networks))
     secret_resolver = secret_resolver or _default_secret_resolver
     resource_resolver = resource_resolver or _default_resource_resolver
+    if config.protocol == "mqtt":
+        return _build_mqtt_forwarder(config, allowed_networks, secret_resolver, resource_resolver)
+    policy = EgressPolicy(frozenset({_origin_text(origin)}), tuple(allowed_networks))
     auth_header = None
     if config.auth.type == "bearer":
         auth_header = "Bearer " + _resolve_secret(config.auth.secret_ref, secret_resolver)
@@ -287,13 +333,39 @@ def build_forwarder(config, *, allowed_origins, allowed_networks=(), secret_reso
         raise DestinationUnavailableError("approved destination TLS configuration is unavailable") from exc
 
 
+def _build_mqtt_forwarder(config, allowed_networks, secret_resolver, resource_resolver):
+    from .http_output import _tls_context
+    from types import SimpleNamespace
+
+    username = password = None
+    if config.auth.type == "username_password":
+        username = _resolve_secret(config.auth.username_secret_ref, secret_resolver)
+        password = _resolve_secret(config.auth.password_secret_ref, secret_resolver)
+    resources = [_resolve_resource(ref, resource_resolver) for ref in
+                 (config.tls_ca_bundle_ref, config.tls_client_certificate_ref, config.tls_client_key_ref)]
+    try:
+        context = _tls_context(SimpleNamespace(tls_ca_bundle=resources[0],
+                               tls_client_certificate=resources[1], tls_client_key=resources[2]))
+        return MqttForwarder(MqttForwarderConfig(
+            endpoint_url=config.endpoint_url, topic=config.mqtt_topic, qos=config.mqtt_qos,
+            retain=config.mqtt_retain, timeout_seconds=config.timeout_seconds,
+            max_attempts=config.max_attempts, backoff_seconds=config.backoff_seconds,
+            max_backoff_seconds=config.max_backoff_seconds, allowed_networks=tuple(allowed_networks),
+            username=username, password=password, tls_context=context))
+    except ImportError as exc:
+        raise DestinationUnavailableError("MQTT output requires the mqtt extra") from exc
+    except (OSError, ValueError) as exc:
+        raise DestinationUnavailableError("approved MQTT configuration is unavailable") from exc
+
+
 def _origin_text(url):
-    parsed = _check_endpoint(url)
+    scheme = urlsplit(url).scheme
+    parsed = parse_broker_url(url) if scheme in {"mqtt", "mqtts"} else _check_endpoint(url)
     host = parsed.hostname.lower().rstrip(".")
     if ":" in host:
         host = f"[{host}]"
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    default_port = 443 if parsed.scheme == "https" else 80
+    default_port = {"http": 80, "https": 443, "mqtt": 1883, "mqtts": 8883}[parsed.scheme]
+    port = parsed.port or default_port
     return f"{parsed.scheme}://{host}" + (f":{port}" if port != default_port else "")
 
 
@@ -312,7 +384,7 @@ class DestinationRegistry:
         self._secret_resolver = secret_resolver
         self._resource_resolver = resource_resolver
         # Fail registry construction for malformed deployment egress settings.
-        EgressPolicy(frozenset(self._allowed_origins), self._allowed_networks)
+        EgressPolicy(frozenset(origin for origin in self._allowed_origins if urlsplit(origin).scheme in {"http", "https"}), self._allowed_networks)
         for config in self._configs.values():
             # Registration is an explicit operator approval because destination writes are local-admin only.
             if _origin_text(config.endpoint_url) not in self._allowed_origins:

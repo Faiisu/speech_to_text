@@ -1,0 +1,37 @@
+name: speech-mqtt
+
+services:
+  mqtt:
+    image: eclipse-mosquitto:2
+    restart: always
+    ports:
+      - "${MQTT_BIND_ADDRESS:-127.0.0.1}:${MQTT_PORT:-1883}:1883"
+    configs:
+      - source: mosquitto_config
+        target: /mosquitto/config/mosquitto.conf
+    volumes:
+      - mqtt-data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "127.0.0.1", "-p", "1883", "-q", "1", "-t", "health/speech-to-text", "-m", "ping"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+configs:
+  mosquitto_config:
+    content: |
+      listener 1883
+      allow_anonymous true
+      persistence true
+      persistence_location /mosquitto/data/
+      autosave_interval 60
+      log_dest stdout
+
+volumes:
+  mqtt-data:

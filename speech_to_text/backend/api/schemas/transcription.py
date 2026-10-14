@@ -41,7 +41,7 @@ class DestinationAuthDefinition(BaseModel):
     class Config:
         extra = "forbid"
 
-    type: Literal["none", "bearer", "basic", "api_key_header"] = "none"
+    type: Literal["none", "bearer", "basic", "api_key_header", "username_password"] = "none"
     secret_ref: StrictStr | None = None
     header_name: StrictStr | None = None
     username_secret_ref: StrictStr | None = None
@@ -68,6 +68,10 @@ class DestinationDefinition(BaseModel):
     tls_ca_bundle_ref: StrictStr | None = None
     tls_client_certificate_ref: StrictStr | None = None
     tls_client_key_ref: StrictStr | None = None
+    protocol: Literal["http", "mqtt"] = "http"
+    mqtt_topic: StrictStr | None = None
+    mqtt_qos: int = Field(default=1, ge=0, le=2, strict=True)
+    mqtt_retain: bool = Field(default=False, strict=True)
 
     @validator(
         "timeout_seconds",

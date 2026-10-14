@@ -38,6 +38,7 @@ This document is the source of truth for where project files belong. Follow it w
 ├── AGENTS.md                   # Repository-wide agent instructions
 ├── .gitignore                  # Generated files excluded from version control
 ├── README.md                   # Project entry point
+├── compose.mqtt.yaml           # Standalone MQTT broker with health check and persistence
 ├── Dockerfile                  # Versioned container build definition
 ├── pyproject.toml              # Package metadata and Python dependencies
 ├── uv.lock                     # Locked Python dependency resolution
@@ -53,7 +54,7 @@ speech_to_text/frontend/src/
 └── features/
     ├── dashboard/
     ├── profiles/
-    ├── destinations/             # Saved HTTP/HTTPS receiver settings and synthetic delivery tests
+    ├── destinations/             # Saved HTTP/HTTPS and MQTT receiver settings and synthetic delivery tests
     ├── runs/
     └── stress-tests/             # Capacity matrix controls, polling, and reports
 ```
@@ -82,9 +83,11 @@ speech_to_text/backend/
 
 Frontend code calls the backend API. Backend routes validate requests and call workflow functions. A workflow calls features, receives their results, and owns the use case's output choices: it returns results to the backend and can send them to another backend or system. The backend maps returned results to frontend responses or streams. Feature logic stays under `features/`; use-case orchestration and delivery behavior stay under `workflows/`.
 
-The transcribe-match-forward workflow owns destination configuration and validation in `destinations.py`, and outbound JSON/HTTP transport in `http_output.py`. The backend's destination routes manage stored definitions through the existing profile store and call the workflow's public sender for synthetic tests. Destination credentials remain deployment-managed references, not database secret values. The [workflow output specification](../.scratch/transcript-matching-forwarding/spec.md) owns their configuration contract.
+The transcribe-match-forward workflow owns destination configuration and validation in `destinations.py`, and outbound JSON/HTTP transport in `http_output.py` and MQTT publication in `mqtt_output.py`. The backend's destination routes manage stored definitions through the existing profile store and call the workflow's public sender for synthetic tests. Destination credentials remain deployment-managed references, not database secret values. The [workflow output specification](../.scratch/transcript-matching-forwarding/spec.md) owns their configuration contract.
 
 The canonical outgoing payload schema is packaged as `workflows/transcribe_match_forward/match_results_v1.schema.json`. Browser-only receiver fixtures belong under `tests/frontend_e2e/`, including `fake_receiver.py`; browser assertions remain in `frontend/e2e/`.
+
+Reusable host commands include `scripts/run_macos.sh` for the macOS development servers and `scripts/run_full_tests.sh` for the complete macOS/Linux software gate with an isolated MQTT test broker.
 
 ## Placement rules
 

@@ -12,7 +12,7 @@ Speech-to-Text provides a React frontend, a FastAPI backend, and callable Python
 
 Microphone profiles persist in SQLite. Workflow run status, transcripts, matches, and events remain in the active backend process and are lost on restart; see [API Interfaces](docs/api.md#backend-api-v1).
 
-Python and backend HTTP workflows support optional JSON forwarding to saved HTTP/HTTPS destinations; see [Configuration](docs/configuration.md#transcript-matching-and-forwarding) and the [receiver verification gate](docs/deployment.md#go-live-gate).
+Python and backend HTTP workflows support optional JSON forwarding to saved HTTP/HTTPS or MQTT destinations; see [Configuration](docs/configuration.md#transcript-matching-and-forwarding) and the [receiver verification gate](docs/deployment.md#go-live-gate).
 
 ## Getting started
 
@@ -22,7 +22,9 @@ The Python package requires Python 3.10 or newer and `uv`. Install the base pack
 uv sync --locked
 ```
 
-Backend, model runtime, microphone, benchmark, and test dependencies are optional extras. Follow [Getting Started](docs/getting-started.md) to select extras, run the backend and frontend, call the Python interface, and run tests. Model files and the requested runtime/device must be available for transcription; see [Configuration](docs/configuration.md).
+Backend, MQTT, model runtime, microphone, benchmark, and test dependencies are optional extras. Follow [Getting Started](docs/getting-started.md) to select extras, run the backend and frontend, call the Python interface, and run tests. Model files and the requested runtime/device must be available for transcription; see [Configuration](docs/configuration.md).
+
+Run the complete software suite on macOS or UBX-330M/Linux with [`scripts/run_full_tests.sh`](scripts/run_full_tests.sh); see [test prerequisites](docs/contributing.md#tests-and-validation).
 
 ## Deployment
 

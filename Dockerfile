@@ -11,7 +11,7 @@ RUN apt-get update \
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,id=speech-to-text-uv-cache,target=/root/.cache/uv \
     uv sync --python /usr/bin/python3.12 --locked --no-dev --no-install-project \
-    --extra backend --extra microphone --extra openvino
+    --extra backend --extra microphone --extra openvino --extra mqtt
 
 FROM node:22.14.0-bookworm-slim AS frontend-build
 WORKDIR /build/frontend

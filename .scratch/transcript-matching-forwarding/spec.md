@@ -110,7 +110,7 @@ Planning date: 2026-10-14. Implementation extends the existing callable contract
 
 ### Current destination interface
 
-`DestinationConfig`, `AuthConfig`, `DestinationRegistry`, `build_forwarder`, and `destination_summary` are exported from the workflow package. `destinations.py` validates configuration and resolves deployment-managed secret/resource references; `http_output.py` owns JSON serialization and delivery. The packaged `match_results_v1.schema.json` describes the unchanged completed-source body.
+`DestinationConfig`, `AuthConfig`, `DestinationRegistry`, `build_forwarder`, and `destination_summary` are exported from the workflow package. `destinations.py` validates configuration and resolves deployment-managed secret/resource references; `http_output.py` owns HTTP delivery and `mqtt_output.py` owns MQTT delivery. The packaged `match_results_v1.schema.json` describes the unchanged completed-source body.
 
 Saved destination configurations support `POST|PUT|PATCH`, non-secret custom headers, `none|bearer|basic|api_key_header` authentication, the timeout/backoff/Retry-After settings in the design table, and a configurable idempotency header. `basic` uses `username_secret_ref` and `password_secret_ref`; bearer/API key use `secret_ref`, with `header_name` additionally required for API keys. Reject unused or conflicting authentication settings. Credentials require HTTPS. Secret values are resolved from environment variables listed in `SPEECH_TO_TEXT_DESTINATION_SECRET_REFS`; the saved configuration contains only their names.
 
@@ -121,6 +121,18 @@ A locally saved registry entry approves its origin. `SPEECH_TO_TEXT_DESTINATION_
 Legacy Python `HttpForwarderConfig(endpoint_url, bearer_token)` callers without an explicit `egress_policy` retain their original urllib transport behavior. Backend-selected destinations always use registry-built senders with enforced egress policy. This distinction preserves the original callable integration while protecting destinations configured through the API.
 
 Payload mapping, proxy configuration, `{event_id}` URL substitution, per-chunk output, a durable outbox, and cross-process registry refresh are not implemented. Only `match_results_v1` and literal endpoint URLs are accepted. Delivery remains in memory; saved destination definitions survive restart, pending delivery does not. Concrete inbound routes and profile fields are owned by the [backend API contract](../backend-transcription-api/spec.md#output-destination-selection).
+
+### MQTT destination contract
+
+Implemented 2026-10-15. `protocol` defaults to `http`, preserving existing stored destination definitions; `protocol: "mqtt"` selects MQTT 3.1.1 TCP publication through the optional `mqtt` extra (Paho 2.x). `endpoint_url` accepts only `mqtt://host[:port]` or `mqtts://host[:port]`, default ports 1883/8883. URL credentials, paths beyond `/`, queries, and fragments are rejected. No WebSocket or MQTT 5 mode is advertised.
+
+MQTT requires `mqtt_topic` (nonempty UTF-8, at most 65535 bytes, no NUL or subscription wildcards), accepts strict `mqtt_qos` 0/1/2 (default 1), and `mqtt_retain` (default false). Authentication is `none` or `username_password`, using approved `username_secret_ref`/`password_secret_ref` values together. Credentials require `mqtts://`; common CA and mutual TLS reference fields apply. The same private-network approval and DNS pinning policy applies. HTTP methods, headers, redirects, Retry-After, and HTTP idempotency headers have no MQTT controls.
+
+`MqttForwarderConfig`, `MqttForwarder`, and `MqttForwardingReceipt` implement the same `forward(record)` boundary. Clips publish once after terminal transcription/matching; shared and process-isolated microphones publish after stop/completion, never per audio chunk. JSON uses the unchanged UTF-8 `match_results_v1` body. Bounded retries use identical bytes and a stable source/event ID. Receivers should deduplicate that ID because reconnect/retry can repeat a publication even with QoS 2.
+
+QoS 0 success records completion of the local send; QoS 1/2 wait for broker publication acknowledgement within the attempt timeout. Success does not prove subscriber processing. TLS validation or permanent connection rejection fails without retry; network failures and missing acknowledgements retry up to the configured limit. Delivery receipts expose `transport: "mqtt"`, topic/QoS, attempts, and nullable HTTP status (null). Delivery remains non-durable in memory.
+
+Real broker tests cover QoS 0/1/2, synthetic API delivery, terminal clip/shared/process-isolated microphone output, and saved frontend settings. The [full test command](../../docs/contributing.md#tests-and-validation) provisions an isolated broker. The [deployment guide](../../docs/deployment.md#mqtt-broker) owns broker startup, health checks, and persistence instructions.
 
 ### Frontend configuration
 

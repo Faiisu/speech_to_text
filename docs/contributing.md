@@ -17,6 +17,22 @@ Install optional model or microphone packages only when needed for the work. See
 
 ## Tests and validation
 
+Run the complete software gate on macOS or the UBX-330M (Ubuntu/Linux) from the repository root:
+
+```bash
+./scripts/run_full_tests.sh
+```
+
+Requirements: `uv`, Node.js/npm, and a running Docker daemon with Docker Compose 2.23.1 or newer. The script installs locked Python dependencies, selects CTranslate2 on macOS or OpenVINO on Linux, starts an isolated MQTT broker on an available loopback port, runs all Python tests, builds the frontend, and runs all Chromium E2E tests including real MQTT publication. It removes only its generated broker project and volume on exit, preserves the failure exit code, and leaves the application broker running.
+
+On a fresh headless Linux host, install Chromium system libraries with:
+
+```bash
+FULL_TEST_INSTALL_BROWSER_DEPS=1 ./scripts/run_full_tests.sh
+```
+
+Playwright's system dependency installation may require sudo on Linux. `FULL_TEST_RUNTIME_EXTRA=ctranslate2` or `openvino` overrides the platform default. Physical microphone/model proofs remain opt-in and need the reference inputs below; software suite success does not establish target hardware readiness.
+
 Run all default suites from the repository root:
 
 ```bash

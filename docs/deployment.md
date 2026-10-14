@@ -53,12 +53,28 @@ An installer success means the service health check passed, `/healthz` responded
 - The API currently allows up to 16 active microphone workflows per process.
 - Run status and events are process-local and are lost on restart.
 
+## MQTT broker
+
+The standalone [`compose.mqtt.yaml`](../compose.mqtt.yaml) runs Eclipse Mosquitto on either Linux or macOS with Docker Compose 2.23.1 or newer. From the checkout root:
+
+```bash
+docker compose -f compose.mqtt.yaml up -d --wait
+docker compose -f compose.mqtt.yaml ps
+docker compose -f compose.mqtt.yaml logs --tail 50 mqtt
+```
+
+The default endpoint is `mqtt://127.0.0.1:1883`. The broker has a QoS 1 publish health check, `restart: always`, persistent broker state in a named volume, and bounded container logs. A process exit restarts the broker; Docker must itself be running and configured to start at boot. On UBX-330M with Docker Engine, enable its boot service with `sudo systemctl enable --now docker`. On macOS, start the installed Docker runtime and configure its login startup. A health check reports availability; Docker's restart policy restarts exited containers, not a process that remains running but unhealthy. An explicit `docker compose stop` is an operator stop.
+
+The bundled configuration permits anonymous clients and binds only to host loopback. Keep this local default for development. A LAN or Internet broker needs a deliberately configured listener, TLS and authentication before exposing it; use `mqtts://` and deployment-approved references in destination settings. `MQTT_PORT` changes the published host port; `MQTT_BIND_ADDRESS` changes the bind address. For containerized application deployments, arrange a reachable broker address/network as described in [MQTT configuration](configuration.md#mqtt-destination-setup).
+
+`docker compose -f compose.mqtt.yaml down` removes the service while preserving its volume. Adding `--volumes` deletes broker state. The full test script uses a separate project and volume, so its cleanup does not remove this broker's data.
+
 ## Go-live gate
 
-The backend connects HTTP workflows to the selected saved destination. Before normal LAN use, configure a destination locally, select it in a profile, and verify both synthetic delivery and a terminal workflow result against the actual receiver. Approve required LAN CIDRs and credential/TLS resource references through the deployment environment, not in the image; see [output configuration](configuration.md#transcript-matching-and-forwarding). Forwarding retries remain bounded in memory and are not retained across restarts. Destination administration is restricted to the local operator API; remote clients can select saved IDs.
+The backend connects transcription workflows to the selected saved destination. Before normal LAN use, configure a destination locally, select it in a profile, and verify both synthetic delivery and a terminal workflow result against the actual receiver. Approve required LAN CIDRs and credential/TLS resource references through the deployment environment, not in the image; see [output configuration](configuration.md#transcript-matching-and-forwarding). Forwarding retries remain bounded in memory and are not retained across restarts. Destination administration is restricted to the local operator API; remote clients can select saved IDs.
 
 ## See also
 
 - [Getting Started](getting-started.md) for local development.
 - [Architecture](architecture.md) for process-local run state and workflow ownership.
-- [Transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md) for the HTTP payload and retry contract.
+- [Transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md) for the JSON payload and transport retry contract.
