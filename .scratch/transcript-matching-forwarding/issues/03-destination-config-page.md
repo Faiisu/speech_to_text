@@ -11,7 +11,7 @@ Add the destination configuration page to the existing EchoDesk frontend. Use th
 ## Acceptance checklist
 
 - [x] Sidebar navigation opens a responsive destination list and create/edit form.
-- [x] Local operators can save, update, delete, and send synthetic test JSON with clear outcomes.
+- [x] API callers can save, update, delete, and send synthetic test JSON with clear outcomes.
 - [x] The form covers URL, method, non-secret headers, secret-reference auth, retry/timeouts, and supported TLS settings.
 - [x] JSON preview matches the canonical outgoing contract; tests use saved configuration and synthetic data.
 - [x] Profile create/edit/duplicate preserves optional destination selection.

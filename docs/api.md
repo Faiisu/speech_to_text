@@ -30,7 +30,7 @@ Microphone requests can select `shared` or `per_workflow_process` model executio
 
 Reusable microphone profiles can be created, listed, replaced, deleted, and started through the backend API. Profiles persist in SQLite; the endpoint for listing transcriptions exposes only runs still retained in the current backend process. `SPEECH_TO_TEXT_PROFILE_DB` selects the profile database file. The API specification remains the source of truth for profile and run response shapes.
 
-Local operators can configure saved HTTP/HTTPS destinations and send synthetic test JSON. Profiles, direct microphone requests, and clip uploads can select a saved destination; status and events report delivery independently from transcription. See the [destination endpoints](../.scratch/backend-transcription-api/spec.md#destination-endpoints) for the authoritative access rules and request/response contract.
+API callers can configure saved HTTP/HTTPS destinations and send synthetic test JSON. Profiles, direct microphone requests, and clip uploads can select a saved destination; status and events report delivery independently from transcription. See the [destination endpoints](../.scratch/backend-transcription-api/spec.md#destination-endpoints) for the authoritative access rules and request/response contract.
 
 ## See also
 

@@ -47,24 +47,28 @@ def _receiver(*, reset=True):
     return server, thread
 
 
-def test_operator_destination_test_sends_synthetic_record_and_hides_config(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "peer",
+    [
+        ("192.168.1.25", 51234),  # LAN client
+        ("172.20.0.2", 51234),  # Docker bridge peer
+    ],
+    ids=("lan-client", "docker-bridge-peer"),
+)
+def test_destination_management_accepts_remote_peers_and_arbitrary_headers(
+    tmp_path, monkeypatch, peer
 ):
     server, _thread = _receiver()
     monkeypatch.setenv("SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS", "127.0.0.0/8")
     store = SQLiteProfileStore(tmp_path / "profiles.sqlite3")
     runtime = BackendRuntime(profile_store=store)
     client = TestClient(
-        create_app(runtime=runtime),
-        base_url="http://127.0.0.1:8000",
-        client=("127.0.0.1", 51234),
+        create_app(runtime=runtime), base_url="http://127.0.0.1:8000", client=peer
     )
-    operator_headers = {"Origin": "http://127.0.0.1:5173"}
     try:
         with client:
             created = client.post(
                 "/api/v1/destinations",
-                headers=operator_headers,
                 json={
                     "name": "Local receiver",
                     "endpoint_url": f"http://127.0.0.1:{server.server_port}/records",
@@ -76,7 +80,10 @@ def test_operator_destination_test_sends_synthetic_record_and_hides_config(
 
             result = client.post(
                 f"/api/v1/destinations/{destination_id}/test",
-                headers=operator_headers,
+                headers={
+                    "Host": "receiver.example:1234",
+                    "Origin": "https://untrusted.example",
+                },
             )
             assert result.status_code == 200, result.text
             assert result.json()["status"] == "delivered"
@@ -89,11 +96,11 @@ def test_operator_destination_test_sends_synthetic_record_and_hides_config(
             assert public_list[0]["destination_id"] == destination_id
             assert "config" not in public_list[0]
             assert client.get(
-                f"/api/v1/destinations/{destination_id}"
+                f"/api/v1/destinations/{destination_id}",
+                headers={"Host": "arbitrary.invalid", "Origin": "null"},
             ).status_code == 200
             replaced = client.put(
                 f"/api/v1/destinations/{destination_id}",
-                headers=operator_headers,
                 json={
                     "name": "Updated local receiver",
                     "endpoint_url": f"http://127.0.0.1:{server.server_port}/updated",
@@ -102,41 +109,12 @@ def test_operator_destination_test_sends_synthetic_record_and_hides_config(
             assert replaced.status_code == 200
             assert replaced.json()["destination_id"] == destination_id
             assert replaced.json()["name"] == "Updated local receiver"
-
-            malicious = client.post(
-                "/api/v1/destinations",
-                headers={"Origin": "http://evil.example:5173"},
-                json={"name": "Bad", "endpoint_url": "http://127.0.0.1/"},
-            )
-            assert malicious.status_code == 403
-            host_spoof = client.post(
-                "/api/v1/destinations",
-                headers={
-                    "Origin": "http://127.0.0.1:5173",
-                    "Host": "attacker.example:8000",
-                },
-                json={
-                    "name": "Bad host",
-                    "endpoint_url": "http://127.0.0.1/",
-                },
-            )
-            assert host_spoof.status_code == 403
-            remote_client = TestClient(
-                client.app,
-                base_url="http://127.0.0.1:8000",
-                client=("192.0.2.25", 51234),
-            )
-            forged_peer = remote_client.delete(
-                f"/api/v1/destinations/{destination_id}",
-                headers={
-                    "Origin": "http://127.0.0.1:5173",
-                    "X-Forwarded-For": "127.0.0.1",
-                },
-            )
-            assert forged_peer.status_code == 403
             deleted = client.delete(
                 f"/api/v1/destinations/{destination_id}",
-                headers=operator_headers,
+                headers={
+                    "Origin": "https://untrusted.example/path?query=yes",
+                    "Host": "attacker.example:8000",
+                },
             )
             assert deleted.status_code == 204
             assert client.get("/api/v1/destinations").json() == {"destinations": []}
@@ -177,7 +155,6 @@ def test_destination_delete_is_rejected_while_profile_references_it(tmp_path):
     with client:
         response = client.delete(
             "/api/v1/destinations/destination-1",
-            headers={"Origin": "http://127.0.0.1:5173"},
         )
         assert response.status_code == 409
     reopened = SQLiteProfileStore(tmp_path / "profiles.sqlite3")

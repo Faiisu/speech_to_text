@@ -22,8 +22,6 @@ export default defineConfig({
       url: `http://127.0.0.1:${backendPort}/api/v1/profiles`,
       env: {
         ...process.env,
-        SPEECH_TO_TEXT_API_PORT: String(backendPort),
-        SPEECH_TO_TEXT_OPERATOR_ORIGINS: `http://127.0.0.1:${frontendPort}`,
         SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS: '127.0.0.1/32',
       },
       reuseExistingServer: false,

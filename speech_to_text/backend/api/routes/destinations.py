@@ -1,12 +1,10 @@
-"""Operator-managed outbound HTTP destination configuration."""
+"""Outbound destination configuration and synthetic delivery tests."""
 
-import ipaddress
 import os
 import sqlite3
 import uuid
 from dataclasses import fields
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request, status
 
@@ -28,59 +26,6 @@ def _csv(name, default=()):
     if value is None:
         return tuple(default)
     return tuple(part.strip() for part in value.split(",") if part.strip())
-
-
-def _local_operator(request, *, allow_missing_origin=False):
-    """Require a real loopback peer and same-machine browser origin/host."""
-    client = request.client
-    try:
-        peer = ipaddress.ip_address(client.host) if client else None
-        if peer is None or not peer.is_loopback:
-            return False
-    except ValueError:
-        return False
-    try:
-        host = urlsplit("//" + request.headers.get("host", ""))
-        api_port = int(os.environ.get("SPEECH_TO_TEXT_API_PORT", "8000"))
-        raw_origin = request.headers.get("origin")
-        if raw_origin is None and allow_missing_origin:
-            allowed_host_ports = {api_port, 5173}
-            return bool(
-                host.hostname
-                and host.hostname.lower().rstrip(".")
-                in {"localhost", "127.0.0.1", "::1"}
-                and host.port in allowed_host_ports
-            )
-        origin = urlsplit(raw_origin or "")
-        if origin.scheme != "http" or not origin.hostname:
-            return False
-        origin_host = origin.hostname.lower().rstrip(".")
-        if origin_host not in {"localhost", "127.0.0.1", "::1"}:
-            return False
-        if origin.path or origin.query or origin.fragment:
-            return False
-        allowed_origins = set(
-            _csv(
-                "SPEECH_TO_TEXT_OPERATOR_ORIGINS",
-                ("http://127.0.0.1:5173", "http://localhost:5173"),
-            )
-        )
-        if request.headers["origin"].rstrip("/") not in allowed_origins:
-            return False
-        if not host.hostname or host.hostname.lower().rstrip(".") not in {
-            "localhost",
-            "127.0.0.1",
-            "::1",
-        }:
-            return False
-        return host.port in {api_port, origin.port}
-    except (KeyError, ValueError):
-        return False
-
-
-def _require_operator(request, *, allow_missing_origin=False):
-    if not _local_operator(request, allow_missing_origin=allow_missing_origin):
-        raise HTTPException(status_code=403, detail="local operator access required")
 
 
 def _safe_store(callback):
@@ -207,7 +152,6 @@ def list_destinations(request: Request):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_destination(request: Request, body: DestinationDefinition):
-    _require_operator(request)
     runtime = request.app.state.backend_runtime
     destination_id = uuid.uuid4().hex
     config = _config_body(body, destination_id)
@@ -223,7 +167,6 @@ def create_destination(request: Request, body: DestinationDefinition):
 
 @router.get("/{destination_id}")
 def get_destination(destination_id: str, request: Request):
-    _require_operator(request, allow_missing_origin=True)
     entry = _safe_store(
         lambda: request.app.state.backend_runtime.profile_store.get_destination(
             destination_id
@@ -238,7 +181,6 @@ def get_destination(destination_id: str, request: Request):
 def replace_destination(
     destination_id: str, request: Request, body: DestinationDefinition
 ):
-    _require_operator(request)
     runtime = request.app.state.backend_runtime
     store = runtime.profile_store
     if _safe_store(lambda: store.get_destination(destination_id)) is None:
@@ -256,7 +198,6 @@ def replace_destination(
 
 @router.delete("/{destination_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_destination(destination_id: str, request: Request):
-    _require_operator(request)
     runtime = request.app.state.backend_runtime
     store = runtime.profile_store
     if _safe_store(lambda: store.get_destination(destination_id)) is None:
@@ -275,7 +216,6 @@ def delete_destination(destination_id: str, request: Request):
 
 @router.post("/{destination_id}/test")
 def test_destination(destination_id: str, request: Request):
-    _require_operator(request)
     runtime = request.app.state.backend_runtime
     if runtime.destination_registry.get_config(destination_id) is None:
         raise HTTPException(status_code=404, detail="destination not found")

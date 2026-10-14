@@ -168,7 +168,7 @@ test('profile destination survives save and duplicate, and run shows delivery in
   await expect(page.getByRole('region', { name: 'Output delivery status' })).toContainText('failed')
 })
 
-test('destination form validates locally and explains local operator access', async ({ page }) => {
+test('destination form validates locally and reports API errors', async ({ page }) => {
   await page.goto('/destinations')
   await page.getByRole('button', { name: 'New destination' }).click()
   await page.getByLabel('Name').fill('Invalid URL receiver')
@@ -182,11 +182,11 @@ test('destination form validates locally and explains local operator access', as
   await expect(page.getByRole('alert')).toContainText('Maximum Retry-After must be a finite number greater than 0.')
   await page.locator('#destination-retry-after').fill('30')
   await page.route('**/api/v1/destinations', async route => {
-    if (route.request().method() === 'POST') return route.fulfill({ status: 403, json: { detail: 'local operator access required' } })
+    if (route.request().method() === 'POST') return route.fulfill({ status: 403, json: { detail: 'Destination administration is forbidden' } })
     await route.continue()
   })
   await page.getByRole('button', { name: 'Save destination' }).click()
-  await expect(page.getByRole('alert')).toContainText('Local operator access is required')
+  await expect(page.getByRole('alert')).toContainText('Destination administration is forbidden')
   await expect(page.getByText('OUTGOING BODY')).toBeVisible()
 
   await page.setViewportSize({ width: 360, height: 820 })

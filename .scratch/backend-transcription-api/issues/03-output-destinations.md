@@ -21,3 +21,5 @@ Implement the [backend destination selection contract](../spec.md#output-destina
 ## Comments
 
 2026-10-14: implementation assigned to a dedicated feature-development sub-agent. Frontend configuration work follows the backend gate and script startup, as requested by the user.
+
+2026-10-15: destination CRUD and synthetic-test routes now accept requests from any client address without Host or Origin restrictions. The authoritative endpoint contract records the current behavior; outbound destination validation and approval requirements remain unchanged.

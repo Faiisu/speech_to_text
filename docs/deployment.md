@@ -36,6 +36,8 @@ The update script requires a clean checkout with a configured Git upstream, fast
 
 The installer completes these stages in order: validate the host, prepare Docker, prepare export dependencies, prepare the model, build the application image, configure and start the service, and check readiness. It accepts Ubuntu 24.04 on x86_64 and checks `/dev/dri`, `/dev/snd`, the LAN route, device group IDs, and TCP port 8000 before making host changes. It detects the LAN IPv4 address and subnet, GPU render device GID, and host `audio` group GID automatically, and rejects Tailscale/CGNAT routes.
 
+Before the installer builds images, create the external Docker network `shared-network` if it does not already exist: `docker network create shared-network`. The managed `speech-to-text` service joins this network through the Compose network key `shared`; the installer checks that the named network exists and stops with this command if it is missing. The network remains operator-managed, and the standalone MQTT Compose service is not attached to it automatically.
+
 The service bind-mounts `/dev/snd` and allows read/write access to ALSA character devices, so a USB microphone connected after container startup can be discovered without recreating the container. The host must recognize the microphone as an ALSA capture device and assign its `/dev/snd` nodes to the `audio` group. Request the microphone list again after connecting a device to refresh discovery.
 
 If Docker Engine or its Compose plugin is missing, a root run can install the required Docker packages. Before installing, the script simulates the apt transaction and stops if apt would remove an installed package. The installer does not purge conflicting packages, install a GPU driver, enable UFW, or stop unrelated containers or services.
@@ -71,7 +73,7 @@ The bundled configuration permits anonymous clients and binds only to host loopb
 
 ## Go-live gate
 
-The backend connects transcription workflows to the selected saved destination. Before normal LAN use, configure a destination locally, select it in a profile, and verify both synthetic delivery and a terminal workflow result against the actual receiver. Approve required LAN CIDRs and credential/TLS resource references through the deployment environment, not in the image; see [output configuration](configuration.md#transcript-matching-and-forwarding). Forwarding retries remain bounded in memory and are not retained across restarts. Destination administration is restricted to the local operator API; remote clients can select saved IDs.
+The backend connects transcription workflows to the selected saved destination. Before normal LAN use, configure a destination through the API, select it in a profile, and verify both synthetic delivery and a terminal workflow result against the actual receiver. Approve required LAN CIDRs and credential/TLS resource references through the deployment environment, not in the image; see [output configuration](configuration.md#transcript-matching-and-forwarding). Forwarding retries remain bounded in memory and are not retained across restarts. Destination API access rules are defined in the [destination endpoints specification](../.scratch/backend-transcription-api/spec.md#destination-endpoints).
 
 ## See also
 

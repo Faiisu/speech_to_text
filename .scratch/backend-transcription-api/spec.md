@@ -135,15 +135,15 @@ MQTT destination bodies additionally select `protocol: "mqtt"`, an `mqtt://` or 
 | Endpoint under `/api/v1` | Behavior |
 | --- | --- |
 | `GET /destinations` | Public listing `{ "destinations": [...] }` with ID, name, endpoint origin, method, auth type, payload format, and UTC created/updated timestamps. Excludes the full configuration and secret references. |
-| `POST /destinations` | Local operator creates a destination; HTTP 201 returns summary fields plus `config`. |
-| `GET /destinations/{destination_id}` | Local operator reads summary plus editable configuration. |
-| `PUT /destinations/{destination_id}` | Local operator replaces name/configuration, preserving ID and creation time. |
-| `DELETE /destinations/{destination_id}` | Local operator deletes an unreferenced entry; HTTP 204. A profile reference returns HTTP 409. Active runs keep their already bound sender. |
-| `POST /destinations/{destination_id}/test` | Local operator sends a real synthetic terminal JSON record; returns `status`, `event_id`, `attempts`, `http_status`, and a sanitized `error_code` on failure. HTTP 2xx, including 202/204, counts as accepted delivery. This synchronous route submits delivery to the backend workflow executor and waits in FastAPI's worker pool. |
+| `POST /destinations` | Creates a destination; HTTP 201 returns summary fields plus `config`. |
+| `GET /destinations/{destination_id}` | Reads summary plus editable configuration. |
+| `PUT /destinations/{destination_id}` | Replaces name/configuration, preserving ID and creation time. |
+| `DELETE /destinations/{destination_id}` | Deletes an unreferenced entry; HTTP 204. A profile reference returns HTTP 409. Active runs keep their already bound sender. |
+| `POST /destinations/{destination_id}/test` | Sends a real synthetic terminal JSON record; returns `status`, `event_id`, `attempts`, `http_status`, and a sanitized `error_code` on failure. HTTP 2xx, including 202/204, counts as accepted delivery. This synchronous route submits delivery to the backend workflow executor and waits in FastAPI's worker pool. |
 
 Create/replace bodies contain `name` and the workflow destination fields except `destination_id`, which the backend generates. Responses place editable settings under `config`. Unknown/invalid configuration fields return HTTP 422. Store failures return a safe HTTP 503. Destination CRUD uses the same SQLite file as profiles; existing databases gain a nullable profile `destination_id` and a destination definitions table without deleting existing records. Saved definitions contain secret/resource reference names only, never resolved credentials.
 
-Operator access requires an actual loopback client and a local Host on `SPEECH_TO_TEXT_API_PORT` (default `8000`) or the approved frontend Origin port. Local GET requests without Origin also accept the default frontend port `5173`. Mutations and synthetic tests require an Origin in `SPEECH_TO_TEXT_OPERATOR_ORIGINS`, defaulting to `http://127.0.0.1:5173,http://localhost:5173`. Browser-style local GET detail requests may omit Origin; supplied Origins are still checked. Forwarded headers cannot grant access. The frontend development proxy uses `changeOrigin: true` so the backend receives its own Host. Unapproved operator requests return HTTP 403. Remote callers may list safe summaries and select saved IDs; they cannot manage destination definitions.
+Destination endpoints accept requests from any client address and do not restrict requests by `Host` or `Origin`. The API has no authentication. Deployments that need restricted administration must enforce that boundary outside these routes. This inbound access behavior does not change destination validation, deployment-approved secret/TLS references, or outbound network policy.
 
 ## Non-goals
 

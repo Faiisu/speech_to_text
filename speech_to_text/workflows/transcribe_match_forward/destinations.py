@@ -386,7 +386,7 @@ class DestinationRegistry:
         # Fail registry construction for malformed deployment egress settings.
         EgressPolicy(frozenset(origin for origin in self._allowed_origins if urlsplit(origin).scheme in {"http", "https"}), self._allowed_networks)
         for config in self._configs.values():
-            # Registration is an explicit operator approval because destination writes are local-admin only.
+            # Registration is an explicit approval for outbound access to the destination origin.
             if _origin_text(config.endpoint_url) not in self._allowed_origins:
                 self._allowed_origins += (_origin_text(config.endpoint_url),)
 

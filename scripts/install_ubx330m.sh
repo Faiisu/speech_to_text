@@ -486,6 +486,7 @@ fi
 install_docker_if_needed
 docker info >/dev/null 2>&1 || fail "Docker Engine is not responding."
 docker compose version >/dev/null 2>&1 || fail "Docker Compose plugin is not available."
+docker network inspect shared-network >/dev/null 2>&1 || fail "Required external Docker network 'shared-network' does not exist. Create it with 'docker network create shared-network', then rerun."
 
 stage "Prepare/load export dependencies"
 say "Building the locked OpenVINO and Hugging Face dependencies into $EXPORT_DEPS_IMAGE from this checkout."
@@ -570,6 +571,8 @@ services:
       - /dev/snd:/dev/snd
       - $INSTALL_DIR/data:/data
       - $MODEL_DIR:/opt/models:ro
+    networks:
+      - shared
     environment:
       SPEECH_TO_TEXT_MODELS_DIR: /opt/models
       SPEECH_TO_TEXT_MODEL: turbo
@@ -577,6 +580,10 @@ services:
       SPEECH_TO_TEXT_PRECISION: source
       SPEECH_TO_TEXT_PROFILE_DB: /data/profiles.sqlite3
     restart: unless-stopped
+networks:
+  shared:
+    external: true
+    name: shared-network
 COMPOSE
 if (( EUID == 0 )); then
   chown "$CHECKOUT_UID:$CHECKOUT_GID" "$INSTALL_DIR/compose.yaml"

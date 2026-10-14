@@ -70,7 +70,7 @@ speech_to_text/backend/
     ├── router.py               # Combine and mount inbound API routes
     ├── microphone_lifecycle.py # Shared microphone start/stop lifecycle helpers
     ├── routes/                  # Endpoint handlers grouped by resource or use case
-    │   ├── destinations.py      # Local operator configuration and synthetic delivery tests
+    │   ├── destinations.py      # Destination configuration and synthetic delivery tests
     │   ├── microphones.py
     │   ├── models.py
     │   ├── profiles.py

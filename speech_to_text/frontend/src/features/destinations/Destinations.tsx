@@ -222,7 +222,6 @@ function safeUrl(value: string, mqtt = false) {
 
 function errorMessage(reason: unknown, fallback: string) {
   if (!(reason instanceof Error)) return fallback
-  if (reason instanceof ApiRequestError && reason.status === 403) return 'Local operator access is required to manage destinations. Open EchoDesk on the backend computer.'
   if (reason instanceof ApiRequestError && reason.status === 503 && reason.message.toLowerCase().includes('secret')) return `${reason.message}. Add the reference name to SPEECH_TO_TEXT_DESTINATION_SECRET_REFS in the backend environment.`
   if (reason instanceof ApiRequestError && reason.status === 503 && reason.message.toLowerCase().includes('resource')) return `${reason.message}. Add the reference name to SPEECH_TO_TEXT_DESTINATION_RESOURCE_REFS in the backend environment.`
   return reason.message || fallback
