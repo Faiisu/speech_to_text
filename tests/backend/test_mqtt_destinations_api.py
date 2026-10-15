@@ -149,7 +149,12 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
     monkeypatch.setenv("SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS", "127.0.0.1/32")
     closed = []
     monkeypatch.setattr(service_module, "load_model", lambda _: SimpleNamespace(close=lambda: closed.append("model")))
-    monkeypatch.setattr(workflow_api, "transcribe_clip", lambda *_args, **_kwargs: "สวัสดีครับ")
+    def transcribe_clip(_clip, _model, _config, *, measurement_sink=None, **_kwargs):
+        if measurement_sink is not None:
+            measurement_sink({"sequence": 0, "rtf": 0.25})
+        return "สวัสดีครับ"
+
+    monkeypatch.setattr(workflow_api, "transcribe_clip", transcribe_clip)
     sessions = {}
 
     class Session:
@@ -226,11 +231,19 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
             assert snapshot["matches"] == [{"keyword": "สวัสดี", "count": 2}]
             assert client.post(f"/api/v1/transcriptions/{workflow_id}/stop").status_code == 202
         if kind == "clip":
-            record = json.loads(received.get(timeout=5).payload)
-            assert record["event_id"] == record["source_id"] == workflow_id
-            assert record["transcript"] == "สวัสดีครับ"
-            assert record["matches"] == [{"keyword": "สวัสดี", "count": 1}]
-            assert record["rtf"] is None
+            deadline = time.monotonic() + 5
+            snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+            while snapshot["status"] not in {"completed", "failed"} and time.monotonic() < deadline:
+                time.sleep(.01)
+                snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+            assert snapshot["status"] == "completed"
+            assert snapshot["transcript"] == "สวัสดีครับ"
+            assert snapshot["matches"] == [{"keyword": "สวัสดี", "count": 1}]
+            assert snapshot["latest_rtf"] == 0.25
+            assert snapshot["delivery"]["status"] == "disabled"
+            events = client.get(f"/api/v1/transcriptions/{workflow_id}/events?after=0").json()["events"]
+            assert not {event["type"] for event in events} & {"forwarded", "forwarding_error"}
+            assert received.empty(), "MQTT clip processing must not publish a payload"
         else:
             deadline = time.monotonic() + 5
             snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
@@ -250,9 +263,10 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
             ):
                 break
             time.sleep(.01)
-        assert snapshot["delivery"]["status"] == "delivered"
-        assert snapshot["delivery"]["transport"] == "mqtt" and snapshot["delivery"]["mqtt_topic"] == topic
-        assert snapshot["delivery"]["http_status"] is None
+        if kind != "clip":
+            assert snapshot["delivery"]["status"] == "delivered"
+            assert snapshot["delivery"]["transport"] == "mqtt" and snapshot["delivery"]["mqtt_topic"] == topic
+            assert snapshot["delivery"]["http_status"] is None
         assert snapshot["status"] in {"completed", "stopped"}
         assert cleanup_marker in closed
         assert client.get("/api/v1/destinations").json()["destinations"][0]["protocol"] == "mqtt"

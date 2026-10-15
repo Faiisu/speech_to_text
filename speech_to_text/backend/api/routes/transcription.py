@@ -79,7 +79,7 @@ def _clip_worker(runtime, record, clip, forwarder=None):
             record.status = "completed"
             result_receipt = getattr(result, "forwarding_receipt", None)
             result_error = getattr(result, "forwarding_error", None)
-            if record.destination_id is not None:
+            if record.delivery["status"] == "pending":
                 delivered = result_receipt is not None and result_error is None
                 record.delivery.update(
                     {
@@ -115,7 +115,7 @@ def _clip_worker(runtime, record, clip, forwarder=None):
                 "matches": matches,
             },
         )
-        if record.destination_id is not None:
+        if record.delivery["status"] != "disabled":
             with record.lock:
                 delivery = dict(record.delivery)
             runtime.append_event(
@@ -187,7 +187,7 @@ async def transcribe_clip(
 ):
     clip_path = None
     runtime = request.app.state.backend_runtime
-    forwarder = _resolve_forwarder(runtime, destination_id)
+    forwarder = _resolve_clip_forwarder(runtime, destination_id)
     try:
         if not file.filename or not file.filename.lower().endswith(".wav"):
             raise HTTPException(status_code=422, detail="file must be a WAV file")
@@ -215,12 +215,12 @@ async def transcribe_clip(
         validated_keywords,
         destination_id=destination_id,
         delivery={
-            "status": "pending" if destination_id is not None else "disabled",
+            "status": "pending" if forwarder is not None else "disabled",
             "destination_id": destination_id,
             "event_id": workflow_id,
             "attempts": 0,
             "http_status": None,
-            "transport": getattr(forwarder, "transport", "http") if destination_id else None,
+            "transport": getattr(forwarder, "transport", "http") if forwarder is not None else None,
             "mqtt_topic": getattr(getattr(forwarder, "config", None), "topic", None),
             "mqtt_qos": getattr(getattr(forwarder, "config", None), "qos", None),
             "last_attempt_at": None,
@@ -277,6 +277,22 @@ def _resolve_forwarder(runtime, destination_id):
         raise HTTPException(status_code=422, detail="unknown destination_id")
     try:
         return runtime.destination_registry.build_forwarder(destination_id)
+    except DestinationConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except DestinationUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _resolve_clip_forwarder(runtime, destination_id):
+    if destination_id is None:
+        return None
+    config = runtime.destination_registry.get_config(destination_id)
+    if config is None:
+        raise HTTPException(status_code=422, detail="unknown destination_id")
+    if config.protocol == "mqtt":
+        return None
+    try:
+        return runtime.destination_registry.build_forwarder(config)
     except DestinationConfigurationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except DestinationUnavailableError as exc:

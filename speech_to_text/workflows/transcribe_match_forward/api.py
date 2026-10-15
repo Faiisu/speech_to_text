@@ -99,7 +99,7 @@ def transcribe_clip_and_forward(
     *,
     measurement_callback=None,
 ):
-    """Transcribe one finite clip, match the full result, then forward it."""
+    """Transcribe and match a finite clip; MQTT destinations are reserved for microphone chunks."""
     matching_config = _validate_matching_config(matching_config)
     flow_config = {} if flow_config is None else dict(flow_config)
     source_id = flow_config.get("source_id") or uuid.uuid4().hex
@@ -126,14 +126,9 @@ def transcribe_clip_and_forward(
     matched = match_keywords(transcript, matching_config)
     receipt = None
     error = None
-    if forwarder is not None:
+    if forwarder is not None and getattr(forwarder, "transport", None) != "mqtt":
         try:
-            record_options = (
-                {"rtf": latest_rtf, "include_rtf": True}
-                if getattr(forwarder, "transport", None) == "mqtt"
-                else {}
-            )
-            receipt = _send(forwarder, _record(source_id, matched, transcript, "completed", **record_options))
+            receipt = _send(forwarder, _record(source_id, matched, transcript, "completed"))
         except Exception as exc:  # Preserve the completed transcript and match results.
             error = exc
     return PipelineResult(

@@ -412,7 +412,7 @@ def test_mqtt_session_without_transcript_does_not_publish_an_aggregate():
     assert forwarder.records == []
 
 
-def test_mqtt_clip_forwards_latest_inference_rtf(monkeypatch):
+def test_mqtt_clip_keeps_latest_inference_rtf_without_publishing(monkeypatch):
     class FakeMqttForwarder:
         transport = "mqtt"
 
@@ -434,7 +434,11 @@ def test_mqtt_clip_forwards_latest_inference_rtf(monkeypatch):
     )
 
     assert result.latest_rtf == 0.25
-    assert forwarder.records[0]["rtf"] == 0.25
+    assert result.transcript == "สวัสดี"
+    assert [(item.keyword, item.count) for item in result.matches] == [("สวัสดี", 1)]
+    assert result.forwarding_receipt is None
+    assert result.forwarding_error is None
+    assert forwarder.records == []
 
 
 def test_session_reports_forwarding_failure_without_losing_matches():

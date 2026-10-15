@@ -221,6 +221,7 @@ def test_clip_worker_forwards_terminal_record_to_saved_destination(
             assert snapshot["transcript"] == "สวัสดี"
             assert snapshot["delivery"]["status"] == "delivered"
             assert snapshot["delivery"]["destination_id"] == destination_id
+            assert snapshot["delivery"]["transport"] == "http"
             _path, _key, delivered = _Receiver.records[0]
             assert delivered["transcript"] == "สวัสดี"
             assert delivered["matches"] == [{"keyword": "สวัสดี", "count": 1}]
