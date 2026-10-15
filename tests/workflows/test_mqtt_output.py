@@ -139,10 +139,10 @@ def test_real_broker_receives_utf8_json_with_selected_qos(broker_subscription, q
     url, topic, received = broker_subscription
     config = DestinationConfig("mqtt", url, protocol="mqtt", mqtt_topic=topic, mqtt_qos=qos)
     registry = DestinationRegistry([config], allowed_origins=(), allowed_networks=("127.0.0.1/32",))
-    record = {"source_id": "run", "event_id": "run", "transcript": "สวัสดีครับ"}
+    record = {"source_id": "run", "event_id": "run:chunk:1", "transcript": "สวัสดีครับ"}
     receipt = registry.build_forwarder("mqtt").forward(record)
     message = received.get(timeout=5)
     assert json.loads(message.payload) == record
     assert receipt.qos == message.qos == qos
-    assert receipt.event_id == "run" and receipt.attempts == 1
+    assert receipt.event_id == "run:chunk:1" and receipt.attempts == 1
     assert not message.retain

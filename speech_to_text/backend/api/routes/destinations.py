@@ -236,6 +236,8 @@ def test_destination(destination_id: str, request: Request):
         "status": "completed",
         "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    if getattr(forwarder, "transport", None) == "mqtt":
+        payload["rtf"] = None
     try:
         receipt = runtime.executor.submit(forwarder.forward, payload).result()
     except ForwardingError as exc:

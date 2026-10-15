@@ -26,7 +26,7 @@ flowchart LR
 ## Main modules
 
 - `speech_to_text/features/model_deployment/` owns the model catalog, runtime adapters, configuration validation, audio normalization, chunking, transcription, sessions, and process topologies.
-- `speech_to_text/features/word_matching/` matches configured Thai keywords and phrases in completed transcripts and counts occurrences per target.
+- `speech_to_text/features/word_matching/` matches configured Thai keywords and phrases and counts occurrences per target.
 - `speech_to_text/workflows/transcribe_match_forward/` composes Feature 01 and matching, returns results to its caller, and owns optional output delivery for clips and per-source microphone sessions.
 - `speech_to_text/backend/` owns the FastAPI application, process lifecycle, inbound API routes, and HTTP schemas.
 - `tests/feature_01/` verifies Feature 01 callable contracts independently from any frontend or backend adapter.
@@ -35,7 +35,7 @@ flowchart LR
 
 The caller can load a `ModelHandle` once and pass it to one or more input flows in the owning process, or use the per-input-model topology to give each input process its own model. Backend microphone requests expose these as `shared` and `per_workflow_process` execution modes. The workflow owns each process group and returns source-tagged events to the backend in either mode.
 
-The transcript-match-forward workflow consumes Feature 01's completed clip transcript or ordered session events. It assembles each session by `source_id`, matches the complete transcript after its terminal event, returns results to its caller, and can forward one idempotent record per source. It does not change Feature 01's event contract. Outbound delivery retries transient failures in memory; durable delivery across process restarts is not included. The [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md) owns the matching, payload, and output contracts.
+The transcript-match-forward workflow consumes Feature 01's completed clip transcript or ordered session events. It emits cumulative match snapshots as session transcript chunks arrive and matches the final assembled transcript at terminal completion. MQTT also publishes each cumulative chunk snapshot; HTTP forwarding remains terminal-only. It does not change Feature 01's event contract. Outbound delivery retries transient failures in memory; durable delivery across process restarts is not included. The [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md) owns the matching, payload, and output contracts.
 
 Microphone capture and clip decoding are normalized inside Feature 01. Inference chunks do not overlap. Successful text is assembled in sequence order; a failed chunk emits an error and later chunks continue. Stopping a flow flushes its partial chunk before the completion event. Full event and configuration contracts live in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md).
 

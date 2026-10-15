@@ -14,8 +14,10 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from speech_to_text.features.word_matching import WordMatchingConfig
 from speech_to_text.backend.app import create_app
 from speech_to_text.backend.dependencies import BackendRuntime
+from speech_to_text.workflows.transcribe_match_forward.api import forward_session
 from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     TranscriptionService,
@@ -324,6 +326,71 @@ def test_failed_microphone_stop_does_not_leave_workflow_stopping(api):
     assert status["error"] == "capture device refused to stop"
     completed, _ = wait_for_event_type(client, workflow_id, "completed")
     assert completed["status"] == "failed"
+
+
+def test_microphone_api_exposes_cumulative_matches_before_stop(api, monkeypatch):
+    client, service = api
+
+    class LiveSession:
+        def __init__(self):
+            self.source_id = None
+            self.result_queue = queue.Queue()
+
+        def stop(self, *, timeout=None):
+            self.result_queue.put(
+                {
+                    "type": "completed",
+                    "source_id": self.source_id,
+                    "status": "stopped",
+                }
+            )
+
+    session = LiveSession()
+
+    def start_microphone(device, keywords, flow_config=None, **_options):
+        session.source_id = flow_config["source_id"]
+        return forward_session(
+            session, None, WordMatchingConfig(keywords=tuple(keywords))
+        )
+
+    monkeypatch.setattr(service, "start_microphone", start_microphone)
+    started = client.post(
+        "/api/v1/transcriptions/microphones",
+        json={"keywords": ["alpha", "beta"], "device": "Studio Mic"},
+    )
+    assert started.status_code == 202
+    workflow_id = started.json()["workflow_id"]
+
+    session.result_queue.put(
+        {"type": "transcript", "source_id": workflow_id, "sequence": 0, "text": "alpha"}
+    )
+    first = wait_for_status(client, workflow_id, "recording")
+    deadline = time.monotonic() + 2
+    while first["matches"] != [
+        {"keyword": "alpha", "count": 1}, {"keyword": "beta", "count": 0}
+    ] and time.monotonic() < deadline:
+        time.sleep(0.01)
+        first = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+    assert first["matches"] == [
+        {"keyword": "alpha", "count": 1}, {"keyword": "beta", "count": 0}
+    ]
+
+    session.result_queue.put(
+        {"type": "transcript", "source_id": workflow_id, "sequence": 1, "text": " alpha"}
+    )
+    deadline = time.monotonic() + 2
+    current = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+    while current["matches"][0]["count"] != 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+        current = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+    assert current["matches"] == [
+        {"keyword": "alpha", "count": 2}, {"keyword": "beta", "count": 0}
+    ]
+
+    stopped = client.post(f"/api/v1/transcriptions/{workflow_id}/stop")
+    assert stopped.status_code == 202
+    final = wait_for_status(client, workflow_id, "stopped")
+    assert final["matches"] == current["matches"]
 
 
 def test_microphone_api_selects_per_workflow_process_mode(api):

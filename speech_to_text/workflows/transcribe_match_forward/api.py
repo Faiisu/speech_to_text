@@ -43,10 +43,19 @@ def _match_rows(result: WordMatchResult):
     return [{"keyword": item.keyword, "count": item.count} for item in result.matches]
 
 
-def _record(source_id, result, transcript, status):
-    return {
+def _assemble_transcript(events):
+    events.sort(key=lambda event: event.get("sequence", 0))
+    return " ".join(
+        event.get("text", "")
+        for event in events
+        if isinstance(event.get("text", ""), str)
+    )
+
+
+def _record(source_id, result, transcript, status, *, event_id=None, rtf=None, include_rtf=False):
+    record = {
         "event_type": "transcription.match_results",
-        "event_id": source_id,
+        "event_id": source_id if event_id is None else event_id,
         "source_id": source_id,
         "language": result.language,
         "transcript": transcript,
@@ -54,6 +63,9 @@ def _record(source_id, result, transcript, status):
         "status": status,
         "completed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    if include_rtf:
+        record["rtf"] = rtf
+    return record
 
 
 def _validate_matching_config(config):
@@ -116,10 +128,12 @@ def transcribe_clip_and_forward(
     error = None
     if forwarder is not None:
         try:
-            receipt = _send(
-                forwarder,
-                _record(source_id, matched, transcript, "completed"),
+            record_options = (
+                {"rtf": latest_rtf, "include_rtf": True}
+                if getattr(forwarder, "transport", None) == "mqtt"
+                else {}
             )
+            receipt = _send(forwarder, _record(source_id, matched, transcript, "completed", **record_options))
         except Exception as exc:  # Preserve the completed transcript and match results.
             error = exc
     return PipelineResult(
@@ -158,6 +172,8 @@ class SessionWorkflow:
 
     def _consume(self):
         transcript_events = []
+        measurement_rtfs = {}
+        latest_rtf = None
         completed_event = None
         try:
             while completed_event is None:
@@ -166,17 +182,70 @@ class SessionWorkflow:
                     continue
                 if event.get("type") == "transcript":
                     transcript_events.append(event)
+                    self.output_queue.put(event)
+                    transcript = _assemble_transcript(transcript_events)
+                    try:
+                        matched = match_keywords(transcript, self.matching_config)
+                    except Exception as exc:
+                        self.output_queue.put(
+                            {
+                                "type": "matching_error",
+                                "source_id": self.source_id,
+                                "error": str(exc),
+                            }
+                        )
+                        continue
+                    self.output_queue.put(
+                        {
+                            "type": "match_results",
+                            "source_id": self.source_id,
+                            "language": matched.language,
+                            "matches": _match_rows(matched),
+                        }
+                    )
+                    if getattr(self.forwarder, "transport", None) == "mqtt":
+                        try:
+                            receipt = _send(
+                                self.forwarder,
+                                _record(
+                                    self.source_id,
+                                    matched,
+                                    transcript,
+                                    "completed",
+                                    event_id=f"{self.source_id}:chunk:{len(transcript_events)}",
+                                    rtf=measurement_rtfs.get(event.get("sequence")),
+                                    include_rtf=True,
+                                ),
+                            )
+                            self.output_queue.put(
+                                {
+                                    "type": "forwarded",
+                                    "source_id": self.source_id,
+                                    "receipt": receipt,
+                                }
+                            )
+                        except Exception as exc:
+                            self.output_queue.put(
+                                {
+                                    "type": "forwarding_error",
+                                    "source_id": self.source_id,
+                                    "error": str(exc),
+                                    "status_code": getattr(exc, "status_code", None),
+                                    "attempts": getattr(exc, "attempts", None),
+                                }
+                            )
+                    continue
+                if event.get("type") == "measurement":
+                    latest_rtf = event.get("rtf")
+                    sequence = event.get("sequence")
+                    if isinstance(sequence, int) and not isinstance(sequence, bool):
+                        measurement_rtfs[sequence] = event.get("rtf")
                 if event.get("type") == "completed":
                     completed_event = event
                 else:
                     self.output_queue.put(event)
 
-            transcript_events.sort(key=lambda event: event.get("sequence", 0))
-            transcript = " ".join(
-                event.get("text", "")
-                for event in transcript_events
-                if isinstance(event.get("text", ""), str)
-            )
+            transcript = _assemble_transcript(transcript_events)
             try:
                 matched = match_keywords(transcript, self.matching_config)
                 self.output_queue.put(
@@ -189,15 +258,18 @@ class SessionWorkflow:
                 )
                 if self.forwarder is not None:
                     try:
-                        receipt = _send(
-                            self.forwarder,
-                            _record(
-                                self.source_id,
-                                matched,
-                                transcript,
-                                completed_event.get("status", "completed"),
-                            ),
+                        record_options = (
+                            {"rtf": latest_rtf, "include_rtf": True}
+                            if getattr(self.forwarder, "transport", None) == "mqtt"
+                            else {}
                         )
+                        receipt = _send(self.forwarder, _record(
+                            self.source_id,
+                            matched,
+                            transcript,
+                            completed_event.get("status", "completed"),
+                            **record_options,
+                        ))
                         self.output_queue.put(
                             {
                                 "type": "forwarded",

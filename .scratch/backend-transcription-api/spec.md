@@ -54,7 +54,7 @@ The route validates the request, copies the upload to a temporary WAV file in 1 
 {"workflow_id":"<id>","status":"queued","first_queued_at":"<UTC timestamp>","last_response_at":null}
 ```
 
-`first_queued_at` is set to the successful executor submission time. `last_response_at` is null until the worker has a transcription result or failure outcome. The worker records transcript, match results, completion, or workflow error events and exposes the final transcript, matches, and updated timestamps in status.
+`first_queued_at` is set to the successful executor submission time. `last_response_at` is null until the worker has a transcription result or failure outcome. The worker records transcript, match results, completion, or workflow error events and exposes the final transcript, matches, and updated timestamps in status. For microphone workflows, transcript events are followed by cumulative `match_results` snapshots, and status `matches` is replaced as each snapshot arrives; see the [workflow matching contract](../transcript-matching-forwarding/spec.md#pipeline-behavior).
 
 ### `POST /transcriptions/microphones`
 

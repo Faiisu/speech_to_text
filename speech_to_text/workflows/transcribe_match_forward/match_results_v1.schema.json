@@ -33,6 +33,7 @@
       }
     },
     "status": {"enum": ["completed", "stopped", "failed"]},
+    "rtf": {"type": ["number", "null"], "minimum": 0},
     "completed_at": {
       "type": "string",
       "format": "date-time",

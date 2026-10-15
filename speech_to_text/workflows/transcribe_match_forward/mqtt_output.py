@@ -1,4 +1,4 @@
-"""Terminal JSON publishing over MQTT 3.1.1 with bounded broker acknowledgements."""
+"""JSON publishing over MQTT 3.1.1 with bounded broker acknowledgements."""
 
 from dataclasses import dataclass, field
 import json
@@ -168,7 +168,7 @@ class MqttForwarder:
                 message.wait_for_publish(timeout=max(0, deadline - time.monotonic()))
                 if not message.is_published():
                     raise TimeoutError("MQTT publish acknowledgement timed out")
-                return MqttForwardingReceipt(record["source_id"], attempt, self.config.topic,
+                return MqttForwardingReceipt(record.get("event_id", record["source_id"]), attempt, self.config.topic,
                                              self.config.qos, self.config.retain)
             except ssl.SSLError as exc:
                 raise ForwardingError("MQTT TLS validation failed", attempts=attempt) from exc

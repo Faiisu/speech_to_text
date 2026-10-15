@@ -5,7 +5,7 @@ Speech-to-Text provides a React frontend, a FastAPI backend, and callable Python
 ## Current capabilities
 
 - Discover local speech models and transcribe WAV clips or microphone input with OpenVINO or CTranslate2 runtimes.
-- Match configured Thai words and phrases in completed transcripts and count occurrences.
+- Match configured Thai words and phrases as microphone transcript chunks arrive, with cumulative occurrence counts.
 - Save reusable microphone profiles and start, monitor, and stop workflow runs from the frontend.
 - Run the Capacity lab file-replay stress matrix to compare shared-model and per-input-model execution at 1, 2, and 4 concurrent workflows.
 - Report per-chunk real-time factor (RTF), timing, and capacity evidence.

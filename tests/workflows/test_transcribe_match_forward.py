@@ -166,16 +166,23 @@ def test_session_preserves_source_events_then_matches_and_forwards_partial_failu
 
     assert [event["type"] for event in events] == [
         "transcript",
+        "match_results",
         "error",
         "transcript",
+        "match_results",
         "match_results",
         "forwarded",
         "completed",
     ]
     assert events[0] == source_events[0]
-    assert events[1] == source_events[1]
-    assert events[2] == source_events[2]
-    assert events[3] == {
+    assert events[1]["matches"] == [
+        {"keyword": "สวัสดี", "count": 0},
+        {"keyword": "ลาก่อน", "count": 1},
+        {"keyword": "ขอบคุณ", "count": 0},
+    ]
+    assert events[2] == source_events[1]
+    assert events[3] == source_events[2]
+    expected_matches = {
         "type": "match_results",
         "source_id": "source-17",
         "language": "th",
@@ -185,10 +192,12 @@ def test_session_preserves_source_events_then_matches_and_forwards_partial_failu
             {"keyword": "ขอบคุณ", "count": 0},
         ],
     }
+    assert events[4] == expected_matches
+    assert events[5] == expected_matches
     assert events[-1] == source_events[-1]
     assert received[0]["transcript"] == "สวัสดี ลาก่อน"
     assert received[0]["status"] == "failed"
-    assert events[4]["receipt"] == {"delivered": True}
+    assert events[6]["receipt"] == {"delivered": True}
 
 
 def test_session_without_forwarder_emits_matches_and_completion_only():
@@ -210,8 +219,177 @@ def test_session_without_forwarder_emits_matches_and_completion_only():
     assert [event["type"] for event in drain_events(wrapped)] == [
         "transcript",
         "match_results",
+        "match_results",
         "completed",
     ]
+
+
+def test_session_emits_cumulative_snapshots_and_forwards_only_once_after_completion():
+    source_events = [
+        {"type": "transcript", "source_id": "source-17", "sequence": 0, "text": "สวัสดี"},
+        {"type": "transcript", "source_id": "source-17", "sequence": 1, "text": " สวัสดี"},
+        {"type": "completed", "source_id": "source-17", "status": "stopped"},
+    ]
+    received = []
+    wrapped = workflow.forward_session(
+        FakeSession(source_events),
+        lambda record: received.append(record),
+        WordMatchingConfig(keywords=("สวัสดี", "ลาก่อน")),
+    )
+
+    wrapped.wait(timeout=1)
+    events = drain_events(wrapped)
+    snapshots = [event for event in events if event["type"] == "match_results"]
+
+    assert [event["matches"] for event in snapshots] == [
+        [{"keyword": "สวัสดี", "count": 1}, {"keyword": "ลาก่อน", "count": 0}],
+        [{"keyword": "สวัสดี", "count": 2}, {"keyword": "ลาก่อน", "count": 0}],
+        [{"keyword": "สวัสดี", "count": 2}, {"keyword": "ลาก่อน", "count": 0}],
+    ]
+    assert [event["type"] for event in events] == [
+        "transcript", "match_results", "transcript", "match_results",
+        "match_results", "forwarded", "completed",
+    ]
+    assert len(received) == 1
+    assert received[0]["transcript"] == "สวัสดี  สวัสดี"
+
+
+def test_mqtt_session_publishes_cumulative_chunks_and_keeps_terminal_summary_once():
+    class FakeMqttForwarder:
+        transport = "mqtt"
+
+        def __init__(self):
+            self.records = []
+
+        def forward(self, record):
+            self.records.append(record)
+            return {"event_id": record["event_id"]}
+
+    forwarder = FakeMqttForwarder()
+    wrapped = workflow.forward_session(
+        FakeSession(
+            [
+                {"type": "measurement", "source_id": "source-17", "sequence": 1, "rtf": 0.2},
+                {"type": "measurement", "source_id": "source-17", "sequence": 0, "rtf": 0.1},
+                {"type": "transcript", "source_id": "source-17", "sequence": 0, "text": "สวัสดี"},
+                {"type": "transcript", "source_id": "source-17", "sequence": 1, "text": " สวัสดี"},
+                {"type": "completed", "source_id": "source-17", "status": "stopped"},
+            ]
+        ),
+        forwarder,
+        WordMatchingConfig(keywords=("สวัสดี", "ลาก่อน")),
+    )
+
+    wrapped.wait(timeout=1)
+    events = drain_events(wrapped)
+
+    assert [record["matches"] for record in forwarder.records] == [
+        [{"keyword": "สวัสดี", "count": 1}, {"keyword": "ลาก่อน", "count": 0}],
+        [{"keyword": "สวัสดี", "count": 2}, {"keyword": "ลาก่อน", "count": 0}],
+        [{"keyword": "สวัสดี", "count": 2}, {"keyword": "ลาก่อน", "count": 0}],
+    ]
+    assert [record["event_id"] for record in forwarder.records] == [
+        "source-17:chunk:1", "source-17:chunk:2", "source-17"
+    ]
+    assert [record["source_id"] for record in forwarder.records] == [
+        "source-17", "source-17", "source-17"
+    ]
+    assert [record["rtf"] for record in forwarder.records] == [0.1, 0.2, 0.1]
+    assert forwarder.records[-1]["status"] == "stopped"
+    assert [event["type"] for event in events] == [
+        "measurement", "measurement",
+        "transcript", "match_results", "forwarded", "transcript", "match_results",
+        "forwarded", "match_results", "forwarded", "completed",
+    ]
+
+
+def test_mqtt_chunk_delivery_error_does_not_stop_matching_later_chunks():
+    class FailingFirstMqttForwarder:
+        transport = "mqtt"
+
+        def __init__(self):
+            self.records = []
+
+        def forward(self, record):
+            self.records.append(record)
+            if len(self.records) == 1:
+                raise RuntimeError("broker unavailable")
+            return {"event_id": record["event_id"]}
+
+    forwarder = FailingFirstMqttForwarder()
+    wrapped = workflow.forward_session(
+        FakeSession(
+            [
+                {"type": "transcript", "source_id": "source-17", "sequence": 0, "text": "สวัสดี"},
+                {"type": "transcript", "source_id": "source-17", "sequence": 1, "text": " สวัสดี"},
+                {"type": "completed", "source_id": "source-17", "status": "stopped"},
+            ]
+        ),
+        forwarder,
+        WordMatchingConfig(keywords=("สวัสดี",)),
+    )
+
+    wrapped.wait(timeout=1)
+    events = drain_events(wrapped)
+
+    assert [event["type"] for event in events].count("match_results") == 3
+    assert [event["type"] for event in events].count("forwarding_error") == 1
+    assert [record["event_id"] for record in forwarder.records] == [
+        "source-17:chunk:1", "source-17:chunk:2", "source-17"
+    ]
+    assert events[-1]["type"] == "completed"
+
+
+def test_mqtt_records_use_null_rtf_when_measurements_are_unavailable():
+    class FakeMqttForwarder:
+        transport = "mqtt"
+
+        def __init__(self):
+            self.records = []
+
+        def forward(self, record):
+            self.records.append(record)
+
+    forwarder = FakeMqttForwarder()
+    wrapped = workflow.forward_session(
+        FakeSession(
+            [
+                {"type": "transcript", "source_id": "source-17", "sequence": 0, "text": "สวัสดี"},
+                {"type": "completed", "source_id": "source-17", "status": "stopped"},
+            ]
+        ),
+        forwarder,
+        WordMatchingConfig(keywords=("สวัสดี",)),
+    )
+
+    wrapped.wait(timeout=1)
+
+    assert [record["rtf"] for record in forwarder.records] == [None, None]
+
+
+def test_mqtt_clip_forwards_latest_inference_rtf(monkeypatch):
+    class FakeMqttForwarder:
+        transport = "mqtt"
+
+        def __init__(self):
+            self.records = []
+
+        def forward(self, record):
+            self.records.append(record)
+
+    def transcribe_clip(_clip, _handle, _config, *, source_id, measurement_sink):
+        measurement_sink({"sequence": 0, "rtf": 0.1})
+        measurement_sink({"sequence": 1, "rtf": 0.25})
+        return "สวัสดี"
+
+    monkeypatch.setattr(api, "transcribe_clip", transcribe_clip)
+    forwarder = FakeMqttForwarder()
+    result = workflow.transcribe_clip_and_forward(
+        b"clip", object(), forwarder, WordMatchingConfig(keywords=("สวัสดี",))
+    )
+
+    assert result.latest_rtf == 0.25
+    assert forwarder.records[0]["rtf"] == 0.25
 
 
 def test_session_reports_forwarding_failure_without_losing_matches():
@@ -240,11 +418,12 @@ def test_session_reports_forwarding_failure_without_losing_matches():
     assert [event["type"] for event in events] == [
         "transcript",
         "match_results",
+        "match_results",
         "forwarding_error",
         "completed",
     ]
-    assert events[1]["matches"] == [{"keyword": "สวัสดี", "count": 1}]
-    assert events[2]["error"] == "receiver unavailable"
+    assert events[2]["matches"] == [{"keyword": "สวัสดี", "count": 1}]
+    assert events[3]["error"] == "receiver unavailable"
     assert events[-1] == source_events[-1]
 
 
@@ -440,6 +619,7 @@ def test_per_workflow_process_mode_owns_group_through_natural_completion(monkeyp
     ]
     assert [event["type"] for event in drain_events(wrapped)] == [
         "transcript",
+        "match_results",
         "match_results",
         "completed",
     ]

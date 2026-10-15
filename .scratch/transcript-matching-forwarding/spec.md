@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Compose the existing Feature 01 transcription interface with Thai keyword/phrase matching and workflow-owned output delivery. Feature 01 continues to own audio input, model execution, chunking, transcript events, and session lifecycle. The matching feature finds configured terms in completed transcripts and reports each term's occurrence count. The workflow returns its result to the backend caller and decides whether to send additional output to another backend or external system.
+Compose the existing Feature 01 transcription interface with Thai keyword/phrase matching and workflow-owned output delivery. Feature 01 continues to own audio input, model execution, chunking, transcript events, and session lifecycle. The matching feature finds configured terms in transcript snapshots and reports each term's cumulative occurrence count. The workflow returns its result to the backend caller and decides whether to send additional output to another backend or external system.
 
 ## Matching contract
 
@@ -15,9 +15,9 @@ Compose the existing Feature 01 transcription interface with Thai keyword/phrase
 ## Pipeline behavior
 
 - `transcribe_clip_and_forward(clip, model_handle, forwarder, matching_config, flow_config=None)` invokes Feature 01 clip transcription, matches the complete transcript, forwards one result, and returns a `PipelineResult` containing transcript, per-keyword counts, source ID, delivery result, and `latest_rtf`. `latest_rtf` is the RTF from the most recent chunk measurement, or null when no chunk reached inference. An optional measurement callback receives each Feature 01 clip measurement as it arrives.
-- `forward_session(session, forwarder, matching_config)` consumes a Feature 01 session result queue, assembles transcript events in `sequence` order, and matches once after the terminal event. It returns a wrapper exposing the source ID, output event queue, and idempotent `stop()` that delegates to Feature 01 and waits for matching and delivery.
+- `forward_session(session, forwarder, matching_config)` consumes a Feature 01 session result queue. After each transcript event it reassembles all received transcript events in `sequence` order and emits an absolute cumulative `match_results` snapshot, including zero-count targets. It recomputes the final ordered transcript at the terminal event for the final snapshot and any forwarding record. Snapshots replace earlier counts; consumers must not add snapshots together. It returns a wrapper exposing the source ID, output event queue, and idempotent `stop()` that delegates to Feature 01 and waits for matching and delivery.
 - The session workflow can wrap a `TranscriptionSession` or `ProcessSession`; callers wrap each source from a process group independently.
-- Session output exposes original Feature 01 events, followed by a `match_results` event and a forwarding result/error before the terminal completion event. Forwarding failures do not erase the transcript or match counts.
+- Session output exposes each original transcript event immediately followed by its `match_results` snapshot. MQTT destinations also publish one cumulative record per transcript chunk and emit a forwarding result/error for each attempt; a final source summary is published once at terminal completion. HTTP destinations remain terminal-only. Forwarding failures do not erase the transcript or match counts or stop later chunk processing.
 - A failed Feature 01 session forwards its partial transcript with `status: "failed"` so the receiver can distinguish incomplete results.
 
 ## Forwarding contract
@@ -89,14 +89,14 @@ HTTP failures raise `ForwardingError` with status and safe diagnostic context.
 ## Original callable scope limits
 
 - Match configured literal substrings in each source's assembled transcript.
-- Forward once when a clip is complete or a microphone session emits its terminal event.
-- The original callable delivery implementation includes no UI page, inbound HTTP route, database, durable outbox, destination-specific payload mapping, or per-chunk forwarding. Configurable destination extensions are described below.
+- Forward completed clips once at completion. HTTP microphone destinations forward once at terminal completion; MQTT microphone destinations forward cumulative chunk snapshots plus one terminal summary.
+- The original callable delivery implementation includes no UI page, inbound HTTP route, database, durable outbox, or destination-specific payload mapping. MQTT microphone destinations publish cumulative snapshots per transcript chunk; HTTP delivery remains terminal-only. Configurable destination extensions are described below.
 
 ## Acceptance criteria
 
 - Matching is callable independently and supports the documented Thai configuration, normalization, literal-substring, and occurrence-count behavior.
 - Clip orchestration invokes Feature 01 once, matches the assembled transcript, forwards one record with a stable source ID, and returns the result.
-- Session orchestration preserves Feature 01 event order, matches once after completion, and forwards once per source for local sessions and process sessions.
+- Session orchestration preserves Feature 01 event order, emits cumulative matching snapshots after each transcript chunk, and forwards once at terminal completion for HTTP destinations and both chunk snapshots and one final summary for MQTT destinations, for local and process sessions.
 - HTTP forwarding sends the documented JSON and headers, honors timeout/retry settings, and reports permanent and exhausted transient failures explicitly.
 - The implementation stays in the module layout above and does not alter Feature 01's transcript/event contract.
 
@@ -120,7 +120,7 @@ A locally saved registry entry approves its origin. `SPEECH_TO_TEXT_DESTINATION_
 
 Legacy Python `HttpForwarderConfig(endpoint_url, bearer_token)` callers without an explicit `egress_policy` retain their original urllib transport behavior. Backend-selected destinations always use registry-built senders with enforced egress policy. This distinction preserves the original callable integration while protecting destinations configured through the API.
 
-Payload mapping, proxy configuration, `{event_id}` URL substitution, per-chunk output, a durable outbox, and cross-process registry refresh are not implemented. Only `match_results_v1` and literal endpoint URLs are accepted. Delivery remains in memory; saved destination definitions survive restart, pending delivery does not. Concrete inbound routes and profile fields are owned by the [backend API contract](../backend-transcription-api/spec.md#output-destination-selection).
+Payload mapping, proxy configuration, `{event_id}` URL substitution, a durable outbox, and cross-process registry refresh are not implemented. Only `match_results_v1` and literal endpoint URLs are accepted. HTTP delivery remains terminal-only; MQTT microphone snapshot delivery is defined in the [MQTT destination contract](#mqtt-destination-contract). Delivery remains in memory; saved destination definitions survive restart, pending delivery does not. Concrete inbound routes and profile fields are owned by the [backend API contract](../backend-transcription-api/spec.md#output-destination-selection).
 
 ### MQTT destination contract
 
@@ -128,7 +128,7 @@ Implemented 2026-10-15. `protocol` defaults to `http`, preserving existing store
 
 MQTT requires `mqtt_topic` (nonempty UTF-8, at most 65535 bytes, no NUL or subscription wildcards), accepts strict `mqtt_qos` 0/1/2 (default 1), and `mqtt_retain` (default false). Authentication is `none` or `username_password`, using approved `username_secret_ref`/`password_secret_ref` values together. Credentials require `mqtts://`; common CA and mutual TLS reference fields apply. The same private-network approval and DNS pinning policy applies. HTTP methods, headers, redirects, Retry-After, and HTTP idempotency headers have no MQTT controls.
 
-`MqttForwarderConfig`, `MqttForwarder`, and `MqttForwardingReceipt` implement the same `forward(record)` boundary. Clips publish once after terminal transcription/matching; shared and process-isolated microphones publish after stop/completion, never per audio chunk. JSON uses the unchanged UTF-8 `match_results_v1` body. Bounded retries use identical bytes and a stable source/event ID. Receivers should deduplicate that ID because reconnect/retry can repeat a publication even with QoS 2.
+`MqttForwarderConfig`, `MqttForwarder`, and `MqttForwardingReceipt` implement the same `forward(record)` boundary. Clips publish once after terminal transcription/matching. Shared and process-isolated microphones publish the cumulative transcript and match snapshot after every transcript chunk, then publish one final summary after stop/completion/failure. Chunk records retain the `match_results_v1` fields: `source_id` is the stable session ID, `event_id` is `<source_id>:chunk:<1-based transcript ordinal>`, and `status` is `completed` to mean that snapshot was processed; the terminal record retains `event_id == source_id` and the source terminal status. MQTT records add optional nullable numeric `rtf`: microphone chunk records use the Feature 01 measurement with the same sequence, and clip/final records use the most recently received inference measurement. It is null if no measurement is available. The RTF meaning and calculation are defined by the [Feature 01 measurement contract](../new-speech-to-text/spec.md#per-chunk-performance-measurement). Chunk and final match counts are absolute snapshots, not deltas. Bounded retries use identical bytes and a stable event ID. Receivers should deduplicate that ID because reconnect/retry can repeat a publication even with QoS 2.
 
 QoS 0 success records completion of the local send; QoS 1/2 wait for broker publication acknowledgement within the attempt timeout. Success does not prove subscriber processing. TLS validation or permanent connection rejection fails without retry; network failures and missing acknowledgements retry up to the configured limit. Delivery receipts expose `transport: "mqtt"`, topic/QoS, attempts, and nullable HTTP status (null). Delivery remains non-durable in memory.
 
@@ -146,7 +146,7 @@ Profile create/edit/duplicate includes optional destination selection. An unavai
 
 Allow clip and microphone workflows, including profile-started runs in both execution modes, to send JSON to a configured HTTP or HTTPS receiver. Receiver technology is irrelevant: a compatible endpoint may be served by FastAPI, Express, PHP, Java, .NET, a reverse proxy, or an API gateway. HTTP compatibility alone does not make application schemas or authentication interchangeable; each destination must accept the configured method, body, and credentials.
 
-Keep one optional destination per run and one logical output record per terminal source. A continuously recording microphone sends only after stop/completion/failure; live per-chunk forwarding requires a separate contract. Keep Feature 01 unchanged. Preserve existing Python callers using `endpoint_url` and `bearer_token`, and preserve the current JSON fields without renaming or wrapping them. No destination means no network request and no synthetic delivery event.
+Keep one optional destination per run. HTTP sends one logical output record per terminal source. MQTT microphone sessions publish one cumulative snapshot per transcript chunk plus one final summary; the unique chunk event IDs keep these records distinct from the terminal event ID. Keep Feature 01 unchanged. Preserve existing Python callers using `endpoint_url` and `bearer_token`, and preserve the current JSON fields without renaming or wrapping them. No destination means no network request and no synthetic delivery event.
 
 ```mermaid
 flowchart LR

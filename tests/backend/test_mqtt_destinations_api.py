@@ -1,4 +1,4 @@
-"""Destination API and terminal workflows publish through a real test broker."""
+"""Destination API and chunk/terminal workflows publish through a real test broker."""
 
 import json
 import queue
@@ -24,11 +24,13 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
     closed = []
     monkeypatch.setattr(service_module, "load_model", lambda _: SimpleNamespace(close=lambda: closed.append("model")))
     monkeypatch.setattr(workflow_api, "transcribe_clip", lambda *_args, **_kwargs: "สวัสดีครับ")
+    sessions = {}
 
     class Session:
         def __init__(self, source_id):
             self.source_id = source_id
             self.result_queue = queue.Queue()
+            self.result_queue.put({"type": "measurement", "source_id": source_id, "sequence": 0, "rtf": 0.1})
             self.result_queue.put({"type": "transcript", "source_id": source_id, "sequence": 0, "text": "สวัสดีครับ"})
             self.stopped = False
 
@@ -38,9 +40,9 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
                 self.result_queue.put({"type": "completed", "source_id": self.source_id, "status": "stopped"})
 
     monkeypatch.setattr(workflow_api, "start_microphone_flow",
-                        lambda _device, _model, config: Session(config["source_id"]))
+                        lambda _device, _model, config: sessions.setdefault(config["source_id"], Session(config["source_id"])))
     monkeypatch.setattr(service_module, "start_multiprocess_microphone_flows",
-                        lambda **kwargs: SimpleNamespace(sessions=[Session(kwargs["flow_configs"][0]["source_id"])],
+                        lambda **kwargs: SimpleNamespace(sessions=[sessions.setdefault(kwargs["flow_configs"][0]["source_id"], Session(kwargs["flow_configs"][0]["source_id"]))],
                                     stop=lambda: closed.append("group"), abort=lambda: closed.append("aborted")))
     store = SQLiteProfileStore(tmp_path / "profiles.sqlite3")
     runtime = BackendRuntime(workflow_service=TranscriptionService(), profile_store=store)
@@ -56,7 +58,9 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
         assert tested.status_code == 200, tested.text
         assert tested.json()["status"] == "delivered"
         assert tested.json()["transport"] == "mqtt" and tested.json()["http_status"] is None
-        assert json.loads(received.get(timeout=5).payload)["event_id"] == tested.json()["event_id"]
+        test_payload = json.loads(received.get(timeout=5).payload)
+        assert test_payload["event_id"] == tested.json()["event_id"]
+        assert test_payload["rtf"] is None
         if kind == "clip":
             started = client.post("/api/v1/transcriptions/clips", data={"keywords": "สวัสดี", "destination_id": destination_id},
                                   files={"file": ("sample.wav", b"audio boundary", "audio/wav")})
@@ -68,21 +72,48 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
         assert started.status_code == 202, started.text
         workflow_id = started.json()["workflow_id"]
         if kind != "clip":
-            assert received.empty(), "microphone must not publish before terminal completion"
+            first_chunk = json.loads(received.get(timeout=5).payload)
+            assert first_chunk["event_id"] == f"{workflow_id}:chunk:1"
+            assert first_chunk["source_id"] == workflow_id
+            assert first_chunk["matches"] == [{"keyword": "สวัสดี", "count": 1}]
+            assert first_chunk["rtf"] == 0.1
+            sessions[workflow_id].result_queue.put(
+                {"type": "measurement", "source_id": workflow_id, "sequence": 1, "rtf": 0.2}
+            )
+            sessions[workflow_id].result_queue.put(
+                {"type": "transcript", "source_id": workflow_id, "sequence": 1, "text": " สวัสดีครับ"}
+            )
+            second_chunk = json.loads(received.get(timeout=5).payload)
+            assert second_chunk["event_id"] == f"{workflow_id}:chunk:2"
+            assert second_chunk["matches"] == [{"keyword": "สวัสดี", "count": 2}]
+            assert second_chunk["rtf"] == 0.2
+            deadline = time.monotonic() + 5
+            snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+            while snapshot["matches"][0]["count"] != 2 and time.monotonic() < deadline:
+                time.sleep(.01)
+                snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+            assert snapshot["matches"] == [{"keyword": "สวัสดี", "count": 2}]
             assert client.post(f"/api/v1/transcriptions/{workflow_id}/stop").status_code == 202
         record = json.loads(received.get(timeout=5).payload)
         assert record["event_id"] == record["source_id"] == workflow_id
-        assert record["transcript"] == "สวัสดีครับ" and record["matches"] == [{"keyword": "สวัสดี", "count": 1}]
+        assert record["transcript"] == ("สวัสดีครับ" if kind == "clip" else "สวัสดีครับ  สวัสดีครับ")
+        assert record["matches"] == [{"keyword": "สวัสดี", "count": 2 if kind != "clip" else 1}]
+        assert record["rtf"] == (None if kind == "clip" else 0.2)
+        cleanup_marker = "group" if kind == "per_workflow_process" else "model"
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
-            if snapshot["delivery"]["status"] != "pending":
+            if (
+                snapshot["status"] in {"completed", "stopped", "failed"}
+                and cleanup_marker in closed
+            ):
                 break
             time.sleep(.01)
         assert snapshot["delivery"]["status"] == "delivered"
         assert snapshot["delivery"]["transport"] == "mqtt" and snapshot["delivery"]["mqtt_topic"] == topic
         assert snapshot["delivery"]["http_status"] is None
-        assert "group" in closed if kind == "per_workflow_process" else "model" in closed
+        assert snapshot["status"] in {"completed", "stopped"}
+        assert cleanup_marker in closed
         assert client.get("/api/v1/destinations").json()["destinations"][0]["protocol"] == "mqtt"
 
 
