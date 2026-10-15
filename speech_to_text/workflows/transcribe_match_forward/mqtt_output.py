@@ -134,6 +134,15 @@ class MqttForwarder:
         if not isinstance(record, dict) or not isinstance(record.get("source_id"), str) or not record["source_id"]:
             raise ValueError("record.source_id must be a non-empty string")
         body = json.dumps(record, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+        attempt = self._publish(body, self.config.retain)
+        return MqttForwardingReceipt(record.get("event_id", record["source_id"]), attempt, self.config.topic,
+                                     self.config.qos, self.config.retain)
+
+    def clear_retained(self):
+        """Delete this topic's retained packet; return attempts or raise ForwardingError."""
+        return self._publish(b"", True)
+
+    def _publish(self, body, retain):
         parsed = parse_broker_url(self.config.endpoint_url)
         port = parsed.port or (8883 if parsed.scheme == "mqtts" else 1883)
         policy = EgressPolicy(frozenset(), self.config.allowed_networks)
@@ -162,14 +171,13 @@ class MqttForwarder:
                 if connection_reason[0] != 0:
                     raise ForwardingError("MQTT broker rejected the connection", attempts=attempt,
                                           transient=connection_reason[0] in {136, 137})
-                message = client.publish(self.config.topic, body, qos=self.config.qos, retain=self.config.retain)
+                message = client.publish(self.config.topic, body, qos=self.config.qos, retain=retain)
                 if message.rc != 0:
                     raise OSError("MQTT publish could not be queued")
                 message.wait_for_publish(timeout=max(0, deadline - time.monotonic()))
                 if not message.is_published():
                     raise TimeoutError("MQTT publish acknowledgement timed out")
-                return MqttForwardingReceipt(record.get("event_id", record["source_id"]), attempt, self.config.topic,
-                                             self.config.qos, self.config.retain)
+                return attempt
             except ssl.SSLError as exc:
                 raise ForwardingError("MQTT TLS validation failed", attempts=attempt) from exc
             except (ForwardingError, OSError, RuntimeError, ValueError) as exc:

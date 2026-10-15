@@ -143,6 +143,36 @@ def _summary(entry):
     return detail
 
 
+def _saved_detail_with_cleanup(entry, runtime, config):
+    detail = _detail(entry)
+    if config.protocol != "mqtt" or config.mqtt_retain:
+        return detail
+    try:
+        forwarder = runtime.destination_registry.build_forwarder(config)
+        attempts = runtime.executor.submit(forwarder.clear_retained).result()
+    except ForwardingError as exc:
+        detail["retained_cleanup"] = {
+            "status": "failed", "attempts": exc.attempts, "error_code": "delivery_failed",
+        }
+    except DestinationUnavailableError:
+        detail["retained_cleanup"] = {
+            "status": "failed", "attempts": 0, "error_code": "destination_unavailable",
+        }
+    except DestinationConfigurationError:
+        detail["retained_cleanup"] = {
+            "status": "failed", "attempts": 0, "error_code": "destination_configuration_error",
+        }
+    except Exception:
+        detail["retained_cleanup"] = {
+            "status": "failed", "attempts": 0, "error_code": "delivery_failed",
+        }
+    else:
+        detail["retained_cleanup"] = {
+            "status": "cleared", "attempts": attempts, "error_code": None,
+        }
+    return detail
+
+
 @router.get("")
 def list_destinations(request: Request):
     runtime = request.app.state.backend_runtime
@@ -162,7 +192,7 @@ def create_destination(request: Request, body: DestinationDefinition):
         )
     )
     runtime.reload_destination_registry()
-    return _detail(entry)
+    return _saved_detail_with_cleanup(entry, runtime, config)
 
 
 @router.get("/{destination_id}")
@@ -193,7 +223,7 @@ def replace_destination(
         )
     )
     runtime.reload_destination_registry()
-    return _detail(entry)
+    return _saved_detail_with_cleanup(entry, runtime, config)
 
 
 @router.delete("/{destination_id}", status_code=status.HTTP_204_NO_CONTENT)

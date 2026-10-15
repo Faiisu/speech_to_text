@@ -114,7 +114,10 @@ export type DestinationDefinition = {
   mqtt_retain?: boolean
 }
 
-export type Destination = DestinationSummary & { config: Omit<DestinationDefinition, 'name'> }
+export type Destination = DestinationSummary & {
+  config: Omit<DestinationDefinition, 'name'>
+  retained_cleanup?: { status: 'cleared' | 'failed'; attempts: number; error_code: string | null }
+}
 
 export type WorkflowEvent = {
   cursor: number

@@ -254,7 +254,7 @@ def test_session_emits_cumulative_snapshots_and_forwards_only_once_after_complet
     assert received[0]["transcript"] == "สวัสดี  สวัสดี"
 
 
-def test_mqtt_session_publishes_cumulative_chunks_and_keeps_terminal_summary_once():
+def test_mqtt_session_publishes_chunk_local_payloads_and_cumulative_ui_snapshots():
     class FakeMqttForwarder:
         transport = "mqtt"
 
@@ -271,35 +271,60 @@ def test_mqtt_session_publishes_cumulative_chunks_and_keeps_terminal_summary_onc
             [
                 {"type": "measurement", "source_id": "source-17", "sequence": 1, "rtf": 0.2},
                 {"type": "measurement", "source_id": "source-17", "sequence": 0, "rtf": 0.1},
-                {"type": "transcript", "source_id": "source-17", "sequence": 0, "text": "สวัสดี"},
-                {"type": "transcript", "source_id": "source-17", "sequence": 1, "text": " สวัสดี"},
+                {"type": "transcript", "source_id": "source-17", "sequence": 0, "text": "สวัสดี สวัสดี"},
+                {"type": "transcript", "source_id": "source-17", "sequence": 1, "text": "ลาก่อน"},
                 {"type": "completed", "source_id": "source-17", "status": "stopped"},
             ]
         ),
         forwarder,
-        WordMatchingConfig(keywords=("สวัสดี", "ลาก่อน")),
+        WordMatchingConfig(keywords=("สวัสดี", "ลาก่อน", "สวัสดี ลาก่อน")),
     )
 
     wrapped.wait(timeout=1)
     events = drain_events(wrapped)
 
+    assert [record["transcript"] for record in forwarder.records] == [
+        "สวัสดี สวัสดี", "ลาก่อน"
+    ]
     assert [record["matches"] for record in forwarder.records] == [
-        [{"keyword": "สวัสดี", "count": 1}, {"keyword": "ลาก่อน", "count": 0}],
-        [{"keyword": "สวัสดี", "count": 2}, {"keyword": "ลาก่อน", "count": 0}],
-        [{"keyword": "สวัสดี", "count": 2}, {"keyword": "ลาก่อน", "count": 0}],
+        [
+            {"keyword": "สวัสดี", "count": 2},
+            {"keyword": "ลาก่อน", "count": 0},
+            {"keyword": "สวัสดี ลาก่อน", "count": 0},
+        ],
+        [
+            {"keyword": "สวัสดี", "count": 0},
+            {"keyword": "ลาก่อน", "count": 1},
+            {"keyword": "สวัสดี ลาก่อน", "count": 0},
+        ],
     ]
-    assert [record["event_id"] for record in forwarder.records] == [
-        "source-17:chunk:1", "source-17:chunk:2", "source-17"
-    ]
+    assert [record["event_id"] for record in forwarder.records] == ["source-17:chunk:1", "source-17:chunk:2"]
     assert [record["source_id"] for record in forwarder.records] == [
-        "source-17", "source-17", "source-17"
+        "source-17", "source-17"
     ]
-    assert [record["rtf"] for record in forwarder.records] == [0.1, 0.2, 0.1]
-    assert forwarder.records[-1]["status"] == "stopped"
+    assert [record["rtf"] for record in forwarder.records] == [0.1, 0.2]
+    snapshots = [event for event in events if event["type"] == "match_results"]
+    assert [snapshot["matches"] for snapshot in snapshots] == [
+        [
+            {"keyword": "สวัสดี", "count": 2},
+            {"keyword": "ลาก่อน", "count": 0},
+            {"keyword": "สวัสดี ลาก่อน", "count": 0},
+        ],
+        [
+            {"keyword": "สวัสดี", "count": 2},
+            {"keyword": "ลาก่อน", "count": 1},
+            {"keyword": "สวัสดี ลาก่อน", "count": 1},
+        ],
+        [
+            {"keyword": "สวัสดี", "count": 2},
+            {"keyword": "ลาก่อน", "count": 1},
+            {"keyword": "สวัสดี ลาก่อน", "count": 1},
+        ],
+    ]
     assert [event["type"] for event in events] == [
         "measurement", "measurement",
         "transcript", "match_results", "forwarded", "transcript", "match_results",
-        "forwarded", "match_results", "forwarded", "completed",
+        "forwarded", "match_results", "completed",
     ]
 
 
@@ -334,9 +359,7 @@ def test_mqtt_chunk_delivery_error_does_not_stop_matching_later_chunks():
 
     assert [event["type"] for event in events].count("match_results") == 3
     assert [event["type"] for event in events].count("forwarding_error") == 1
-    assert [record["event_id"] for record in forwarder.records] == [
-        "source-17:chunk:1", "source-17:chunk:2", "source-17"
-    ]
+    assert [record["event_id"] for record in forwarder.records] == ["source-17:chunk:1", "source-17:chunk:2"]
     assert events[-1]["type"] == "completed"
 
 
@@ -364,7 +387,29 @@ def test_mqtt_records_use_null_rtf_when_measurements_are_unavailable():
 
     wrapped.wait(timeout=1)
 
-    assert [record["rtf"] for record in forwarder.records] == [None, None]
+    assert [record["rtf"] for record in forwarder.records] == [None]
+
+
+def test_mqtt_session_without_transcript_does_not_publish_an_aggregate():
+    class FakeMqttForwarder:
+        transport = "mqtt"
+
+        def __init__(self):
+            self.records = []
+
+        def forward(self, record):
+            self.records.append(record)
+
+    forwarder = FakeMqttForwarder()
+    wrapped = workflow.forward_session(
+        FakeSession([{"type": "completed", "source_id": "source-17", "status": "stopped"}]),
+        forwarder,
+        WordMatchingConfig(keywords=("สวัสดี",)),
+    )
+
+    wrapped.wait(timeout=1)
+
+    assert forwarder.records == []
 
 
 def test_mqtt_clip_forwards_latest_inference_rtf(monkeypatch):

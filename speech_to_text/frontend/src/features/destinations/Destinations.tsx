@@ -30,6 +30,7 @@ export default function Destinations() {
   const [loadError, setLoadError] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [cleanupWarning, setCleanupWarning] = useState('')
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -62,7 +63,7 @@ export default function Destinations() {
   useEffect(() => { void loadList(false) }, [])
 
   const selectDestination = async (id: string) => {
-    setError(''); setNotice(''); setTestResult(null); setLoading(true)
+    setError(''); setNotice(''); setCleanupWarning(''); setTestResult(null); setLoading(true)
     try {
       const detail = await api.destination(id)
       const next = { name: detail.name, ...detail.config } as DestinationDefinition
@@ -73,7 +74,7 @@ export default function Destinations() {
 
   const update = <K extends keyof DestinationDefinition>(key: K, value: DestinationDefinition[K]) => {
     setDraft(current => ({ ...current, [key]: value }))
-    setError(''); setNotice('')
+    setError(''); setNotice(''); setCleanupWarning('')
   }
   const updateAuth = (key: string, value: string) => {
     const auth = { ...draft.auth, [key]: value || null }
@@ -83,10 +84,12 @@ export default function Destinations() {
     if (auth.type === 'api_key_header') { delete auth.username_secret_ref; delete auth.password_secret_ref }
     update('auth', auth)
   }
-  const payload = useMemo(() => JSON.stringify(mqtt ? { ...sample, rtf: null } : sample, null, 2), [mqtt])
+  const payload = useMemo(() => JSON.stringify(mqtt
+    ? { ...sample, event_id: '<source_id>:chunk:<ordinal>', rtf: 0.1 }
+    : sample, null, 2), [mqtt])
 
   const save = async (event: React.FormEvent) => {
-    event.preventDefault(); setError(''); setNotice(''); setTestResult(null)
+    event.preventDefault(); setError(''); setNotice(''); setCleanupWarning(''); setTestResult(null)
     let headers: Record<string, string>
     try {
       const parsed: unknown = JSON.parse(headersText)
@@ -121,6 +124,9 @@ export default function Destinations() {
       setSelected(result); setDraft(next); setHeadersText(JSON.stringify(next.headers, null, 2)); setSavedHeadersText(JSON.stringify(next.headers, null, 2)); setSavedDraft(JSON.stringify(next))
       await loadList(true)
       setNotice(`Saved “${result.name}”.`)
+      if (result.retained_cleanup?.status === 'failed') {
+        setCleanupWarning(`Settings were saved, but clearing the old retained message failed (${result.retained_cleanup.error_code || 'delivery_failed'}). Save again to retry.`)
+      }
     } catch (reason) { setError(errorMessage(reason, 'Could not save destination settings.')) }
     finally { setSaving(false) }
   }
@@ -154,8 +160,9 @@ export default function Destinations() {
   return <div className="page-content destinations-page">
     {loadError && <ApiError message={loadError} retry={() => { setLoading(true); void loadList(false) }} />}
     {error && <div className="destination-alert" role="alert">{error}{error.includes('selected by a profile') && <> <Link to="/profiles">Open profiles</Link></>}</div>}
+    {cleanupWarning && <div className="destination-alert" role="alert">{cleanupWarning}</div>}
     {notice && <div className="destination-notice" role="status">{notice}</div>}
-    <div className="destination-heading"><div><div className="eyebrow">OUTBOUND JSON</div><h1>Destinations</h1><p>Choose where a completed transcript and its keyword matches are sent.</p></div><button className="button destination-new" disabled={busy} onClick={() => { setSelected(null); setDraft(defaults()); setHeadersText('{}'); setSavedHeadersText(''); setSavedDraft(''); setError(''); setNotice(''); setTestResult(null) }}>＋ New destination</button></div>
+    <div className="destination-heading"><div><div className="eyebrow">OUTBOUND JSON</div><h1>Destinations</h1><p>Choose where transcript chunks and their keyword matches are sent.</p></div><button className="button destination-new" disabled={busy} onClick={() => { setSelected(null); setDraft(defaults()); setHeadersText('{}'); setSavedHeadersText(''); setSavedDraft(''); setError(''); setNotice(''); setCleanupWarning(''); setTestResult(null) }}>＋ New destination</button></div>
     <div className="destination-layout">
       <aside className="destination-list" aria-label="Saved destinations">
         <div className="destination-list-head"><span>SAVED RECEIVERS</span><b>{items.length.toString().padStart(2, '0')}</b></div>
@@ -168,13 +175,13 @@ export default function Destinations() {
       <main className="destination-main">
         <form className="destination-form" onSubmit={save}>
           <div className="destination-form-head"><div><span className="eyebrow">{selected ? 'RECEIVER SETTINGS' : 'NEW RECEIVER'}</span><h2>{selected ? draft.name || 'Edit destination' : 'Configure a receiver'}</h2></div>{selected && <span className="destination-id">ID · {selected.destination_id.slice(0, 8)}</span>}</div>
-          <section className="destination-section"><div className="destination-section-title"><span>01</span><div><h3>Endpoint</h3><p>{mqtt ? 'Publish microphone snapshots per transcript chunk and one final summary; publish clips once when complete.' : 'Send one JSON record when a source completes.'}</p></div></div>
+          <section className="destination-section"><div className="destination-section-title"><span>01</span><div><h3>Endpoint</h3><p>{mqtt ? 'Publish each microphone transcript chunk separately; clips publish once when complete.' : 'Send one JSON record when a source completes.'}</p></div></div>
             <label htmlFor="destination-name">Name</label><input id="destination-name" value={draft.name} maxLength={80} onChange={event => update('name', event.target.value)} placeholder="e.g. Operations inbox" />
             <label htmlFor="destination-protocol">Transport</label><select id="destination-protocol" value={draft.protocol || 'http'} disabled={busy} onChange={event => { const protocol = event.target.value as 'http' | 'mqtt'; setDraft({ ...defaults(), name: draft.name, protocol, endpoint_url: protocol === 'mqtt' ? 'mqtt://127.0.0.1:1883' : '', mqtt_topic: protocol === 'mqtt' ? 'speech/transcriptions' : null }); setHeadersText('{}'); setError(''); setTestResult(null) }}><option value="http">HTTP / HTTPS</option><option value="mqtt">MQTT</option></select>
             <small>Changing transport resets its connection settings.</small>
             <label htmlFor="destination-url">{mqtt ? 'Broker URL' : 'Endpoint URL'}</label><input id="destination-url" type="url" value={draft.endpoint_url} onChange={event => update('endpoint_url', event.target.value)} placeholder={mqtt ? 'mqtt://127.0.0.1:1883' : 'https://receiver.example.com/transcripts'} />
             {mqtt ? <><label htmlFor="mqtt-topic">Topic</label><input id="mqtt-topic" value={draft.mqtt_topic || ''} onChange={event => update('mqtt_topic', event.target.value)} placeholder="speech/transcriptions" /><label htmlFor="mqtt-qos">QoS</label><select id="mqtt-qos" value={draft.mqtt_qos ?? 1} onChange={event => update('mqtt_qos', Number(event.target.value))}><option value="0">0 · Send without broker acknowledgement</option><option value="1">1 · At least once</option><option value="2">2 · Exactly once within a connection</option></select><label className="destination-check"><input type="checkbox" checked={draft.mqtt_retain ?? false} onChange={event => update('mqtt_retain', event.target.checked)} /><span>Retain the latest result on this topic</span></label></> : <div className="destination-inline-fields"><div><label htmlFor="destination-method">Method</label><select id="destination-method" value={draft.method} onChange={event => update('method', event.target.value as DestinationDefinition['method'])}><option>POST</option><option>PUT</option><option>PATCH</option></select></div><div><label htmlFor="destination-payload">Payload format</label><select id="destination-payload" value={draft.payload_format} disabled><option value="match_results_v1">Match results v1</option></select></div></div>}
-            <small>{mqtt ? 'Microphone sessions publish a cumulative snapshot per transcript chunk and a final summary; clips publish once when complete. Retries can produce duplicate events, so deduplicate by event_id. Credentials require mqtts://.' : 'Use a literal URL. HTTP is allowed for approved credential-free receivers; credentials require HTTPS.'} Private receivers also need backend network approval.</small>
+            <small>{mqtt ? 'Each microphone record contains only that chunk’s text and match counts. Stopping publishes its flushed final chunk without an aggregate; run status remains cumulative. Retries can produce duplicate events, so deduplicate by event_id. Saving with Retain off clears an old retained packet on this topic; subscribers may receive an empty payload. Credentials require mqtts://.' : 'Use a literal URL. HTTP is allowed for approved credential-free receivers; credentials require HTTPS.'} Private receivers also need backend network approval.</small>
           </section>
           <section className="destination-section"><div className="destination-section-title"><span>02</span><div><h3>Authentication & headers</h3><p>Store reference names only. Secret values stay in the backend environment.</p></div></div>
             <label htmlFor="destination-auth">Authentication</label><select id="destination-auth" value={draft.auth.type} onChange={event => updateAuth('type', event.target.value)}><option value="none">None</option>{mqtt ? <option value="username_password">MQTT username / password</option> : <><option value="bearer">Bearer token</option><option value="basic">Basic authentication</option><option value="api_key_header">API key header</option></>}</select>
@@ -195,7 +202,7 @@ export default function Destinations() {
           </section>
           <div className="destination-actions"><div className="destination-save-state" aria-live="polite">{isDirty ? 'Unsaved changes' : selected ? 'Saved configuration' : 'New configuration'}</div>{selected && <button type="button" className="button button-outline danger-button" onClick={() => void remove()} disabled={busy}>{deleting ? 'Deleting…' : 'Delete'}</button>}<button className="button button-dark" disabled={busy}>{saving ? 'Saving…' : selected ? 'Save changes' : 'Save destination'} <span>↗</span></button></div>
         </form>
-        <aside className="destination-aside"><div className="destination-preview"><div className="destination-preview-head"><div><span className="eyebrow">OUTGOING BODY</span><h3>JSON preview</h3></div><span className="preview-tag">V1</span></div><p>{mqtt ? 'Preview of the final summary record. Microphone chunks publish cumulative snapshots with unique event IDs.' : 'One record per completed source. Thai text stays UTF-8.'}</p><pre aria-label="Outgoing JSON preview">{payload}</pre></div>
+        <aside className="destination-aside"><div className="destination-preview"><div className="destination-preview-head"><div><span className="eyebrow">OUTGOING BODY</span><h3>JSON preview</h3></div><span className="preview-tag">V1</span></div><p>{mqtt ? 'Preview of one MQTT chunk record. Transcript and matches contain only this chunk; UI totals remain cumulative.' : 'One record per completed source. Thai text stays UTF-8.'}</p><pre aria-label="Outgoing JSON preview">{payload}</pre></div>
           <div className="destination-test"><div className="destination-test-mark">↗</div><div className="eyebrow">LIVE RECEIVER CHECK</div><h3>Send test JSON</h3><p>This performs a real request with synthetic text and match data. It uses saved settings and does not alter your form.</p>{isDirty && <div className="test-save-hint">Save your changes before testing. The request will use the saved configuration.</div>}
             <button type="button" className="button destination-test-button" disabled={!selected || isDirty || busy} onClick={() => void sendTest()}>{testing ? 'Sending test…' : 'Send test JSON'} <span>↗</span></button>
             {testResult && <div className={`test-result ${testResult.status}`} role="status"><b>{testResult.status === 'delivered' ? mqtt ? 'Published to MQTT broker' : 'Receiver accepted the test' : 'Test request failed'}</b><span>{mqtt ? `MQTT · QoS ${testResult.mqtt_qos ?? draft.mqtt_qos} · ${draft.mqtt_topic} · ` : testResult.http_status ? `HTTP ${testResult.http_status} · ` : ''}{testResult.attempts} attempt{testResult.attempts === 1 ? '' : 's'}{testResult.error_code ? ` · ${testResult.error_code}` : ''}</span><small>Test event · {testResult.event_id}</small></div>}

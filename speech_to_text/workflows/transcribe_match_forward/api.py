@@ -173,7 +173,6 @@ class SessionWorkflow:
     def _consume(self):
         transcript_events = []
         measurement_rtfs = {}
-        latest_rtf = None
         completed_event = None
         try:
             while completed_event is None:
@@ -205,12 +204,16 @@ class SessionWorkflow:
                     )
                     if getattr(self.forwarder, "transport", None) == "mqtt":
                         try:
+                            chunk_transcript = event.get("text", "")
+                            chunk_matched = match_keywords(
+                                chunk_transcript, self.matching_config
+                            )
                             receipt = _send(
                                 self.forwarder,
                                 _record(
                                     self.source_id,
-                                    matched,
-                                    transcript,
+                                    chunk_matched,
+                                    chunk_transcript,
                                     "completed",
                                     event_id=f"{self.source_id}:chunk:{len(transcript_events)}",
                                     rtf=measurement_rtfs.get(event.get("sequence")),
@@ -236,7 +239,6 @@ class SessionWorkflow:
                             )
                     continue
                 if event.get("type") == "measurement":
-                    latest_rtf = event.get("rtf")
                     sequence = event.get("sequence")
                     if isinstance(sequence, int) and not isinstance(sequence, bool):
                         measurement_rtfs[sequence] = event.get("rtf")
@@ -256,20 +258,19 @@ class SessionWorkflow:
                         "matches": _match_rows(matched),
                     }
                 )
-                if self.forwarder is not None:
+                if self.forwarder is not None and getattr(
+                    self.forwarder, "transport", None
+                ) != "mqtt":
                     try:
-                        record_options = (
-                            {"rtf": latest_rtf, "include_rtf": True}
-                            if getattr(self.forwarder, "transport", None) == "mqtt"
-                            else {}
+                        receipt = _send(
+                            self.forwarder,
+                            _record(
+                                self.source_id,
+                                matched,
+                                transcript,
+                                completed_event.get("status", "completed"),
+                            ),
                         )
-                        receipt = _send(self.forwarder, _record(
-                            self.source_id,
-                            matched,
-                            transcript,
-                            completed_event.get("status", "completed"),
-                            **record_options,
-                        ))
                         self.output_queue.put(
                             {
                                 "type": "forwarded",

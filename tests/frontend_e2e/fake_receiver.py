@@ -27,7 +27,8 @@ def subscribe_to_test_broker():
     mqtt_client.on_connect = lambda client, *_args: client.subscribe("speech/e2e/#", qos=2)
     mqtt_client.on_subscribe = lambda *_args: subscribed.set()
     mqtt_client.on_message = lambda _client, _data, message: mqtt_records.append(
-        {"topic": message.topic, "qos": message.qos, "body": json.loads(message.payload)})
+        {"topic": message.topic, "qos": message.qos,
+         "body": json.loads(message.payload) if message.payload else None})
     mqtt_client.connect(parsed.hostname, parsed.port or 1883)
     mqtt_client.loop_start()
     if not subscribed.wait(5):

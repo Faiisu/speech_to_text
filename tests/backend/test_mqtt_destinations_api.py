@@ -1,9 +1,11 @@
-"""Destination API and chunk/terminal workflows publish through a real test broker."""
+"""Destination API and MQTT chunk workflows publish through a real test broker."""
 
 import json
 import queue
+import threading
 import time
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 from fastapi.testclient import TestClient
 import pytest
@@ -12,9 +14,133 @@ from speech_to_text.backend.app import create_app
 from speech_to_text.backend.dependencies import BackendRuntime
 from speech_to_text.backend.profile_store import SQLiteProfileStore
 from speech_to_text.workflows.transcribe_match_forward import TranscriptionService
+from speech_to_text.workflows.transcribe_match_forward import MqttForwarder, MqttForwarderConfig
 from speech_to_text.workflows.transcribe_match_forward import api as workflow_api
 from speech_to_text.workflows.transcribe_match_forward import service as service_module
+from speech_to_text.workflows.transcribe_match_forward import mqtt_output
 from tests.workflows.test_mqtt_output import broker_subscription  # noqa: F401
+
+
+class _PublishMessage:
+    rc = 0
+
+    def wait_for_publish(self, timeout):
+        pass
+
+    def is_published(self):
+        return True
+
+
+class _CaptureMqttClient:
+    def __init__(self, records, *, connect_error=None):
+        self.records = records
+        self.connect_error = connect_error
+
+    def connect(self, *_args, **_kwargs):
+        if self.connect_error:
+            raise self.connect_error
+        self.on_connect(self, None, None, 0, None)
+
+    def loop_start(self):
+        pass
+
+    def publish(self, topic, payload, qos, retain):
+        self.records.append((topic, payload, qos, retain))
+        return _PublishMessage()
+
+    def disconnect(self):
+        pass
+
+    def loop_stop(self):
+        pass
+
+
+def test_destination_save_clears_only_saved_mqtt_topic_when_retain_is_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS", "127.0.0.1/32")
+    records = []
+    monkeypatch.setattr(mqtt_output, "_make_client", lambda *_args: _CaptureMqttClient(records))
+    store = SQLiteProfileStore(tmp_path / "profiles.sqlite3")
+    runtime = BackendRuntime(workflow_service=TranscriptionService(), profile_store=store)
+    with TestClient(create_app(runtime=runtime), base_url="http://127.0.0.1:8000", client=("127.0.0.1", 51000)) as client:
+        headers = {"Origin": "http://127.0.0.1:5173"}
+        mqtt_body = {"name": "MQTT", "protocol": "mqtt", "endpoint_url": "mqtt://127.0.0.1:1883",
+                     "mqtt_topic": "speech/clear-me", "mqtt_qos": 1, "mqtt_retain": False}
+        created = client.post("/api/v1/destinations", headers=headers, json=mqtt_body)
+        assert created.status_code == 201, created.text
+        assert created.json()["retained_cleanup"] == {"status": "cleared", "attempts": 1, "error_code": None}
+        assert records == [("speech/clear-me", b"", 1, True)]
+
+        replaced = client.put(f"/api/v1/destinations/{created.json()['destination_id']}", headers=headers,
+                              json=mqtt_body)
+        assert replaced.status_code == 200, replaced.text
+        assert len(records) == 2, "saving an already-disabled retain setting retries cleanup"
+
+        retained = {**mqtt_body, "name": "Retained", "mqtt_topic": "speech/keep", "mqtt_retain": True}
+        retained_result = client.post("/api/v1/destinations", headers=headers, json=retained)
+        assert retained_result.status_code == 201
+        assert "retained_cleanup" not in retained_result.json()
+        http_result = client.post("/api/v1/destinations", headers=headers, json={"name": "HTTP", "endpoint_url": "http://127.0.0.1:8123"})
+        assert http_result.status_code == 201
+        assert "retained_cleanup" not in http_result.json()
+        assert len(records) == 2
+
+
+def test_destination_save_survives_retained_cleanup_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS", "127.0.0.1/32")
+    monkeypatch.setattr(mqtt_output, "_make_client", lambda *_args: _CaptureMqttClient([], connect_error=ConnectionRefusedError()))
+    store = SQLiteProfileStore(tmp_path / "profiles.sqlite3")
+    runtime = BackendRuntime(workflow_service=TranscriptionService(), profile_store=store)
+    with TestClient(create_app(runtime=runtime), base_url="http://127.0.0.1:8000", client=("127.0.0.1", 51000)) as client:
+        response = client.post("/api/v1/destinations", headers={"Origin": "http://127.0.0.1:5173"}, json={
+            "name": "MQTT", "protocol": "mqtt", "endpoint_url": "mqtt://127.0.0.1:1883",
+            "mqtt_topic": "speech/clear-me", "mqtt_qos": 1, "mqtt_retain": False,
+        })
+        assert response.status_code == 201, response.text
+        assert response.json()["retained_cleanup"] == {"status": "failed", "attempts": 3, "error_code": "delivery_failed"}
+        saved = client.get(f"/api/v1/destinations/{response.json()['destination_id']}")
+        assert saved.status_code == 200 and saved.json()["config"]["mqtt_retain"] is False
+
+
+def test_real_broker_save_with_retain_off_removes_existing_retained_packet(tmp_path, monkeypatch, broker_subscription):
+    import paho.mqtt.client as mqtt
+
+    broker_url, topic, received = broker_subscription
+    monkeypatch.setenv("SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS", "127.0.0.1/32")
+    MqttForwarder(MqttForwarderConfig(broker_url, topic, retain=True,
+                                     allowed_networks=("127.0.0.1/32",))).forward(
+        {"source_id": "seed", "event_id": "seed", "transcript": "retained marker"}
+    )
+    seeded = received.get(timeout=5)
+    assert json.loads(seeded.payload)["transcript"] == "retained marker"
+
+    store = SQLiteProfileStore(tmp_path / "profiles.sqlite3")
+    runtime = BackendRuntime(workflow_service=TranscriptionService(), profile_store=store)
+    with TestClient(create_app(runtime=runtime), base_url="http://127.0.0.1:8000", client=("127.0.0.1", 51000)) as client:
+        response = client.post("/api/v1/destinations", headers={"Origin": "http://127.0.0.1:5173"}, json={
+            "name": "MQTT", "protocol": "mqtt", "endpoint_url": broker_url,
+            "mqtt_topic": topic, "mqtt_qos": 1, "mqtt_retain": False,
+        })
+        assert response.status_code == 201, response.text
+        assert response.json()["retained_cleanup"]["status"] == "cleared"
+    cleared = received.get(timeout=5)
+    assert cleared.payload == b""
+
+    parsed = urlsplit(broker_url)
+    subscribed = threading.Event()
+    fresh_messages = queue.Queue()
+    fresh_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+    fresh_client.on_connect = lambda client, *_args: client.subscribe(topic, qos=2)
+    fresh_client.on_subscribe = lambda *_args: subscribed.set()
+    fresh_client.on_message = lambda _client, _data, message: fresh_messages.put(message)
+    fresh_client.connect(parsed.hostname, parsed.port or 1883)
+    fresh_client.loop_start()
+    try:
+        assert subscribed.wait(5)
+        with pytest.raises(queue.Empty):
+            fresh_messages.get(timeout=0.3)
+    finally:
+        fresh_client.disconnect()
+        fresh_client.loop_stop()
 
 
 @pytest.mark.parametrize("kind", ["clip", "shared", "per_workflow_process"])
@@ -31,7 +157,8 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
             self.source_id = source_id
             self.result_queue = queue.Queue()
             self.result_queue.put({"type": "measurement", "source_id": source_id, "sequence": 0, "rtf": 0.1})
-            self.result_queue.put({"type": "transcript", "source_id": source_id, "sequence": 0, "text": "สวัสดีครับ"})
+            text = "สวัสดี สวัสดี" if source_id else ""
+            self.result_queue.put({"type": "transcript", "source_id": source_id, "sequence": 0, "text": text})
             self.stopped = False
 
         def stop(self, timeout=30):
@@ -53,6 +180,8 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
             "mqtt_topic": topic, "mqtt_qos": 1, "mqtt_retain": False,
         })
         assert created.status_code == 201, created.text
+        assert created.json()["retained_cleanup"]["status"] == "cleared"
+        assert received.get(timeout=5).payload == b""
         destination_id = created.json()["destination_id"]
         tested = client.post(f"/api/v1/destinations/{destination_id}/test", headers=headers)
         assert tested.status_code == 200, tested.text
@@ -75,17 +204,19 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
             first_chunk = json.loads(received.get(timeout=5).payload)
             assert first_chunk["event_id"] == f"{workflow_id}:chunk:1"
             assert first_chunk["source_id"] == workflow_id
-            assert first_chunk["matches"] == [{"keyword": "สวัสดี", "count": 1}]
+            assert first_chunk["transcript"] == "สวัสดี สวัสดี"
+            assert first_chunk["matches"] == [{"keyword": "สวัสดี", "count": 2}]
             assert first_chunk["rtf"] == 0.1
             sessions[workflow_id].result_queue.put(
                 {"type": "measurement", "source_id": workflow_id, "sequence": 1, "rtf": 0.2}
             )
             sessions[workflow_id].result_queue.put(
-                {"type": "transcript", "source_id": workflow_id, "sequence": 1, "text": " สวัสดีครับ"}
+                {"type": "transcript", "source_id": workflow_id, "sequence": 1, "text": "ลาก่อน"}
             )
             second_chunk = json.loads(received.get(timeout=5).payload)
             assert second_chunk["event_id"] == f"{workflow_id}:chunk:2"
-            assert second_chunk["matches"] == [{"keyword": "สวัสดี", "count": 2}]
+            assert second_chunk["transcript"] == "ลาก่อน"
+            assert second_chunk["matches"] == [{"keyword": "สวัสดี", "count": 0}]
             assert second_chunk["rtf"] == 0.2
             deadline = time.monotonic() + 5
             snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
@@ -94,11 +225,21 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
                 snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
             assert snapshot["matches"] == [{"keyword": "สวัสดี", "count": 2}]
             assert client.post(f"/api/v1/transcriptions/{workflow_id}/stop").status_code == 202
-        record = json.loads(received.get(timeout=5).payload)
-        assert record["event_id"] == record["source_id"] == workflow_id
-        assert record["transcript"] == ("สวัสดีครับ" if kind == "clip" else "สวัสดีครับ  สวัสดีครับ")
-        assert record["matches"] == [{"keyword": "สวัสดี", "count": 2 if kind != "clip" else 1}]
-        assert record["rtf"] == (None if kind == "clip" else 0.2)
+        if kind == "clip":
+            record = json.loads(received.get(timeout=5).payload)
+            assert record["event_id"] == record["source_id"] == workflow_id
+            assert record["transcript"] == "สวัสดีครับ"
+            assert record["matches"] == [{"keyword": "สวัสดี", "count": 1}]
+            assert record["rtf"] is None
+        else:
+            deadline = time.monotonic() + 5
+            snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+            while snapshot["status"] not in {"completed", "stopped", "failed"} and time.monotonic() < deadline:
+                time.sleep(.01)
+                snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+            assert snapshot["transcript"] == "สวัสดี สวัสดี ลาก่อน"
+            assert snapshot["matches"] == [{"keyword": "สวัสดี", "count": 2}]
+            assert received.empty(), "microphone stop must not publish an aggregate record"
         cleanup_marker = "group" if kind == "per_workflow_process" else "model"
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -122,4 +263,3 @@ def test_old_http_definitions_load_without_migration(tmp_path):
     store.save_destination("legacy", "Existing HTTP", {"endpoint_url": "https://receiver.example.com/results"})
     runtime = BackendRuntime(profile_store=store)
     assert runtime.destination_registry.get_config("legacy").protocol == "http"
-    runtime.shutdown()

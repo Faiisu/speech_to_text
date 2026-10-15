@@ -75,6 +75,38 @@ def test_retry_preserves_json_identity_and_always_closes_connections():
     assert all(client.closed and client.loop_stopped for client in clients)
 
 
+def test_clear_retained_publishes_empty_retained_packet_with_configured_qos():
+    client = FakeClient()
+    forwarder = MqttForwarder(MqttForwarderConfig(
+        "mqtt://127.0.0.1", "speech/results", qos=2, retain=False,
+        allowed_networks=("127.0.0.1/32",),
+    ), client_factory=lambda *_args: client)
+
+    attempts = forwarder.clear_retained()
+
+    assert attempts == 1
+    assert client.records == [("speech/results", b"", 2, True)]
+    assert client.closed and client.loop_stopped
+
+
+def test_clear_retained_retries_publish_failure_and_reports_attempts():
+    clients = []
+
+    def factory(*_args):
+        client = FakeClient(acknowledged=bool(clients))
+        clients.append(client)
+        return client
+
+    forwarder = MqttForwarder(MqttForwarderConfig(
+        "mqtt://127.0.0.1", "speech/results", max_attempts=2,
+        allowed_networks=("127.0.0.1/32",),
+    ), client_factory=factory, sleeper=lambda _: None)
+
+    assert forwarder.clear_retained() == 2
+    assert all(client.records == [("speech/results", b"", 1, True)] for client in clients)
+    assert all(client.closed and client.loop_stopped for client in clients)
+
+
 @pytest.mark.parametrize("client", [FakeClient(reason=135), FakeClient(error=ssl.SSLCertVerificationError("private detail"))])
 def test_permanent_connection_rejections_are_not_retried(client):
     forwarder = MqttForwarder(MqttForwarderConfig("mqtt://127.0.0.1", "speech/results",

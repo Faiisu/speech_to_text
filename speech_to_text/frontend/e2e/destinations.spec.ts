@@ -50,6 +50,41 @@ test('MQTT form rejects wildcard topics and keeps HTTP settings separate', async
   await expect(page.getByLabel('Topic', { exact: true })).toHaveCount(0)
 })
 
+test('loading MQTT settings does not clear retained data and save reports cleanup failure separately', async ({ page }) => {
+  const destinationRequests: string[] = []
+  page.on('request', request => {
+    if (/\/api\/v1\/destinations(?:\/[^/]+)?$/.test(request.url()) && ['POST', 'PUT'].includes(request.method())) {
+      destinationRequests.push(request.method())
+    }
+  })
+  await page.goto('/destinations')
+  expect(destinationRequests).toEqual([])
+  await page.getByRole('button', { name: 'New destination' }).click()
+  await page.getByLabel('Name', { exact: true }).fill('MQTT cleanup warning')
+  await page.getByLabel('Transport').selectOption('mqtt')
+  await page.getByLabel('Broker URL').fill('mqtt://127.0.0.1:1883')
+  await page.getByLabel('Topic', { exact: true }).fill('speech/e2e/cleanup-warning')
+  await page.route('**/api/v1/destinations', route => route.request().method() === 'POST'
+    ? route.fulfill({ status: 201, json: {
+    destination_id: 'cleanup-destination', name: 'MQTT cleanup warning', endpoint_origin: 'mqtt://127.0.0.1:1883',
+    method: 'POST', protocol: 'mqtt', mqtt_topic: 'speech/e2e/cleanup-warning', mqtt_qos: 1, mqtt_retain: false,
+    auth_type: 'none', payload_format: 'match_results_v1',
+    config: { endpoint_url: 'mqtt://127.0.0.1:1883', protocol: 'mqtt', mqtt_topic: 'speech/e2e/cleanup-warning',
+      mqtt_qos: 1, mqtt_retain: false, headers: {}, auth: { type: 'none' }, method: 'POST', timeout_seconds: 5,
+      max_attempts: 3, backoff_seconds: .25, max_backoff_seconds: 2, max_retry_after_seconds: 30,
+      follow_redirects: false, idempotency_header: 'Idempotency-Key', payload_format: 'match_results_v1',
+      tls_ca_bundle_ref: null, tls_client_certificate_ref: null, tls_client_key_ref: null },
+    created_at: '2026-10-15T00:00:00Z', updated_at: '2026-10-15T00:00:00Z',
+    retained_cleanup: { status: 'failed', attempts: 3, error_code: 'delivery_failed' },
+    } })
+    : route.continue())
+  await page.getByRole('button', { name: 'Save destination' }).click()
+  await expect(page.getByRole('status')).toContainText('Saved “MQTT cleanup warning”.')
+  await expect(page.getByRole('alert')).toContainText('Settings were saved, but clearing the old retained message failed')
+  await expect(page.getByRole('alert')).toContainText('Save again to retry.')
+  expect(destinationRequests).toEqual(['POST'])
+})
+
 test.afterEach(async ({ request }) => {
   const origin = { origin: 'http://127.0.0.1:4173' }
   const profiles = await request.get('/api/v1/profiles').then(response => response.json())
