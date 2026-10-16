@@ -58,7 +58,7 @@ speech_to_text/frontend/src/
     ├── destinations/             # Saved HTTP/HTTPS and MQTT receiver settings and synthetic delivery tests
     ├── runs/
     ├── stress-tests/             # Capacity matrix controls, polling, and reports
-    └── model-tuning/             # Host audio recording and model comparisons
+    └── model-tuning/             # Host recording, audio uploads, and model comparisons
 ```
 
 The implemented backend module layout is:
@@ -73,7 +73,7 @@ speech_to_text/backend/
     ├── microphone_lifecycle.py # Shared microphone start/stop lifecycle helpers
     ├── routes/                  # Endpoint handlers grouped by resource or use case
     │   ├── destinations.py      # Destination configuration and synthetic delivery tests
-    │   ├── recordings.py        # Host audio recording lifecycle
+    │   ├── recordings.py        # Host recording and audio upload lifecycle
     │   ├── microphones.py
     │   ├── models.py
     │   ├── profiles.py
@@ -86,7 +86,7 @@ speech_to_text/backend/
 
 Frontend code calls the backend API. Backend routes validate requests and call workflow functions. A workflow calls features, receives their results, and owns the use case's output choices: it returns results to the backend and can send them to another backend or system. The backend maps returned results to frontend responses or streams. Feature logic stays under `features/`; use-case orchestration and delivery behavior stay under `workflows/`.
 
-The audio-recording workflow owns generated IDs, retained WAV metadata, and the storage lifecycle around the model-deployment feature's host microphone capture interface. Recordings live under ignored `data/` storage. Its contract is maintained in the [model-tuning specification](../.scratch/model-tuning/spec.md).
+The audio-recording workflow owns generated IDs, retained WAV metadata, and the storage lifecycle around host capture and audio uploads. The model-deployment feature owns host capture, WAV validation, and compressed-audio conversion. Recordings live under ignored `data/` storage. Its contract is maintained in the [model-tuning specification](../.scratch/model-tuning/spec.md).
 
 The transcribe-match-forward workflow owns destination configuration and validation in `destinations.py`, and outbound JSON/HTTP transport in `http_output.py` and MQTT publication in `mqtt_output.py`. The backend's destination routes manage stored definitions through the existing profile store and call the workflow's public sender for synthetic tests. Destination credentials remain deployment-managed references, not database secret values. The [workflow output specification](../.scratch/transcript-matching-forwarding/spec.md) owns their configuration contract.
 

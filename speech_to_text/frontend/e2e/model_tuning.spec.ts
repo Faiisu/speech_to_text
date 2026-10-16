@@ -1,4 +1,19 @@
 import { expect, test } from '@playwright/test'
+import { Buffer } from 'node:buffer'
+
+function pcm16Wav(seconds = 1) {
+  const sampleRate = 16_000
+  const data = new Uint8Array(sampleRate * seconds * 2)
+  const wav = new Uint8Array(44 + data.length)
+  const view = new DataView(wav.buffer)
+  const text = (offset: number, value: string) => [...value].forEach((char, index) => { wav[offset + index] = char.charCodeAt(0) })
+  text(0, 'RIFF'); view.setUint32(4, 36 + data.length, true); text(8, 'WAVE')
+  text(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true)
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true); text(36, 'data'); view.setUint32(40, data.length, true)
+  wav.set(data, 44)
+  return Buffer.from(wav)
+}
 
 test('records a reusable WAV and compares real clip API trials with immutable settings', async ({ page }) => {
   await page.goto('/model-tuning')
@@ -59,4 +74,43 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   expect(clipRuns).toHaveLength(2)
   expect(clipRuns[1]).toMatchObject({ model: 'turbo', runtime: 'openvino-gpu', language: 'th', silence_threshold: 0.12, keywords: ['สวัสดี'], decoding_options: { beam_size: 4, temperature: 0.2, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.3 } })
   expect(clipRuns[0]).toMatchObject({ model: 'turbo', runtime: 'openvino-cpu', language: 'en', silence_threshold: 0.07, decoding_options: { beam_size: 2 } })
+})
+
+test('imports WAV files into saved recordings, preserves bytes, and reuses them after reload', async ({ page }) => {
+  await page.goto('/model-tuning')
+  await expect(page.getByRole('heading', { name: 'Model tuning' })).toBeVisible()
+
+  const recordingList = page.getByLabel('Choose a clip')
+  const initialCount = await recordingList.locator('option').count()
+  const audioInput = page.getByLabel('Audio file')
+  await audioInput.setInputFiles({ name: 'invalid.wav', mimeType: 'audio/wav', buffer: Buffer.from('not a WAV') })
+  await page.getByRole('button', { name: 'Upload audio' }).click()
+  await expect(page.getByRole('alert')).toContainText(/WAV|format|audio/i)
+  await expect(recordingList.locator('option')).toHaveCount(initialCount)
+
+  const original = pcm16Wav()
+  await audioInput.setInputFiles({ name: 'browser-sample.wav', mimeType: 'audio/wav', buffer: original })
+  await page.getByRole('button', { name: 'Upload audio' }).click()
+  await expect(recordingList).toContainText('browser-sample.wav')
+  const firstId = await recordingList.inputValue()
+  const response = await page.request.get(`/api/v1/recordings/${firstId}/audio`)
+  expect(response.ok()).toBeTruthy()
+  expect(await response.body()).toEqual(original)
+  await expect(page.locator('.recording-details')).toContainText('browser-sample.wav')
+
+  await audioInput.setInputFiles({ name: 'browser-sample.wav', mimeType: 'audio/wav', buffer: original })
+  await page.getByRole('button', { name: 'Upload audio' }).click()
+  await expect(recordingList.locator('option')).toHaveCount(initialCount + 2)
+  const secondId = await recordingList.inputValue()
+  expect(secondId).not.toBe(firstId)
+
+  await page.reload()
+  await expect(recordingList).toHaveValue(secondId)
+  await expect(recordingList).toContainText('browser-sample.wav')
+  await page.getByLabel('Language').selectOption('en')
+  await page.getByRole('button', { name: /Run tuning trial/ }).click()
+  const trial = page.locator('.tuning-trial-card').first()
+  await expect(trial).toContainText('completed', { timeout: 10_000 })
+  await expect(trial.locator('.trial-card-title')).toContainText('browser-sample.wav')
+  await expect(trial.locator('.trial-transcript')).toContainText('Hello there')
 })

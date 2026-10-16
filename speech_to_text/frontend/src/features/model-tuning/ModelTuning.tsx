@@ -25,6 +25,7 @@ const isActive = (status: string) => ['queued', 'running', 'recording', 'stoppin
 const hasAudio = (recording: Recording | null) => Boolean(recording && ['completed', 'failed'].includes(recording.status))
 const canTranscribe = (recording: Recording | null) => Boolean(hasAudio(recording) && recording && recording.duration_seconds > 0)
 const formatDuration = (seconds: number) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 export default function ModelTuning() {
   const [microphones, setMicrophones] = useState<Microphone[]>([])
@@ -46,6 +47,8 @@ export default function ModelTuning() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [recordingBusy, setRecordingBusy] = useState(false)
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
   const [tuningBusy, setTuningBusy] = useState(false)
   const [audioPlaying, setAudioPlaying] = useState(false)
   const [downloading, setDownloading] = useState(false)
@@ -136,6 +139,20 @@ export default function ModelTuning() {
     finally { setRecordingBusy(false) }
   }
 
+  const uploadRecording = async () => {
+    if (!uploadFile || uploading) return
+    setUploading(true); setError('')
+    try {
+      const imported = await api.uploadRecording(uploadFile)
+      setRecordings(current => [imported, ...current.filter(item => item.recording_id !== imported.recording_id)])
+      setSelectedRecordingId(imported.recording_id)
+      setUploadFile(null)
+      const input = document.getElementById('tuning-audio-file') as HTMLInputElement | null
+      if (input) input.value = ''
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not upload audio file.') }
+    finally { setUploading(false) }
+  }
+
   const deleteRecording = async () => {
     if (!selectedRecording || selectedRecording.status === 'recording' || audioPlaying || downloading || trials.some(item => item.recordingId === selectedRecording.recording_id && isActive(item.status))) return
     setRecordingBusy(true); setError('')
@@ -186,7 +203,8 @@ export default function ModelTuning() {
       form.append('silence_threshold', String(settings.silence_threshold))
       form.append('decoding_options', JSON.stringify(settings.decoding_options))
       const started = await api.transcribeClip(form)
-      setTrials(current => [{ workflowId: started.workflow_id, recordingId: selectedRecording.recording_id, recordingLabel: `${new Date(selectedRecording.created_at).toLocaleString()} · ${formatDuration(selectedRecording.duration_seconds)}`, settings, status: started.status, transcript: null, error: '' }, ...current])
+      const label = selectedRecording.filename || `${new Date(selectedRecording.created_at).toLocaleString()} · ${formatDuration(selectedRecording.duration_seconds)}`
+      setTrials(current => [{ workflowId: started.workflow_id, recordingId: selectedRecording.recording_id, recordingLabel: label, settings, status: started.status, transcript: null, error: '' }, ...current])
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not start a tuning trial.') }
     finally { setTuningBusy(false) }
   }
@@ -194,7 +212,7 @@ export default function ModelTuning() {
   if (loading) return <div className="page-content"><p>Loading model tuning…</p></div>
   return <div className="page-content tuning-page">
     <header className="tuning-heading">
-      <div><div className="eyebrow">MODEL LAB <span className="tuning-heading-rule" /></div><h1>Model tuning</h1><p>Record one clip, then replay the same WAV with different model settings and compare the transcript.</p></div>
+      <div><div className="eyebrow">MODEL LAB <span className="tuning-heading-rule" /></div><h1>Model tuning</h1><p>Record or upload audio, then replay the same clip with different model settings and compare the transcript.</p></div>
       <div className="tuning-host-note"><span>◉</span><div><b>BACKEND MICROPHONE</b><small>Capture runs on this host · maximum 120 seconds</small></div></div>
     </header>
     {error && <div className="tuning-error" role="alert"><b>Action needs attention</b><span>{error}</span><button className="button button-outline" onClick={() => { setError(''); void load() }}>Refresh</button></div>}
@@ -206,12 +224,22 @@ export default function ModelTuning() {
         <small>Input devices are discovered by the backend host.</small>
         <div className="tuning-rec-actions">{activeRecording ? <button className="button button-dark" disabled={recordingBusy} onClick={() => void stopRecording()}><i className="recording-square" />{recordingBusy ? 'Stopping…' : 'Stop recording'}</button> : <button className="button button-lime" disabled={recordingBusy} onClick={() => void startRecording()}><i className="recording-dot" />{recordingBusy ? 'Starting…' : 'Start recording'}</button>}<span className={activeRecording ? 'recording-state active' : 'recording-state'}><i />{activeRecording ? `Recording · ${formatDuration(activeRecording.duration_seconds)}` : selectedRecording?.status === 'completed' ? `Saved · ${formatDuration(selectedRecording.duration_seconds)}` : 'Ready to record'}</span></div>
         {activeRecording && <p className="tuning-live-hint" role="status">The backend will end capture at 120 seconds. You can stop it here at any time.</p>}
+        <div className="tuning-upload">
+          <label htmlFor="tuning-audio-file">Audio file</label>
+          <input id="tuning-audio-file" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" disabled={uploading} onChange={event => {
+            const file = event.currentTarget.files?.[0] ?? null
+            if (file && file.size > MAX_UPLOAD_BYTES) { setUploadFile(null); setError('Audio files must be 20 MiB or smaller.'); event.currentTarget.value = ''; return }
+            setError(''); setUploadFile(file)
+          }} />
+          <small>Upload PCM16 WAV, MP3, or M4A audio, up to 20 MiB and 120 seconds. Files are saved as WAV.</small>
+          <button className="button button-outline" disabled={!uploadFile || uploading} onClick={() => void uploadRecording()}>{uploading ? 'Uploading audio…' : 'Upload audio'}</button>
+        </div>
       </div>
       <div className="tuning-recording-saved">
         <div className="saved-header"><span className="eyebrow">SAVED RECORDINGS</span><button className="text-button" onClick={() => { void load() }}>Refresh ↻</button></div>
         <label htmlFor="saved-recording">Choose a clip</label>
-        <select id="saved-recording" value={selectedRecordingId} onChange={event => setSelectedRecordingId(event.target.value)}><option value="">Select a saved recording</option>{recordings.map(item => <option key={item.recording_id} value={item.recording_id}>{new Date(item.created_at).toLocaleString()} · {item.status} · {formatDuration(item.duration_seconds)}</option>)}</select>
-        {selectedRecording ? <div className="recording-details"><div><small>STATUS</small><b className={`recording-status ${selectedRecording.status}`}>{selectedRecording.status}</b></div><div><small>DURATION</small><b>{formatDuration(selectedRecording.duration_seconds)}</b></div><div><small>INPUT</small><b title={selectedRecording.device || 'System default'}>{selectedRecording.device || 'System default'}</b></div></div> : <p className="tuning-empty">No saved recordings yet. Start a recording to create your first clip.</p>}
+        <select id="saved-recording" value={selectedRecordingId} onChange={event => setSelectedRecordingId(event.target.value)}><option value="">Select a saved recording</option>{recordings.map(item => <option key={item.recording_id} value={item.recording_id}>{item.filename ? `${item.filename} · ` : `${new Date(item.created_at).toLocaleString()} · `}{item.status} · {formatDuration(item.duration_seconds)}</option>)}</select>
+        {selectedRecording ? <div className="recording-details"><div><small>STATUS</small><b className={`recording-status ${selectedRecording.status}`}>{selectedRecording.status}</b></div><div><small>DURATION</small><b>{formatDuration(selectedRecording.duration_seconds)}</b></div><div><small>{selectedRecording.filename ? 'FILE' : 'INPUT'}</small><b title={selectedRecording.filename || selectedRecording.device || 'System default'}>{selectedRecording.filename || selectedRecording.device || 'System default'}</b></div></div> : <p className="tuning-empty">No saved recordings yet. Record a clip or upload an audio file.</p>}
         {selectedRecording?.warnings?.map(warning => <p className="tuning-warning" key={warning}>{warning}</p>)}
         {selectedRecording?.status === 'failed' && <p className="tuning-warning">{selectedRecording.error || 'This recording failed. Start a new recording.'}</p>}
         {hasAudio(selectedRecording) && <><audio className="tuning-audio" controls preload="none" src={`/api/v1/recordings/${encodeURIComponent(selectedRecording!.recording_id)}/audio`} onPlay={() => setAudioPlaying(true)} onPause={() => setAudioPlaying(false)} onEnded={() => setAudioPlaying(false)} /><div className="recording-file-actions"><button className="tuning-download" disabled={downloading} onClick={() => void downloadRecording()}>{downloading ? 'Preparing WAV…' : 'Download WAV'} <span>↓</span></button><button className="text-button danger" disabled={recordingBusy || audioPlaying || downloading || trials.some(item => item.recordingId === selectedRecording!.recording_id && isActive(item.status))} onClick={() => void deleteRecording()}>Delete</button></div></>}

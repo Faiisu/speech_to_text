@@ -6,10 +6,12 @@ and an RMS silence threshold of 0.05. Use ``load_model`` once per owning
 process and reuse that handle for clips or microphone flows.
 """
 
+from .audio import convert_audio_to_wav, validate_wav
 from .catalog import list_models
 from .config import flow_config
 from .capture import list_input_devices
 from .errors import (
+    AudioCodecUnavailableError,
     AudioInputError,
     ChunkInferenceWarning,
     ConfigurationError,
@@ -68,6 +70,7 @@ def normalize_decoding_options(value=None):
 
 __all__ = [
     "AudioInputError",
+    "AudioCodecUnavailableError",
     "AudioRecording",
     "ChunkInferenceWarning",
     "ConfigurationError",
@@ -86,4 +89,6 @@ __all__ = [
     "start_audio_recording",
     "start_multiprocess_microphone_flows",
     "transcribe_clip",
+    "validate_wav",
+    "convert_audio_to_wav",
 ]

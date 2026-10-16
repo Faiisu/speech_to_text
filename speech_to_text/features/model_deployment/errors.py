@@ -17,5 +17,9 @@ class AudioInputError(ValueError):
     """An audio input cannot be decoded or normalized."""
 
 
+class AudioCodecUnavailableError(RuntimeError):
+    """Optional compressed-audio decoding support is unavailable."""
+
+
 class ChunkInferenceWarning(UserWarning):
     """One audio chunk failed while later chunks remain processable."""

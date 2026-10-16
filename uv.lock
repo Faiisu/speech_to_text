@@ -2530,6 +2530,9 @@ dependencies = [
 
 [package.optional-dependencies]
 backend = [
+    { name = "av", version = "17.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "av", version = "19.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "fastapi" },
     { name = "python-multipart" },
     { name = "uvicorn" },
@@ -2553,6 +2556,9 @@ openvino = [
     { name = "transformers" },
 ]
 test = [
+    { name = "av", version = "17.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "av", version = "19.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "paho-mqtt" },
@@ -2562,6 +2568,8 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "av", marker = "extra == 'backend'", specifier = ">=11" },
+    { name = "av", marker = "extra == 'test'", specifier = ">=11" },
     { name = "fastapi", marker = "extra == 'backend'", specifier = ">=0.115,<1" },
     { name = "fastapi", marker = "extra == 'test'", specifier = ">=0.115,<1" },
     { name = "faster-whisper", marker = "extra == 'ctranslate2'", specifier = ">=1.0" },

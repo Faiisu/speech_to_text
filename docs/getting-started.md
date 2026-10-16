@@ -60,7 +60,7 @@ Open the Vite URL printed in the terminal (normally `http://localhost:5173`). Th
 
 To build frontend assets, run `npm run build` from `speech_to_text/frontend/`. The Vite development server is the local preview path. For production hosting on the UBX-330M, follow the [deployment guide](deployment.md).
 
-Use **Model tuning** at `/model-tuning` to record a sample from the backend host's microphone, download or play its WAV, and compare transcription runs on the same audio with different language and decoder settings. See the [model tuning contract](../.scratch/model-tuning/spec.md) for recording limits, saved files, and result lifetime.
+Use **Model tuning** at `/model-tuning` to record a sample from the backend host's microphone or upload a WAV, MP3, or M4A from the computer running the browser. Select **Audio file**, choose the file, and click **Upload audio**. The saved clip appears in the same list as microphone recordings, ready for playback, WAV download, and repeated trials with different language and decoder settings. MP3/M4A uploads are converted to WAV by the backend. See the [model tuning contract](../.scratch/model-tuning/spec.md) for upload limits, saved files, and result lifetime.
 
 ### Start both services on macOS
 

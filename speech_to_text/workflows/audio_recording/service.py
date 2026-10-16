@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from speech_to_text.features.model_deployment import AudioInputError, start_audio_recording
+from speech_to_text.features.model_deployment import (
+    AudioCodecUnavailableError,
+    AudioInputError,
+    convert_audio_to_wav,
+    start_audio_recording,
+    validate_wav,
+)
 
 
 def _utc_now():
@@ -22,6 +30,14 @@ class RecordingConflictError(RuntimeError):
 
 class RecordingUnavailableError(RuntimeError):
     """Microphone capture or recording storage is unavailable."""
+
+
+class RecordingInvalidAudioError(ValueError):
+    """An uploaded file is not a supported, complete audio recording."""
+
+
+class RecordingTooLargeError(ValueError):
+    """An uploaded file exceeds the configured byte limit."""
 
 
 class RecordingService:
@@ -65,6 +81,8 @@ class RecordingService:
                     continue
                 if not wav_path.is_file():
                     continue
+                record.setdefault("source", "microphone")
+                record.setdefault("filename", None)
                 record["_session"] = None
                 self._records[recording_id] = record
             except (OSError, ValueError, json.JSONDecodeError):
@@ -75,8 +93,12 @@ class RecordingService:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {key: value for key, value in record.items() if not key.startswith("_")}
         temp_path = manifest_path.with_suffix(".json.tmp")
-        temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        temp_path.replace(manifest_path)
+        try:
+            temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            temp_path.replace(manifest_path)
+        except Exception:
+            temp_path.unlink(missing_ok=True)
+            raise
 
     def start(self, device=None):
         with self._lock:
@@ -89,6 +111,8 @@ class RecordingService:
                 "status": "recording",
                 "duration_seconds": 0.0,
                 "device": device,
+                "source": "microphone",
+                "filename": None,
                 "error": None,
                 "warnings": [],
                 "created_at": _utc_now(),
@@ -116,6 +140,102 @@ class RecordingService:
                 raise RecordingUnavailableError("Unable to save recording metadata") from None
             threading.Thread(target=self._watch, args=(recording_id,), daemon=True).start()
             return self.snapshot(recording_id)
+
+    @staticmethod
+    def _display_filename(filename):
+        # Treat both POSIX and Windows separators as path separators, then
+        # remove control characters because this value is exposed to clients.
+        name = str(filename or "audio.wav").replace("\\", "/").split("/")[-1]
+        name = re.sub(r"[\x00-\x1f\x7f]", "", name).strip()
+        return (name or "audio.wav")[:255]
+
+    def import_audio(self, fileobj, filename, *, max_bytes=20 * 1024 * 1024):
+        """Persist a WAV or converted MP3/M4A without blocking host capture."""
+        temporary_path = None
+        converted_path = None
+        created_audio_path = None
+        created_manifest_path = None
+        committed = False
+        try:
+            self.output_directory.mkdir(parents=True, exist_ok=True)
+            extension = Path(self._display_filename(filename)).suffix.lower()
+            if extension not in {".wav", ".mp3", ".m4a"}:
+                raise RecordingInvalidAudioError("Audio file must be WAV, MP3, or M4A")
+            with tempfile.NamedTemporaryFile(
+                mode="wb", prefix=".upload-", suffix=extension,
+                dir=self.output_directory, delete=False
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                total = 0
+                while True:
+                    chunk = fileobj.read(min(64 * 1024, max_bytes - total + 1))
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise RecordingTooLargeError("Uploaded audio exceeds the 20 MiB limit")
+                    temporary.write(chunk)
+            source_path = temporary_path
+            if extension in {".mp3", ".m4a"}:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", prefix=".converted-", suffix=".wav",
+                    dir=self.output_directory, delete=False
+                ) as converted:
+                    converted_path = Path(converted.name)
+                try:
+                    convert_audio_to_wav(
+                        temporary_path, converted_path, max_seconds=self.max_seconds
+                    )
+                except AudioCodecUnavailableError as exc:
+                    raise RecordingUnavailableError(
+                        "Compressed audio decoding is unavailable"
+                    ) from exc
+                except AudioInputError as exc:
+                    raise RecordingInvalidAudioError(str(exc)) from exc
+                source_path = converted_path
+            try:
+                duration = validate_wav(source_path, max_seconds=self.max_seconds)
+            except AudioInputError as exc:
+                raise RecordingInvalidAudioError(str(exc)) from exc
+
+            with self._lock:
+                recording_id = uuid.uuid4().hex
+                audio_path, manifest_path = self._paths(recording_id)
+                # A hard link creates the final name atomically without ever
+                # replacing an existing recording if an ID collision occurs.
+                os.link(source_path, audio_path)
+                created_audio_path = audio_path
+                record = {
+                    "recording_id": recording_id,
+                    "status": "completed",
+                    "duration_seconds": duration,
+                    "device": None,
+                    "error": None,
+                    "warnings": [],
+                    "created_at": _utc_now(),
+                    "source": "upload",
+                    "filename": self._display_filename(filename),
+                    "_session": None,
+                }
+                created_manifest_path = manifest_path
+                self._save_manifest(record)
+                self._records[recording_id] = record
+                committed = True
+                return self.snapshot(recording_id)
+        except (RecordingInvalidAudioError, RecordingTooLargeError):
+            raise
+        except OSError as exc:
+            raise RecordingUnavailableError("Unable to store uploaded audio") from exc
+        finally:
+            cleanup_paths = [temporary_path, converted_path]
+            if not committed:
+                cleanup_paths.extend((created_manifest_path, created_audio_path))
+            for path in cleanup_paths:
+                if path is not None and path.exists():
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
 
     def _refresh(self, recording_id):
         record = self._records.get(recording_id)

@@ -52,6 +52,17 @@ export const api = {
   events: (id: string, after: number) => request<{ events: WorkflowEvent[]; next_cursor: number }>(`/transcriptions/${encodeURIComponent(id)}/events?after=${after}`),
   recordings: async () => (await request<{ recordings: Recording[] }>('/recordings')).recordings,
   startRecording: (device: string | null) => request<Recording>('/recordings', { method: 'POST', body: JSON.stringify({ device }) }),
+  uploadRecording: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const response = await fetch(`${API_ROOT}/recordings/upload`, { method: 'POST', body: form })
+    if (!response.ok) {
+      let detail: unknown = `Request failed (${response.status})`
+      try { const body = await response.json(); if (body && 'detail' in body) detail = body.detail } catch { /* Keep the status message when the body is not JSON. */ }
+      throw new ApiRequestError(typeof detail === 'string' ? detail : `Request failed (${response.status})`, response.status, detail)
+    }
+    return response.json() as Promise<Recording>
+  },
   recording: (id: string) => request<Recording>(`/recordings/${encodeURIComponent(id)}`),
   stopRecording: (id: string) => request<Recording>(`/recordings/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
   deleteRecording: (id: string) => request<void>(`/recordings/${encodeURIComponent(id)}`, { method: 'DELETE' }),

@@ -145,6 +145,8 @@ export type Recording = {
   status: 'recording' | 'completed' | 'failed' | string
   duration_seconds: number
   device: string | null
+  source?: string
+  filename?: string | null
   error: string | null
   created_at: string
   warnings?: string[]

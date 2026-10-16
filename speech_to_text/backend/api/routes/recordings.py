@@ -2,15 +2,33 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 
 from speech_to_text.workflows.audio_recording import (
     RecordingConflictError,
+    RecordingInvalidAudioError,
+    RecordingTooLargeError,
     RecordingUnavailableError,
 )
 
 router = APIRouter(prefix="/recordings")
+
+
+@router.post("/upload", status_code=201)
+def upload_recording(request: Request, file: UploadFile = File(...)):
+    try:
+        return request.app.state.backend_runtime.recording_service.import_audio(
+            file.file, file.filename
+        )
+    except RecordingTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except RecordingInvalidAudioError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RecordingUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="Unable to store uploaded audio") from exc
+    finally:
+        file.file.close()
 
 
 @router.post("", status_code=201)
