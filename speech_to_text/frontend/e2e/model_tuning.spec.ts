@@ -114,3 +114,49 @@ test('imports WAV files into saved recordings, preserves bytes, and reuses them 
   await expect(trial.locator('.trial-card-title')).toContainText('browser-sample.wav')
   await expect(trial.locator('.trial-transcript')).toContainText('Hello there')
 })
+
+test('records IPCAM through the bounded recording workflow when microphone discovery is unavailable', async ({ page }) => {
+  await page.route('**/api/v1/microphones', route => route.fulfill({
+    status: 503,
+    contentType: 'application/json',
+    body: JSON.stringify({ detail: 'Microphone discovery unavailable' }),
+  }))
+  await page.goto('/model-tuning')
+  await expect(page.getByRole('heading', { name: 'Model tuning' })).toBeVisible()
+  await expect(page.getByText('MODEL READY', { exact: true })).toBeVisible()
+
+  await page.getByLabel('Input source').selectOption('rtsp')
+  await page.getByLabel('RTSP URL').fill('rtsp://camera.local:554/audio')
+  await page.getByRole('button', { name: 'Start recording' }).click()
+  await expect(page.getByText(/Recording ·/)).toBeVisible()
+  const recordingId = await page.getByLabel('Choose a clip').inputValue()
+  await page.getByRole('button', { name: 'Stop recording' }).click()
+  await expect(page.locator('.recording-status.completed')).toBeVisible()
+  await expect(page.getByLabel('Choose a clip')).toContainText('IPCAM (RTSP)')
+  await expect(page.locator('.recording-details')).toContainText('IPCAM (RTSP)')
+
+  const audioResponse = await page.request.get(`/api/v1/recordings/${recordingId}/audio`)
+  expect(audioResponse.ok()).toBeTruthy()
+  expect((await audioResponse.body()).subarray(0, 4).toString()).toBe('RIFF')
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: /Download WAV/ }).click()
+  expect((await download).suggestedFilename()).toContain('.wav')
+
+  await page.getByRole('button', { name: /Run tuning trial/ }).click()
+  const trial = page.locator('.tuning-trial-card').first()
+  await expect(trial).toContainText('completed', { timeout: 10_000 })
+  await expect(trial.locator('.trial-card-title')).toContainText('IPCAM (RTSP)')
+  await expect(trial.locator('.trial-transcript')).toContainText('สวัสดีครับ')
+
+  await page.getByLabel('Input source').selectOption('rtsp')
+  await page.getByLabel('RTSP address source').selectOption('secret_ref')
+  await page.getByLabel('Environment variable name').fill('E2E_CAMERA_RTSP_URL')
+  await page.getByRole('button', { name: 'Start recording' }).click()
+  await expect(page.getByText(/Recording ·/)).toBeVisible()
+  const secretRecordingId = await page.getByLabel('Choose a clip').inputValue()
+  await page.getByRole('button', { name: 'Stop recording' }).click()
+  await expect(page.locator('.recording-status.completed')).toBeVisible()
+  const snapshot = await page.request.get(`/api/v1/recordings/${secretRecordingId}`).then(response => response.json())
+  expect(snapshot).toMatchObject({ source: 'rtsp', device: null, rtsp_url: null, rtsp_url_secret_ref: 'E2E_CAMERA_RTSP_URL' })
+  expect(JSON.stringify(snapshot)).not.toContain('camera-e2e-password')
+})

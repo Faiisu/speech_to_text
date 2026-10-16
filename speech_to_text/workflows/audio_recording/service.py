@@ -14,7 +14,10 @@ from pathlib import Path
 from speech_to_text.features.model_deployment import (
     AudioCodecUnavailableError,
     AudioInputError,
+    ConfigurationError,
     convert_audio_to_wav,
+    create_rtsp_audio_source_factory,
+    create_rtsp_secret_source_factory,
     start_audio_recording,
     validate_wav,
 )
@@ -26,6 +29,10 @@ def _utc_now():
 
 class RecordingConflictError(RuntimeError):
     """A requested operation conflicts with the active recording."""
+
+
+class RecordingConfigurationError(ValueError):
+    """A live recording source definition is invalid or not approved."""
 
 
 class RecordingUnavailableError(RuntimeError):
@@ -100,7 +107,50 @@ class RecordingService:
             temp_path.unlink(missing_ok=True)
             raise
 
-    def start(self, device=None):
+    def start(
+        self,
+        device=None,
+        *,
+        source_type="microphone",
+        rtsp_url=None,
+        rtsp_url_secret_ref=None,
+    ):
+        if not isinstance(source_type, str) or source_type not in {"microphone", "rtsp"}:
+            raise RecordingConfigurationError("source_type must be microphone or rtsp")
+        if device is not None and (not isinstance(device, str) or not device.strip()):
+            raise RecordingConfigurationError("device must be a non-empty string or null")
+        if rtsp_url is not None and not isinstance(rtsp_url, str):
+            raise RecordingConfigurationError("rtsp_url must be a string or null")
+        if rtsp_url_secret_ref is not None and not isinstance(rtsp_url_secret_ref, str):
+            raise RecordingConfigurationError("rtsp_url_secret_ref must be a string or null")
+        if source_type == "microphone":
+            if rtsp_url is not None or rtsp_url_secret_ref is not None:
+                raise RecordingConfigurationError("Microphone recordings cannot include RTSP fields")
+            source_factory = self.audio_source_factory
+            source_definition = {"source": "microphone", "device": device}
+        else:
+            if device is not None:
+                raise RecordingConfigurationError("RTSP recordings cannot include a microphone device")
+            if (rtsp_url is None) == (rtsp_url_secret_ref is None):
+                raise RecordingConfigurationError("RTSP recordings require exactly one URL or secret reference")
+            try:
+                source_factory = (
+                    create_rtsp_audio_source_factory(rtsp_url)
+                    if rtsp_url is not None
+                    else create_rtsp_secret_source_factory(rtsp_url_secret_ref)
+                )
+            except ConfigurationError as exc:
+                raise RecordingConfigurationError(str(exc)) from None
+            source_definition = {
+                "source": "rtsp",
+                "device": None,
+                "rtsp_url": rtsp_url,
+                "rtsp_url_secret_ref": rtsp_url_secret_ref,
+            }
+            # Tests and embedders can inject a source through the same production capture seam.
+            if self.audio_source_factory is not None:
+                source_factory = self.audio_source_factory
+
         with self._lock:
             if self._active_id is not None:
                 raise RecordingConflictError("A recording is already active")
@@ -110,8 +160,7 @@ class RecordingService:
                 "recording_id": recording_id,
                 "status": "recording",
                 "duration_seconds": 0.0,
-                "device": device,
-                "source": "microphone",
+                **source_definition,
                 "filename": None,
                 "error": None,
                 "warnings": [],
@@ -120,14 +169,22 @@ class RecordingService:
             # Ensure storage errors fail the request before opening a host device.
             try:
                 self.output_directory.mkdir(parents=True, exist_ok=True)
+                if source_type == "rtsp" and hasattr(source_factory, "preflight"):
+                    source_factory.preflight()
                 session = start_audio_recording(
                     device,
                     audio_path,
                     max_seconds=self.max_seconds,
-                    audio_source_factory=self.audio_source_factory,
+                    audio_source_factory=source_factory,
                 )
-            except (AudioInputError, OSError) as exc:
-                raise RecordingUnavailableError("Unable to start microphone recording") from exc
+            except (AudioInputError, OSError, ValueError) as exc:
+                try:
+                    audio_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                if source_type == "rtsp":
+                    raise RecordingUnavailableError("Unable to start RTSP recording") from None
+                raise RecordingUnavailableError("Unable to start microphone recording") from None
             record["_session"] = session
             self._records[recording_id] = record
             self._active_id = recording_id
@@ -137,6 +194,10 @@ class RecordingService:
                 self._records.pop(recording_id, None)
                 self._active_id = None
                 session.stop()
+                try:
+                    audio_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
                 raise RecordingUnavailableError("Unable to save recording metadata") from None
             threading.Thread(target=self._watch, args=(recording_id,), daemon=True).start()
             return self.snapshot(recording_id)
@@ -246,6 +307,8 @@ class RecordingService:
             return record
         was_recording = record["status"] == "recording"
         record.update(session.snapshot())
+        if record.get("source") == "rtsp":
+            record["device"] = None
         if was_recording and record["status"] != "recording":
             if self._active_id == recording_id:
                 self._active_id = None

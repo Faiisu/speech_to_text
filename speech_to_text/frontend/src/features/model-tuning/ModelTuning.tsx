@@ -29,10 +29,15 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 export default function ModelTuning() {
   const [microphones, setMicrophones] = useState<Microphone[]>([])
+  const [microphoneError, setMicrophoneError] = useState('')
   const [models, setModels] = useState<ModelChoice[]>([])
   const [recordings, setRecordings] = useState<Recording[]>([])
   const [selectedRecordingId, setSelectedRecordingId] = useState('')
   const [device, setDevice] = useState('')
+  const [sourceType, setSourceType] = useState<'microphone' | 'rtsp'>('microphone')
+  const [rtspMode, setRtspMode] = useState<'url' | 'secret_ref'>('url')
+  const [rtspUrl, setRtspUrl] = useState('')
+  const [rtspSecretRef, setRtspSecretRef] = useState('')
   const [model, setModel] = useState('')
   const [runtime, setRuntime] = useState<RuntimeChoice['key'] | ''>('')
   const [language, setLanguage] = useState<Language>('th')
@@ -66,7 +71,12 @@ export default function ModelTuning() {
   const load = useCallback(async () => {
     const results = await Promise.allSettled([api.microphones(), api.models(), api.recordings()])
     const [deviceResult, modelResult, recordingResult] = results
-    if (deviceResult.status === 'fulfilled') setMicrophones(deviceResult.value)
+    if (deviceResult.status === 'fulfilled') {
+      setMicrophones(deviceResult.value)
+      setMicrophoneError('')
+    } else {
+      setMicrophoneError('Microphone discovery is unavailable. IPCAM and audio uploads remain available.')
+    }
     if (modelResult.status === 'fulfilled') {
       setModels(modelResult.value.models)
       setModel(current => current || modelResult.value.default_model)
@@ -76,7 +86,7 @@ export default function ModelTuning() {
       setRecordings(recordingResult.value)
       setSelectedRecordingId(current => current || recordingResult.value.find(item => item.status === 'completed')?.recording_id || recordingResult.value[0]?.recording_id || '')
     }
-    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    const failures = results.slice(1).filter((result): result is PromiseRejectedResult => result.status === 'rejected')
     if (failures.length) setError(failures[0].reason instanceof Error ? failures[0].reason.message : 'Could not load model tuning data.')
     else setError('')
     setLoading(false)
@@ -121,7 +131,12 @@ export default function ModelTuning() {
   const startRecording = async () => {
     setRecordingBusy(true); setError('')
     try {
-      const started = await api.startRecording(device || null)
+      const source = sourceType === 'rtsp'
+        ? rtspMode === 'url'
+          ? { source_type: 'rtsp' as const, rtsp_url: rtspUrl.trim() }
+          : { source_type: 'rtsp' as const, rtsp_url_secret_ref: rtspSecretRef.trim() }
+        : undefined
+      const started = await api.startRecording(sourceType === 'rtsp' ? null : device || null, source)
       setRecordings(current => [started, ...current.filter(item => item.recording_id !== started.recording_id)])
       setSelectedRecordingId(started.recording_id)
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not start recording.') }
@@ -203,7 +218,8 @@ export default function ModelTuning() {
       form.append('silence_threshold', String(settings.silence_threshold))
       form.append('decoding_options', JSON.stringify(settings.decoding_options))
       const started = await api.transcribeClip(form)
-      const label = selectedRecording.filename || `${new Date(selectedRecording.created_at).toLocaleString()} · ${formatDuration(selectedRecording.duration_seconds)}`
+      const sourceLabel = selectedRecording.source === 'rtsp' ? 'IPCAM (RTSP) · ' : ''
+      const label = selectedRecording.filename || `${sourceLabel}${new Date(selectedRecording.created_at).toLocaleString()} · ${formatDuration(selectedRecording.duration_seconds)}`
       setTrials(current => [{ workflowId: started.workflow_id, recordingId: selectedRecording.recording_id, recordingLabel: label, settings, status: started.status, transcript: null, error: '' }, ...current])
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not start a tuning trial.') }
     finally { setTuningBusy(false) }
@@ -213,16 +229,26 @@ export default function ModelTuning() {
   return <div className="page-content tuning-page">
     <header className="tuning-heading">
       <div><div className="eyebrow">MODEL LAB <span className="tuning-heading-rule" /></div><h1>Model tuning</h1><p>Record or upload audio, then replay the same clip with different model settings and compare the transcript.</p></div>
-      <div className="tuning-host-note"><span>◉</span><div><b>BACKEND MICROPHONE</b><small>Capture runs on this host · maximum 120 seconds</small></div></div>
+      <div className="tuning-host-note"><span>◉</span><div><b>BACKEND AUDIO INPUT</b><small>Capture runs on this host · maximum 120 seconds</small></div></div>
     </header>
     {error && <div className="tuning-error" role="alert"><b>Action needs attention</b><span>{error}</span><button className="button button-outline" onClick={() => { setError(''); void load() }}>Refresh</button></div>}
     <section className="tuning-recording" aria-label="Audio recording">
       <div className="tuning-recording-main">
         <div className="tuning-section-label"><span className="tuning-step">01</span><div><h2>Record a reusable clip</h2><p>Audio is saved by the backend and reused for every trial.</p></div></div>
-        <label htmlFor="tuning-microphone">Microphone</label>
-        <select id="tuning-microphone" value={device} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setDevice(event.target.value)}><option value="">System default microphone</option>{device && !enabledMicrophones.some(item => item.name === device) && <option value={device}>{device} · unavailable</option>}{enabledMicrophones.map(item => <option key={item.name} value={item.name}>{item.name}{item.is_default ? ' · Default' : ''}</option>)}</select>
-        <small>Input devices are discovered by the backend host.</small>
-        <div className="tuning-rec-actions">{activeRecording ? <button className="button button-dark" disabled={recordingBusy} onClick={() => void stopRecording()}><i className="recording-square" />{recordingBusy ? 'Stopping…' : 'Stop recording'}</button> : <button className="button button-lime" disabled={recordingBusy} onClick={() => void startRecording()}><i className="recording-dot" />{recordingBusy ? 'Starting…' : 'Start recording'}</button>}<span className={activeRecording ? 'recording-state active' : 'recording-state'}><i />{activeRecording ? `Recording · ${formatDuration(activeRecording.duration_seconds)}` : selectedRecording?.status === 'completed' ? `Saved · ${formatDuration(selectedRecording.duration_seconds)}` : 'Ready to record'}</span></div>
+        <label htmlFor="tuning-source">Input source</label>
+        <select id="tuning-source" value={sourceType} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setSourceType(event.target.value as 'microphone' | 'rtsp')}><option value="microphone">Microphone</option><option value="rtsp">IPCAM (RTSP)</option></select>
+        {sourceType === 'microphone' ? <>
+          <label htmlFor="tuning-microphone">Microphone</label>
+          <select id="tuning-microphone" value={device} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setDevice(event.target.value)}><option value="">System default microphone</option>{device && !enabledMicrophones.some(item => item.name === device) && <option value={device}>{device} · unavailable</option>}{enabledMicrophones.map(item => <option key={item.name} value={item.name}>{item.name}{item.is_default ? ' · Default' : ''}</option>)}</select>
+          <small>Input devices are discovered by the backend host.</small>
+          {microphoneError && <small className="tuning-mic-notice" role="status">{microphoneError}</small>}
+        </> : <>
+          <label htmlFor="tuning-rtsp-mode">RTSP address source</label>
+          <select id="tuning-rtsp-mode" value={rtspMode} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspMode(event.target.value as 'url' | 'secret_ref')}><option value="url">Direct URL</option><option value="secret_ref">Environment variable reference</option></select>
+          {rtspMode === 'url' ? <label htmlFor="tuning-rtsp-url">RTSP URL<input id="tuning-rtsp-url" type="url" value={rtspUrl} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspUrl(event.target.value)} placeholder="rtsp://camera.local:554/audio" /></label> : <label htmlFor="tuning-rtsp-secret-ref">Environment variable name<input id="tuning-rtsp-secret-ref" value={rtspSecretRef} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspSecretRef(event.target.value)} placeholder="CAMERA_AUDIO_URL" /></label>}
+          <small>For authenticated cameras, store the complete RTSP URL in an approved backend environment variable.</small>
+        </>}
+        <div className="tuning-rec-actions">{activeRecording ? <button className="button button-dark" disabled={recordingBusy} onClick={() => void stopRecording()}><i className="recording-square" />{recordingBusy ? 'Stopping…' : 'Stop recording'}</button> : <button className="button button-lime" disabled={recordingBusy || (sourceType === 'rtsp' && (rtspMode === 'url' ? !rtspUrl.trim() : !rtspSecretRef.trim()))} onClick={() => void startRecording()}><i className="recording-dot" />{recordingBusy ? 'Starting…' : 'Start recording'}</button>}<span className={activeRecording ? 'recording-state active' : 'recording-state'}><i />{activeRecording ? `Recording · ${formatDuration(activeRecording.duration_seconds)}` : selectedRecording?.status === 'completed' ? `Saved · ${formatDuration(selectedRecording.duration_seconds)}` : 'Ready to record'}</span></div>
         {activeRecording && <p className="tuning-live-hint" role="status">The backend will end capture at 120 seconds. You can stop it here at any time.</p>}
         <div className="tuning-upload">
           <label htmlFor="tuning-audio-file">Audio file</label>
@@ -238,8 +264,8 @@ export default function ModelTuning() {
       <div className="tuning-recording-saved">
         <div className="saved-header"><span className="eyebrow">SAVED RECORDINGS</span><button className="text-button" onClick={() => { void load() }}>Refresh ↻</button></div>
         <label htmlFor="saved-recording">Choose a clip</label>
-        <select id="saved-recording" value={selectedRecordingId} onChange={event => setSelectedRecordingId(event.target.value)}><option value="">Select a saved recording</option>{recordings.map(item => <option key={item.recording_id} value={item.recording_id}>{item.filename ? `${item.filename} · ` : `${new Date(item.created_at).toLocaleString()} · `}{item.status} · {formatDuration(item.duration_seconds)}</option>)}</select>
-        {selectedRecording ? <div className="recording-details"><div><small>STATUS</small><b className={`recording-status ${selectedRecording.status}`}>{selectedRecording.status}</b></div><div><small>DURATION</small><b>{formatDuration(selectedRecording.duration_seconds)}</b></div><div><small>{selectedRecording.filename ? 'FILE' : 'INPUT'}</small><b title={selectedRecording.filename || selectedRecording.device || 'System default'}>{selectedRecording.filename || selectedRecording.device || 'System default'}</b></div></div> : <p className="tuning-empty">No saved recordings yet. Record a clip or upload an audio file.</p>}
+        <select id="saved-recording" value={selectedRecordingId} onChange={event => setSelectedRecordingId(event.target.value)}><option value="">Select a saved recording</option>{recordings.map(item => <option key={item.recording_id} value={item.recording_id}>{item.source === 'rtsp' ? 'IPCAM (RTSP) · ' : ''}{item.filename ? `${item.filename} · ` : `${new Date(item.created_at).toLocaleString()} · `}{item.status} · {formatDuration(item.duration_seconds)}</option>)}</select>
+        {selectedRecording ? <div className="recording-details"><div><small>STATUS</small><b className={`recording-status ${selectedRecording.status}`}>{selectedRecording.status}</b></div><div><small>DURATION</small><b>{formatDuration(selectedRecording.duration_seconds)}</b></div><div><small>{selectedRecording.filename ? 'FILE' : 'INPUT'}</small><b title={selectedRecording.filename || selectedRecording.device || (selectedRecording.source === 'rtsp' ? 'IPCAM (RTSP)' : 'System default')}>{selectedRecording.source === 'rtsp' ? 'IPCAM (RTSP)' : selectedRecording.filename || selectedRecording.device || 'System default'}</b></div></div> : <p className="tuning-empty">No saved recordings yet. Record a clip or upload an audio file.</p>}
         {selectedRecording?.warnings?.map(warning => <p className="tuning-warning" key={warning}>{warning}</p>)}
         {selectedRecording?.status === 'failed' && <p className="tuning-warning">{selectedRecording.error || 'This recording failed. Start a new recording.'}</p>}
         {hasAudio(selectedRecording) && <><audio className="tuning-audio" controls preload="none" src={`/api/v1/recordings/${encodeURIComponent(selectedRecording!.recording_id)}/audio`} onPlay={() => setAudioPlaying(true)} onPause={() => setAudioPlaying(false)} onEnded={() => setAudioPlaying(false)} /><div className="recording-file-actions"><button className="tuning-download" disabled={downloading} onClick={() => void downloadRecording()}>{downloading ? 'Preparing WAV…' : 'Download WAV'} <span>↓</span></button><button className="text-button danger" disabled={recordingBusy || audioPlaying || downloading || trials.some(item => item.recordingId === selectedRecording!.recording_id && isActive(item.status))} onClick={() => void deleteRecording()}>Delete</button></div></>}

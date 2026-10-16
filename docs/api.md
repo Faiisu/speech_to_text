@@ -28,7 +28,7 @@ Live audio workflows also accept IP camera/NVR audio through RTSP. The [RTSP sou
 
 ## Backend API v1
 
-The [model tuning contract](../.scratch/model-tuning/spec.md) documents retained audio uploads, host recording, playback/download, and deletion. Uploading audio to that library does not start a transcription or load a model; tuning trials use the existing clip transcription endpoint.
+The [model tuning contract](../.scratch/model-tuning/spec.md) documents retained audio uploads, microphone/RTSP recording, playback/download, and deletion. Recording or uploading audio to that library does not start a transcription or load a model; tuning trials use the existing clip transcription endpoint.
 
 Install the backend extra and run the app with `uv run --no-sync python -m uvicorn speech_to_text.backend.app:app`. The [backend transcription API specification](../.scratch/backend-transcription-api/spec.md) is authoritative for clip uploads, microphone sessions, device discovery, status, buffered events, stop behavior, and the asynchronous file-replay stress-test API. Routes call workflow interfaces; workflow events are buffered per run for independent polling.
 

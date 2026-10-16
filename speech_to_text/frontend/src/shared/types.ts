@@ -151,7 +151,9 @@ export type Recording = {
   status: 'recording' | 'completed' | 'failed' | string
   duration_seconds: number
   device: string | null
-  source?: string
+  source?: 'microphone' | 'rtsp' | 'upload'
+  rtsp_url?: string | null
+  rtsp_url_secret_ref?: string | null
   filename?: string | null
   error: string | null
   created_at: string

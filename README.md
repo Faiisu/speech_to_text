@@ -8,7 +8,7 @@ Speech-to-Text provides a React frontend, a FastAPI backend, and callable Python
 - Match configured words and phrases as microphone transcript chunks arrive, with cumulative occurrence counts.
 - Save reusable microphone profiles and start, monitor, and stop workflow runs from the frontend.
 - Receive IP camera/NVR audio over RTSP in saved profiles, with automatic reconnection and optional deployment-managed credentials. See [RTSP configuration](docs/configuration.md#ipcam-audio-through-rtsp).
-- Upload WAV, MP3, or M4A files in [Model tuning](.scratch/model-tuning/spec.md) and compare settings on saved audio.
+- Record microphone or IPCAM RTSP audio, or upload WAV, MP3, or M4A files in [Model tuning](.scratch/model-tuning/spec.md), and compare settings on saved audio.
 - Run the Capacity lab file-replay stress matrix to compare shared-model and per-input-model execution at 1, 2, and 4 concurrent workflows.
 - Report per-chunk real-time factor (RTF), timing, and capacity evidence.
 

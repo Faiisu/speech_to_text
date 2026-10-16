@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 
 from speech_to_text.workflows.audio_recording import (
     RecordingConflictError,
+    RecordingConfigurationError,
     RecordingInvalidAudioError,
     RecordingTooLargeError,
     RecordingUnavailableError,
@@ -33,17 +34,28 @@ def upload_recording(request: Request, file: UploadFile = File(...)):
 
 @router.post("", status_code=201)
 def start_recording(request: Request, payload: dict):
-    if set(payload) - {"device"}:
+    if set(payload) - {"device", "source_type", "rtsp_url", "rtsp_url_secret_ref"}:
         raise HTTPException(status_code=422, detail="request contains unsupported fields")
+    if payload.get("source_type", "microphone") == "microphone" and (
+        "rtsp_url" in payload or "rtsp_url_secret_ref" in payload
+    ):
+        raise HTTPException(status_code=422, detail="Microphone recordings cannot include RTSP fields")
     device = payload.get("device")
     if device is not None and (not isinstance(device, str) or not device.strip()):
         raise HTTPException(status_code=422, detail="device must be a non-empty string or null")
     try:
-        return request.app.state.backend_runtime.recording_service.start(device)
+        return request.app.state.backend_runtime.recording_service.start(
+            device,
+            source_type=payload.get("source_type", "microphone"),
+            rtsp_url=payload.get("rtsp_url"),
+            rtsp_url_secret_ref=payload.get("rtsp_url_secret_ref"),
+        )
+    except RecordingConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RecordingConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except RecordingUnavailableError as exc:
-        raise HTTPException(status_code=503, detail="Unable to start microphone recording") from exc
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("")

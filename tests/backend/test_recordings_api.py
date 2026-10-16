@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from speech_to_text.backend.app import create_app
 from speech_to_text.backend.dependencies import BackendRuntime
+from speech_to_text.features.model_deployment import AudioInputError
 from speech_to_text.workflows.audio_recording import RecordingService
 
 
@@ -21,6 +22,21 @@ class FakeSource:
 
     def stop(self):
         pass
+
+
+class FailingSource(FakeSource):
+    def start(self):
+        raise AudioInputError("rtsp://user:password@camera.local/private")
+
+
+class DisconnectingSource(FakeSource):
+    def __init__(self, *, device, on_audio, on_error):
+        self.on_audio = on_audio
+        self.on_error = on_error
+
+    def start(self):
+        self.on_audio(np.full(800, 0.25, dtype=np.float32))
+        self.on_error(AudioInputError("RTSP audio stream ended"))
 
 
 class FakeStore:
@@ -95,6 +111,115 @@ def test_recording_routes_reject_paths_and_unknown_ids(tmp_path):
     with TestClient(create_app(runtime=runtime)) as client:
         assert client.post("/api/v1/recordings", json={"path": "/etc/passwd"}).status_code == 422
         assert client.get("/api/v1/recordings/../../etc/passwd").status_code == 404
+
+
+def test_rtsp_recording_validates_source_and_persists_only_non_secret_definition(tmp_path, monkeypatch):
+    monkeypatch.setenv("SPEECH_TO_TEXT_RTSP_SECRET_REFS", "CAMERA_URL")
+    monkeypatch.setenv("CAMERA_URL", "rtsp://user:password@camera.local/audio?token=secret")
+    service, runtime = _runtime(tmp_path)
+    with TestClient(create_app(runtime=runtime)) as client:
+        invalid = (
+            {"source_type": "mystery"},
+            {"source_type": "rtsp", "device": "Studio Mic", "rtsp_url": "rtsp://camera/audio"},
+            {"source_type": "rtsp"},
+            {"source_type": "rtsp", "rtsp_url": "rtsp://camera/audio", "rtsp_url_secret_ref": "CAMERA_URL"},
+            {"source_type": "rtsp", "rtsp_url": "rtsp://user:password@camera/audio"},
+            {"source_type": "microphone", "rtsp_url": None},
+            {"source_type": "rtsp", "rtsp_url_secret_ref": "UNAPPROVED"},
+            {"source_type": None},
+            {"source_type": []},
+            {"source_type": True},
+            {"source_type": "rtsp", "rtsp_url": 123},
+        )
+        for payload in invalid:
+            response = client.post("/api/v1/recordings", json=payload)
+            assert response.status_code == 422, response.text
+        assert service.list() == []
+        assert list(tmp_path.iterdir()) == []
+
+        started = client.post("/api/v1/recordings", json={
+            "source_type": "rtsp", "rtsp_url_secret_ref": "CAMERA_URL"
+        })
+        assert started.status_code == 201, started.text
+        snapshot = started.json()
+        assert snapshot["source"] == "rtsp"
+        assert snapshot["device"] is None
+        assert snapshot["rtsp_url"] is None
+        assert snapshot["rtsp_url_secret_ref"] == "CAMERA_URL"
+        assert client.post("/api/v1/recordings", json={}).status_code == 409
+        stopped = client.post(f"/api/v1/recordings/{snapshot['recording_id']}/stop").json()
+        assert stopped["status"] == "completed"
+        assert client.get(f"/api/v1/recordings/{snapshot['recording_id']}/audio").content[:4] == b"RIFF"
+        assert "password" not in (tmp_path / f"{snapshot['recording_id']}.json").read_text()
+        assert "token=secret" not in (tmp_path / f"{snapshot['recording_id']}.json").read_text()
+
+    restored = RecordingService(output_directory=tmp_path)
+    assert restored.get(snapshot["recording_id"])["source"] == "rtsp"
+    assert restored.get(snapshot["recording_id"])["rtsp_url_secret_ref"] == "CAMERA_URL"
+
+
+def test_rtsp_capture_startup_failure_cleans_files_and_hides_error(tmp_path):
+    service = RecordingService(output_directory=tmp_path, audio_source_factory=FailingSource)
+    runtime = BackendRuntime(
+        workflow_service=FakeWorkflowService(), profile_store=FakeStore(),
+        destination_registry=object(), recording_service=service,
+    )
+    with TestClient(create_app(runtime=runtime)) as client:
+        response = client.post("/api/v1/recordings", json={
+            "source_type": "rtsp", "rtsp_url": "rtsp://camera.local/audio"
+        })
+        assert response.status_code == 503
+        assert "password" not in response.text
+    assert service.list() == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_rtsp_uses_feature_factory_without_opening_default_microphone(tmp_path, monkeypatch):
+    from speech_to_text.workflows.audio_recording import service as recording_module
+    from speech_to_text.features.model_deployment import recording as capture_module
+
+    constructed = []
+
+    def rtsp_factory(url):
+        constructed.append(url)
+        return FakeSource
+
+    class NoMicrophone:
+        def __init__(self, **_):
+            raise AssertionError("RTSP selection must not open the host microphone")
+
+    monkeypatch.setattr(recording_module, "create_rtsp_audio_source_factory", rtsp_factory)
+    monkeypatch.setattr(capture_module, "SoundDeviceSource", NoMicrophone)
+    service = RecordingService(output_directory=tmp_path)
+    started = service.start(source_type="rtsp", rtsp_url="rtsp://camera.local/audio")
+    assert constructed == ["rtsp://camera.local/audio"]
+    assert started["source"] == "rtsp"
+    assert service.stop(started["recording_id"])["status"] == "completed"
+
+
+def test_rtsp_disconnect_keeps_partial_wav_and_failed_metadata_after_restart(tmp_path, monkeypatch):
+    import time
+    from speech_to_text.workflows.audio_recording import service as recording_module
+
+    monkeypatch.setattr(recording_module, "create_rtsp_audio_source_factory", lambda _url: DisconnectingSource)
+    service = RecordingService(output_directory=tmp_path)
+    started = service.start(source_type="rtsp", rtsp_url="rtsp://camera.local/audio")
+    deadline = time.monotonic() + 2
+    while service.get(started["recording_id"])["status"] == "recording" and time.monotonic() < deadline:
+        time.sleep(0.01)
+    failed = service.get(started["recording_id"])
+    assert failed["status"] == "failed"
+    assert failed["duration_seconds"] > 0
+    assert failed["error"] == "RTSP audio stream ended"
+    with wave.open(str(service.audio_path(started["recording_id"])), "rb") as wav:
+        assert wav.getnframes() == 800
+
+    restored = RecordingService(output_directory=tmp_path)
+    recovered = restored.get(started["recording_id"])
+    assert recovered["status"] == "failed"
+    assert recovered["source"] == "rtsp"
+    assert recovered["rtsp_url"] == "rtsp://camera.local/audio"
+    assert recovered["duration_seconds"] > 0
 
 
 def test_recording_start_reports_unavailable_storage_as_503(tmp_path):

@@ -2,6 +2,7 @@
 
 from .service import (
     RecordingConflictError,
+    RecordingConfigurationError,
     RecordingInvalidAudioError,
     RecordingService,
     RecordingTooLargeError,
@@ -10,6 +11,7 @@ from .service import (
 
 __all__ = [
     "RecordingConflictError",
+    "RecordingConfigurationError",
     "RecordingInvalidAudioError",
     "RecordingService",
     "RecordingTooLargeError",
