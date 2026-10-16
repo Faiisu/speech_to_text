@@ -57,6 +57,8 @@ An installer success means the service health check passed, `/healthz` responded
 - The API currently allows up to 16 active microphone workflows per process.
 - Run status and events are process-local and are lost on restart.
 
+Accepted microphone runs recover after unexpected workflow endings while the backend remains running; explicit stop cancels recovery. See the [microphone recovery contract](../.scratch/backend-transcription-api/spec.md#microphone-recovery) for timing and limits. This does not restore runs after a backend/container restart. Verify physical microphone disconnect/reconnect and continuous OpenVINO capture on the UBX-330M before treating hardware recovery as proven.
+
 ## MQTT broker
 
 The standalone [`compose.mqtt.yaml`](../compose.mqtt.yaml) runs Eclipse Mosquitto on either Linux or macOS with Docker Compose 2.23.1 or newer. From the checkout root:

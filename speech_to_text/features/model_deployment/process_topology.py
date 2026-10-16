@@ -165,11 +165,12 @@ def _capture_chunks(
     audio_source_factory=None,
 ):
     """Capture in its own spawned process; only bounded audio enters IPC."""
-    from .capture import SoundDeviceSource
+    from .capture import AudioInputOverflow, SoundDeviceSource
     from .model import load_model
 
     local_frames = Queue(maxsize=16)
     local_control = Queue()
+    queue_drop_pending = threading.Event()
     handle = None
     source = None
     ready_sent = False
@@ -220,15 +221,23 @@ def _capture_chunks(
             try:
                 local_frames.put_nowait(np.asarray(frames, dtype=np.float32).copy())
             except Full:
-                try:
-                    local_control.put_nowait(
-                        ("capture-error", "Microphone callback queue is full")
-                    )
-                except Full:
-                    pass
+                if flow["overload_policy"] == "drop":
+                    if not queue_drop_pending.is_set():
+                        queue_drop_pending.set()
+                        local_control.put_nowait(
+                            ("queue-drop", "Microphone callback queue is full")
+                        )
+                else:
+                    try:
+                        local_control.put_nowait(
+                            ("capture-error", "Microphone callback queue is full")
+                        )
+                    except Full:
+                        pass
 
         def on_error(error):
-            local_control.put(("capture-error", str(error)))
+            kind = "capture-diagnostic" if isinstance(error, AudioInputOverflow) else "capture-error"
+            local_control.put((kind, str(error)))
 
         source_factory = audio_source_factory or SoundDeviceSource
         source = source_factory(device=device, on_audio=on_audio, on_error=on_error)
@@ -329,7 +338,11 @@ def _capture_chunks(
             try:
                 input_queue.put(
                     ("chunk", source_id, sequence, chunk, flow, time.perf_counter()),
-                    timeout=model_config["enqueue_timeout_seconds"],
+                    timeout=(
+                        0
+                        if flow["overload_policy"] == "drop"
+                        else model_config["enqueue_timeout_seconds"]
+                    ),
                 )
                 if first_queued_at is None:
                     first_queued_at = (
@@ -344,6 +357,17 @@ def _capture_chunks(
                     )
                 return True
             except Full:
+                if flow["overload_policy"] == "drop":
+                    _put_event(
+                        output_queue,
+                        "error",
+                        source_id,
+                        code="INPUT_QUEUE_TIMEOUT",
+                        message="Shared inference queue is full; chunk was dropped",
+                        sequence=sequence,
+                        fatal=False,
+                    )
+                    return True
                 discarded = input_queue.retire_source(source_id)
                 model_control.put(("retire", source_id))
                 _put_event(
@@ -379,7 +403,28 @@ def _capture_chunks(
                 pass
             try:
                 message = local_control.get_nowait()
-                if message[0] == "capture-error":
+                if message[0] == "capture-diagnostic":
+                    _put_event(
+                        output_queue,
+                        "error",
+                        source_id,
+                        code="INPUT_OVERFLOW",
+                        message=message[1],
+                        sequence=None,
+                        fatal=False,
+                    )
+                elif message[0] == "queue-drop":
+                    queue_drop_pending.clear()
+                    _put_event(
+                        output_queue,
+                        "error",
+                        source_id,
+                        code="INPUT_QUEUE_TIMEOUT",
+                        message=f"{message[1]}; captured callback frames were dropped",
+                        sequence=None,
+                        fatal=False,
+                    )
+                elif message[0] == "capture-error":
                     capture_error = message[1]
             except Empty:
                 pass
@@ -673,6 +718,7 @@ class ProcessSession:
         self._stopping = False
         self._terminal = False
         self._terminal_event = threading.Event()
+        self._last_sequence = None
 
     def stop(self, *, timeout=30):
         _validate_timeout(timeout)
@@ -741,6 +787,8 @@ class ProcessFlowGroup:
 
     def _dispatch(self):
         by_id = {session.source_id: session for session in self.sessions}
+        exit_observed_at = {}
+        idle_since = None
         while not self._finished.is_set():
             try:
                 event = (
@@ -754,18 +802,72 @@ class ProcessFlowGroup:
                 try:
                     event = self._output_queue.get(timeout=0.05)
                 except Empty:
+                    event = None
+            if event is not None:
+                idle_since = None
+                session = by_id.get(event.get("source_id"))
+                if session is not None and not getattr(session, "_terminal", False):
+                    session.result_queue.put(event)
+                    if isinstance(event.get("sequence"), int):
+                        session._last_sequence = max(
+                            session._last_sequence
+                            if session._last_sequence is not None
+                            else -1,
+                            event["sequence"],
+                        )
+                    if event.get("type") == "completed":
+                        session._terminal = True
+                        session._terminal_event.set()
+                        with self._condition:
+                            self._terminal_ids.add(session.source_id)
+                            self._condition.notify_all()
+            elif idle_since is None:
+                idle_since = time.monotonic()
+
+            now = time.monotonic()
+            for session in self.sessions:
+                if getattr(session, "_terminal", False):
+                    exit_observed_at.pop(session.source_id, None)
                     continue
-            session = by_id.get(event.get("source_id"))
-            if session is not None:
-                if session._terminal:
+                exit_code = getattr(session.process, "exitcode", None)
+                if exit_code is None or (
+                    self.topology == "shared-model" and exit_code == 0
+                ):
+                    exit_observed_at.pop(session.source_id, None)
                     continue
-                session.result_queue.put(event)
-                if event.get("type") == "completed":
-                    session._terminal = True
-                    session._terminal_event.set()
-                    with self._condition:
-                        self._terminal_ids.add(session.source_id)
-                        self._condition.notify_all()
+                first_seen = exit_observed_at.setdefault(session.source_id, now)
+                if (
+                    idle_since is None
+                    or now - max(first_seen, idle_since) < 0.25
+                ):
+                    continue
+                message = (
+                    "Microphone process exited unexpectedly with "
+                    f"exit code {exit_code}"
+                )
+                session.result_queue.put(
+                    {
+                        "type": "error",
+                        "source_id": session.source_id,
+                        "code": "PROCESS_EXITED",
+                        "message": message,
+                        "sequence": None,
+                        "fatal": True,
+                    }
+                )
+                session.result_queue.put(
+                    {
+                        "type": "completed",
+                        "source_id": session.source_id,
+                        "status": "failed",
+                        "last_sequence": session._last_sequence,
+                    }
+                )
+                session._terminal = True
+                session._terminal_event.set()
+                with self._condition:
+                    self._terminal_ids.add(session.source_id)
+                    self._condition.notify_all()
 
     def stop(self, *, timeout=30):
         _validate_timeout(timeout)

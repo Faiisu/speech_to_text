@@ -61,6 +61,10 @@ class RunRecord:
     next_cursor: int = 1
     lock: threading.RLock = field(default_factory=threading.RLock)
     workflow: object | None = None
+    forwarder: object | None = None
+    recovery_cancel: threading.Event = field(default_factory=threading.Event)
+    stop_complete: threading.Event = field(default_factory=threading.Event)
+    controller_thread: threading.Thread | None = None
 
 
 @dataclass
@@ -88,6 +92,8 @@ class BackendRuntime:
         max_runs=256,
         max_microphone_runs=16,
         worker_count=4,
+        recovery_initial_delay=1.0,
+        recovery_max_delay=30.0,
         workflow_service=None,
         profile_store=None,
         stress_workflow=None,
@@ -95,6 +101,23 @@ class BackendRuntime:
     ):
         if event_limit < 1 or max_runs < 1 or max_microphone_runs < 1:
             raise ValueError("event_limit and run limits must be positive integers")
+        if (
+            not isinstance(recovery_initial_delay, (int, float))
+            or isinstance(recovery_initial_delay, bool)
+            or not 0 < recovery_initial_delay < float("inf")
+        ):
+            raise ValueError("recovery_initial_delay must be finite and positive")
+        if (
+            not isinstance(recovery_max_delay, (int, float))
+            or isinstance(recovery_max_delay, bool)
+            or not 0 < recovery_max_delay < float("inf")
+        ):
+            raise ValueError("recovery_max_delay must be finite and positive")
+        if recovery_max_delay < recovery_initial_delay:
+            raise ValueError("recovery_max_delay must be at least the initial delay")
+        self.recovery_initial_delay = float(recovery_initial_delay)
+        self.recovery_max_delay = float(recovery_max_delay)
+        self.shutdown_event = threading.Event()
         self.event_limit = event_limit
         self.max_runs = max_runs
         self.max_microphone_runs = max_microphone_runs
@@ -152,6 +175,8 @@ class BackendRuntime:
 
     def add_run(self, record):
         with self.registry_lock:
+            if self.shutdown_event.is_set():
+                raise RunRegistryFullError("backend runtime is shutting down")
             if record.kind == "microphone" and any(
                 stress_record.status in {"queued", "running"}
                 for stress_record in self.stress_runs.values()
@@ -267,18 +292,49 @@ class BackendRuntime:
 
     def shutdown(self):
         with self.registry_lock:
-            microphone_workflows = [
-                record.workflow
-                for record in self.runs.values()
-                if record.kind == "microphone"
-                and record.workflow is not None
-                and record.status not in {"completed", "stopped", "failed"}
-            ]
-        for workflow in microphone_workflows:
+            records = [record for record in self.runs.values() if record.kind == "microphone"]
+            self.shutdown_event.set()
+            for record in records:
+                record.recovery_cancel.set()
+                with record.lock:
+                    if record.status not in {"completed", "stopped", "failed"}:
+                        record.status = "stopping"
+        microphone_workflows = []
+        for record in records:
+            with record.lock:
+                if record.workflow is not None and record.status not in {
+                    "completed", "stopped", "failed"
+                }:
+                    microphone_workflows.append((record, record.workflow))
+        for record, workflow in microphone_workflows:
             try:
                 workflow.stop(timeout=30)
-            except Exception:
-                pass
+            except Exception as exc:
+                error = str(exc).strip() or type(exc).__name__
+                with record.lock:
+                    record.status = "failed"
+                    record.error = error
+                workflow.output_queue.put(
+                    {
+                        "type": "workflow_error",
+                        "workflow_id": record.workflow_id,
+                        "source_id": record.workflow_id,
+                        "error": error,
+                    }
+                )
+                workflow.output_queue.put(
+                    {
+                        "type": "completed",
+                        "source_id": record.workflow_id,
+                        "status": "failed",
+                    }
+                )
+        for record in records:
+            record.stop_complete.set()
+        for record in records:
+            thread = record.controller_thread
+            if thread is not None and thread is not threading.current_thread():
+                thread.join()
         self.executor.shutdown(wait=True, cancel_futures=False)
         try:
             self.workflow_service.close()

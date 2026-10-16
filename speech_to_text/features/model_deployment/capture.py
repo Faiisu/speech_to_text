@@ -7,6 +7,10 @@ import threading
 from .errors import AudioInputError
 
 
+class AudioInputOverflow(AudioInputError):
+    """Recoverable PortAudio input overflow; the current callback remains usable."""
+
+
 def list_input_devices():
     """List input devices by stable name, marking duplicate names unselectable."""
     try:
@@ -55,6 +59,7 @@ class SoundDeviceSource:
         self._on_error = on_error
         self._stream = None
         self._supervisor = None
+        self._fatal_notified = False
         self.started = False
         try:
             if device is None:
@@ -95,19 +100,30 @@ class SoundDeviceSource:
 
     def _callback(self, frames, frame_count, time_info, status):
         if status:
-            self._notify_error(AudioInputError(str(status)))
-            return
+            if _input_overflow_only(status):
+                self._notify_error(AudioInputOverflow(str(status)))
+            else:
+                self._notify_error(AudioInputError(str(status)))
+                return
         try:
             self._on_audio(frames.copy())
         except Exception as exc:  # noqa: BLE001
             self._notify_error(exc)
 
     def _notify_error(self, exc):
-        if self._supervisor is None or not self._supervisor.is_alive():
-            self._supervisor = threading.Thread(
-                target=self._on_error, args=(exc,), daemon=True
-            )
-            self._supervisor.start()
+        if isinstance(exc, AudioInputOverflow):
+            if self._supervisor is None or not self._supervisor.is_alive():
+                self._supervisor = threading.Thread(
+                    target=self._on_error, args=(exc,), daemon=True
+                )
+                self._supervisor.start()
+            return
+        if self._fatal_notified:
+            return
+        self._fatal_notified = True
+        threading.Thread(
+            target=self._on_error, args=(exc,), daemon=True
+        ).start()
 
     def start(self):
         try:
@@ -132,3 +148,17 @@ class SoundDeviceSource:
                 stream.stop()
             finally:
                 stream.close()
+
+
+def _input_overflow_only(status):
+    if not getattr(status, "input_overflow", False):
+        return False
+    return not any(
+        getattr(status, name, False)
+        for name in (
+            "input_underflow",
+            "output_underflow",
+            "output_overflow",
+            "priming_output",
+        )
+    )

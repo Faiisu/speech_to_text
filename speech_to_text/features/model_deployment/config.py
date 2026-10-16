@@ -21,6 +21,7 @@ FLOW_DEFAULTS = {
     "language": "th",
     "chunk_seconds": 30.0,
     "silence_threshold": 0.05,
+    "overload_policy": "fail",
     "decoding_options": {
         "beam_size": 1,
         "temperature": 0.0,
@@ -30,7 +31,7 @@ FLOW_DEFAULTS = {
     },
 }
 FLOW_KEYS = frozenset(
-    {"source_id", "language", "chunk_seconds", "silence_threshold", "decoding_options"}
+    {"source_id", "language", "chunk_seconds", "silence_threshold", "overload_policy", "decoding_options"}
 )
 DECODING_DEFAULTS = FLOW_DEFAULTS["decoding_options"]
 
@@ -100,6 +101,7 @@ def flow_config(value):
         "language": FLOW_DEFAULTS["language"],
         "chunk_seconds": FLOW_DEFAULTS["chunk_seconds"],
         "silence_threshold": FLOW_DEFAULTS["silence_threshold"],
+        "overload_policy": FLOW_DEFAULTS["overload_policy"],
         "decoding_options": deepcopy(DECODING_DEFAULTS),
         **deepcopy(value),
     }
@@ -119,6 +121,10 @@ def flow_config(value):
         or not 0 <= threshold < 1
     ):
         raise ConfigurationError("silence_threshold must be in [0, 1)")
+    if not isinstance(result["overload_policy"], str) or result[
+        "overload_policy"
+    ] not in {"fail", "drop"}:
+        raise ConfigurationError("overload_policy must be 'fail' or 'drop'")
     language = result["language"]
     if not isinstance(language, str) or not language.strip():
         raise ConfigurationError("language must be a non-empty language code or 'auto'")

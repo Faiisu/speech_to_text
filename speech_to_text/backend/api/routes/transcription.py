@@ -347,6 +347,7 @@ def stop_transcription(workflow_id: str, request: Request):
     with record.lock:
         if record.status not in {"completed", "stopped", "failed", "stopping"}:
             record.status = "stopping"
+            record.recovery_cancel.set()
             runtime.append_event(
                 record, {"type": "stopping", "workflow_id": workflow_id}
             )
@@ -361,8 +362,14 @@ def stop_transcription(workflow_id: str, request: Request):
 
 def _stop_microphone_workflow(runtime, record):
     """Run shutdown in the background and publish failures as terminal state."""
+    with record.lock:
+        workflow = record.workflow
+    if workflow is None:
+        record.stop_complete.set()
+        return
+    stop_status = "stopped"
     try:
-        record.workflow.stop()
+        workflow.stop()
     except Exception as exc:
         error = str(exc).strip() or type(exc).__name__
         with record.lock:
@@ -370,18 +377,24 @@ def _stop_microphone_workflow(runtime, record):
                 return
             record.status = "failed"
             record.error = error
-        runtime.append_event(
-            record,
+            stop_status = "failed"
+        workflow.output_queue.put(
             {
                 "type": "workflow_error",
                 "workflow_id": record.workflow_id,
+                "source_id": record.workflow_id,
                 "error": error,
-            },
+            }
         )
-        record.workflow.output_queue.put(
+    finally:
+        with record.lock:
+            if record.status == "failed":
+                stop_status = "failed"
+        record.stop_complete.set()
+        workflow.output_queue.put(
             {
                 "type": "completed",
                 "source_id": record.workflow_id,
-                "status": "failed",
+                "status": stop_status,
             }
         )

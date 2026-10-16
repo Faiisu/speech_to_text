@@ -32,7 +32,7 @@ test('user can create a profile, monitor its output, and stop the workflow', asy
   await expect(page.locator('.run-kpis')).toContainText('tiny')
   await expect(page.locator('.run-kpis')).toContainText('openvino-cpu')
 
-  await expect(page.getByText('สวัสดีครับ')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.transcript-text')).toHaveText('สวัสดีครับ', { timeout: 10_000 })
   await expect(page.locator('.match-list')).toContainText('สวัสดี')
   await expect(page.locator('.match-list')).toContainText('1 matches')
 

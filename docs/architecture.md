@@ -39,6 +39,8 @@ The transcript-match-forward workflow consumes Feature 01's completed clip trans
 
 Microphone capture and clip decoding are normalized inside Feature 01. Inference chunks do not overlap. Successful text is assembled in sequence order; a failed chunk emits an error and later chunks continue. Stopping a flow flushes its partial chunk before the completion event. Full event and configuration contracts live in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md).
 
+Backend microphone runs use the feature's drop policy for queue pressure and recover unexpectedly ended workflows while retaining the same run ID. Explicit stop and backend shutdown cancel recovery. The [backend recovery contract](../.scratch/backend-transcription-api/spec.md#microphone-recovery) owns retry timing, replacement source identity, and lifecycle guarantees.
+
 ## Local RTF measurements
 
 Feature 01 creates one measurement for each chunk that reaches inference. Clip responses return the records, microphone sessions publish them as events, and process-group results include their measurements. The authoritative record fields and timing semantics are defined in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md#per-chunk-performance-measurement). Measurements are not persisted; the application has no historical telemetry store, host sampler, or Grafana service. The backend's SQLite database stores reusable microphone profiles and destination definitions; run details and events remain in memory.

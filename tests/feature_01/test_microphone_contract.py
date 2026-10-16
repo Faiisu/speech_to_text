@@ -241,6 +241,149 @@ def test_capture_failure_emits_terminal_error_and_releases_source(api):
         stop_and_close(handle, session)
 
 
+def test_input_overflow_is_diagnostic_and_later_audio_is_transcribed(api):
+    from speech_to_text.features.model_deployment.capture import AudioInputOverflow
+
+    source = ManualAudioSource()
+    handle = api.load_model({}, runtime_factory=RuntimeFactory(ScriptedRuntime(["after overflow"])))
+    session = start(api, handle, source)
+    try:
+        source.on_error(AudioInputOverflow("input overflow"))
+        source.push(np.full(1600, 0.3))
+        session.stop(timeout=3)
+        events = collect_until_completed(session)
+        diagnostic, = [event for event in events if event.get("code") == "INPUT_OVERFLOW"]
+        assert diagnostic["fatal"] is False
+        assert texts(events) == ["after overflow"]
+        assert events[-1]["status"] == "stopped"
+    finally:
+        stop_and_close(handle, session)
+
+
+def test_sounddevice_input_overflow_keeps_current_callback_frames(monkeypatch):
+    import sys
+    import threading
+    from types import SimpleNamespace
+
+    from speech_to_text.features.model_deployment.capture import (
+        AudioInputOverflow,
+        SoundDeviceSource,
+    )
+
+    sounddevice = SimpleNamespace(
+        query_devices=lambda kind=None: {"default_samplerate": 16000},
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", sounddevice)
+    frames_seen, error_seen = [], threading.Event()
+    errors = []
+    source = SoundDeviceSource(
+        device=None,
+        on_audio=frames_seen.append,
+        on_error=lambda error: (errors.append(error), error_seen.set()),
+    )
+    source._callback(
+        np.ones(8, dtype=np.float32),
+        8,
+        None,
+        SimpleNamespace(
+            input_overflow=True,
+            input_underflow=False,
+            output_underflow=False,
+            output_overflow=False,
+            priming_output=False,
+        ),
+    )
+    assert error_seen.wait(1)
+    assert len(frames_seen) == 1
+    assert isinstance(errors[0], AudioInputOverflow)
+
+    overflow_handler_entered, fatal_seen = threading.Event(), threading.Event()
+    mixed_errors, mixed_frames = [], []
+
+    def blocked_on_error(error):
+        mixed_errors.append(error)
+        if isinstance(error, AudioInputOverflow):
+            overflow_handler_entered.set()
+            threading.Event().wait(2)
+        else:
+            fatal_seen.set()
+
+    blocked_source = SoundDeviceSource(
+        device=None,
+        on_audio=mixed_frames.append,
+        on_error=blocked_on_error,
+    )
+    overflow_status = SimpleNamespace(
+        input_overflow=True,
+        input_underflow=False,
+        output_underflow=False,
+        output_overflow=False,
+        priming_output=False,
+    )
+    threading.Thread(
+        target=blocked_source._callback,
+        args=(np.ones(8, dtype=np.float32), 8, None, overflow_status),
+    ).start()
+    assert overflow_handler_entered.wait(1)
+    blocked_source._callback(
+        np.ones(8, dtype=np.float32),
+        8,
+        None,
+        SimpleNamespace(
+            input_overflow=True,
+            input_underflow=True,
+            output_underflow=False,
+            output_overflow=False,
+            priming_output=False,
+        ),
+    )
+    assert fatal_seen.wait(1)
+    assert len(mixed_frames) == 1
+    assert len(mixed_errors) == 2
+    assert isinstance(mixed_errors[0], AudioInputOverflow)
+    assert not isinstance(mixed_errors[1], AudioInputOverflow)
+
+
+def test_drop_policy_discards_overloaded_chunk_and_keeps_later_audio(api):
+    runtime = ScriptedRuntime(["first", "second", "later"])
+    runtime.release.clear()
+    handle = api.load_model(
+        {"queue_capacity": 1, "enqueue_timeout_seconds": 0.05},
+        runtime_factory=RuntimeFactory(runtime),
+    )
+    source = ManualAudioSource()
+    session = start(api, handle, source, overload_policy="drop")
+    try:
+        source.push(np.full(1600, 0.2))
+        assert runtime.entered.wait(2)
+        source.push(np.full(3200, 0.3))
+        diagnostic = session.result_queue.get(timeout=2)
+        while diagnostic.get("code") != "INPUT_QUEUE_TIMEOUT":
+            diagnostic = session.result_queue.get(timeout=2)
+        assert diagnostic["sequence"] == 2
+        assert diagnostic["fatal"] is False
+        events = [diagnostic]
+        runtime.release.set()
+        completed_sequences = set()
+        deadline = time.monotonic() + 2
+        while completed_sequences != {0, 1} and time.monotonic() < deadline:
+            event = session.result_queue.get(timeout=2)
+            events.append(event)
+            if event.get("type") == "transcript":
+                completed_sequences.add(event["sequence"])
+        assert completed_sequences == {0, 1}
+        source.push(np.full(1600, 0.4))
+        session.stop(timeout=3)
+        events.extend(collect_until_completed(session))
+        assert texts(events) == ["first", "second", "later"]
+        transcripts = [event for event in events if event["type"] == "transcript"]
+        assert [event["sequence"] for event in transcripts] == [0, 1, 3]
+        assert events[-1]["status"] == "stopped"
+    finally:
+        runtime.release.set()
+        stop_and_close(handle, session)
+
+
 @pytest.mark.parametrize("sample_rate", [8000, 44100, 48000])
 def test_stream_resampling_is_independent_of_capture_callback_partition(api, sample_rate):
     from speech_to_text.features.model_deployment.audio import StreamingResampler, normalize_audio

@@ -138,6 +138,7 @@ def _start_microphone_workflow(
         model=effective_model,
         runtime=effective_runtime,
         destination_id=destination_id,
+        forwarder=forwarder,
         delivery={
             "status": "pending" if destination_id is not None else "disabled",
             "destination_id": destination_id,
@@ -158,12 +159,18 @@ def _start_microphone_workflow(
     except StressTestConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
-        flow_config = {"language": "th", "source_id": workflow_id}
+        flow_config = {
+            "language": "th",
+            "source_id": workflow_id,
+            "overload_policy": "drop",
+        }
         if silence_threshold is not None:
             flow_config["silence_threshold"] = silence_threshold
         start_options = {"execution_mode": execution_mode, "model": effective_model}
-        if selected_runtime is not None:
-            start_options["runtime"] = selected_runtime
+        if effective_runtime is not None and _accepts_keyword_argument(
+            runtime.workflow_service.start_microphone, "runtime"
+        ):
+            start_options["runtime"] = effective_runtime
         if _accepts_keyword_argument(
             runtime.workflow_service.start_microphone, "forwarder"
         ):
@@ -191,12 +198,15 @@ def _start_microphone_workflow(
     runtime.append_event(
         record, {"type": "started", "workflow_id": workflow_id, "status": "recording"}
     )
-    threading.Thread(
+    controller = threading.Thread(
         target=_pump_microphone,
         args=(runtime, record, workflow),
         name=f"api-events-{workflow_id}",
         daemon=True,
-    ).start()
+    )
+    with record.lock:
+        record.controller_thread = controller
+    controller.start()
     with record.lock:
         first_queued_at = record.first_queued_at
         last_response_at = record.last_response_at
@@ -209,94 +219,268 @@ def _start_microphone_workflow(
 
 
 def _pump_microphone(runtime, record, workflow):
+    transcript_parts = []
     transcript_events = []
-    saw_error = False
-    saw_completion = False
+    restart_count = 0
+    retry_delay = runtime.recovery_initial_delay
+    recovery_reason = None
     while True:
+        ended_reason = None
+        received_completion = False
         try:
-            event = workflow.output_queue.get(timeout=0.25)
-        except queue.Empty:
+            while True:
+                try:
+                    event = workflow.output_queue.get(timeout=0.25)
+                except queue.Empty:
+                    try:
+                        workflow.wait(timeout=0)
+                    except TimeoutError:
+                        continue
+                    if record.recovery_cancel.is_set() and not record.stop_complete.is_set():
+                        record.stop_complete.wait(timeout=0.1)
+                        continue
+                    ended_reason = "Microphone workflow ended without a completion event"
+                    break
+                if not isinstance(event, dict):
+                    continue
+                event_type = event.get("type")
+                if event_type == "transcript":
+                    transcript_events.append(event)
+                    _update_microphone_transcript(record, transcript_parts, transcript_events)
+                if event_type == "match_results":
+                    with record.lock:
+                        record.matches = event.get("matches", [])
+                if event_type == "measurement":
+                    with record.lock:
+                        record.latest_rtf = event.get("rtf")
+                        completed_at = event.get("completed_at")
+                        record.last_response_at = (
+                            completed_at[:-6] + "Z"
+                            if isinstance(completed_at, str)
+                            and completed_at.endswith("+00:00")
+                            else completed_at
+                        )
+                if event_type == "audio_queued":
+                    with record.lock:
+                        if record.first_queued_at is None:
+                            record.first_queued_at = event.get("first_queued_at")
+                if event_type == "forwarded":
+                    receipt = event.get("receipt")
+                    with record.lock:
+                        record.delivery.update(
+                            {
+                                "status": "delivered",
+                                "attempts": getattr(receipt, "attempts", 1),
+                                "http_status": getattr(receipt, "status_code", None),
+                                "last_attempt_at": _utc_now(),
+                                "error_code": None,
+                            }
+                        )
+                if event_type == "forwarding_error":
+                    with record.lock:
+                        record.delivery.update(
+                            {
+                                "status": "failed",
+                                "attempts": event.get("attempts") or 1,
+                                "http_status": event.get("status_code"),
+                                "last_attempt_at": _utc_now(),
+                                "error_code": event.get("error_code", "delivery_failed"),
+                            }
+                        )
+                if event_type in {"workflow_error", "matching_error"} or (
+                    event_type == "error" and event.get("fatal") is True
+                ):
+                    with record.lock:
+                        record.error = event.get("error") or event.get("message")
+                if event_type == "completed":
+                    received_completion = True
+                    completion_status = event.get("status", "completed")
+                    if record.recovery_cancel.is_set() and completion_status == "failed":
+                        with record.lock:
+                            record.status = "failed"
+                            record.error = record.error or event.get("error")
+                    ended_reason = (
+                        record.error
+                        or event.get("error")
+                        or f"Microphone workflow ended with status {completion_status}"
+                    )
+                    # A microphone completion is unexpected unless Stop cancelled this run.
+                    break
+                runtime.append_event(record, event)
+        except Exception as exc:
+            ended_reason = str(exc).strip() or type(exc).__name__
+            runtime.append_event(
+                record,
+                {"type": "workflow_error", "source_id": record.workflow_id, "error": ended_reason},
+            )
+            with record.lock:
+                record.error = ended_reason
+
+        if received_completion and not record.recovery_cancel.is_set():
+            # SessionWorkflow publishes completion before its model/process cleanup callback.
             try:
-                workflow.wait(timeout=0)
-            except TimeoutError:
+                workflow.wait(timeout=None)
+            except Exception as exc:
+                ended_reason = str(exc).strip() or type(exc).__name__
+        elif ended_reason is not None and not record.recovery_cancel.is_set():
+            # A wrapper can finish without a terminal event while its capture source survives.
+            try:
+                workflow.stop(timeout=30)
+            except Exception as exc:
+                cleanup_error = str(exc).strip() or type(exc).__name__
+                runtime.append_event(
+                    record,
+                    {
+                        "type": "workflow_error",
+                        "source_id": record.workflow_id,
+                        "error": cleanup_error,
+                    },
+                )
+                with record.lock:
+                    record.error = cleanup_error
+
+        _update_microphone_transcript(record, transcript_parts, transcript_events)
+        if record.recovery_cancel.is_set():
+            record.stop_complete.wait()
+            with record.lock:
+                if record.status == "stopping":
+                    record.status = "stopped"
+                if record.destination_id is not None and record.delivery["status"] == "pending":
+                    record.delivery.update({"status": "failed", "error_code": "not_attempted"})
+                final_status = record.status
+            if final_status in {"stopped", "failed"}:
+                runtime.append_event(
+                    record,
+                    {"type": "completed", "source_id": record.workflow_id, "status": final_status},
+                )
+            return
+
+        recovery_reason = ended_reason or "Microphone workflow ended unexpectedly"
+        with record.lock:
+            cancelling = record.recovery_cancel.is_set() or runtime.shutdown_event.is_set()
+            if not cancelling:
+                record.status = "recording"
+        if cancelling:
+            record.recovery_cancel.set()
+            continue
+        transcript_parts.append(_transcript_text(transcript_events))
+        transcript_events = []
+        replacement = None
+        while True:
+            restart_count += 1
+            delay = retry_delay
+            runtime.append_event(
+                record,
+                {
+                    "type": "recovering",
+                    "attempt": restart_count,
+                    "reason": recovery_reason,
+                    "delay_seconds": delay,
+                },
+            )
+            if record.recovery_cancel.wait(delay) or runtime.shutdown_event.is_set():
+                record.recovery_cancel.set()
+                break
+            flow_config = {
+                "language": "th",
+                "source_id": f"{record.workflow_id}:restart:{restart_count}",
+                "overload_policy": "drop",
+            }
+            if record.silence_threshold is not None:
+                flow_config["silence_threshold"] = record.silence_threshold
+            start_options = {"execution_mode": record.execution_mode, "model": record.model}
+            if record.runtime is not None and _accepts_keyword_argument(
+                runtime.workflow_service.start_microphone, "runtime"
+            ):
+                start_options["runtime"] = record.runtime
+            if _accepts_keyword_argument(runtime.workflow_service.start_microphone, "forwarder"):
+                start_options["forwarder"] = record.forwarder
+            try:
+                replacement = runtime.workflow_service.start_microphone(
+                    record.device, record.keywords, flow_config, **start_options
+                )
+            except Exception as exc:
+                reason = str(exc).strip() or type(exc).__name__
+                retry_delay = min(retry_delay * 2, runtime.recovery_max_delay)
+                runtime.append_event(
+                    record,
+                    {
+                        "type": "recovery_failed",
+                        "attempt": restart_count,
+                        "reason": reason,
+                        "delay_seconds": retry_delay,
+                    },
+                )
+                with record.lock:
+                    record.error = reason
+                recovery_reason = reason
+                if record.recovery_cancel.is_set() or runtime.shutdown_event.is_set():
+                    record.recovery_cancel.set()
+                    break
                 continue
             break
-        if isinstance(event, dict):
-            if event.get("type") == "transcript":
-                transcript_events.append(event)
-            if event.get("type") == "match_results":
+
+        if replacement is None:
+            continue
+        with record.lock:
+            cancelled = record.recovery_cancel.is_set() or runtime.shutdown_event.is_set()
+            record.workflow = replacement
+            if not cancelled:
+                record.status = "recording"
+                record.error = None
+        if cancelled:
+            try:
+                replacement.stop(timeout=30)
+            except Exception as exc:
+                error = str(exc).strip() or type(exc).__name__
                 with record.lock:
-                    record.matches = event.get("matches", [])
-            if event.get("type") == "measurement":
-                with record.lock:
-                    record.latest_rtf = event.get("rtf")
-                    completed_at = event.get("completed_at")
-                    record.last_response_at = (
-                        completed_at[:-6] + "Z"
-                        if isinstance(completed_at, str)
-                        and completed_at.endswith("+00:00")
-                        else completed_at
-                    )
-            if event.get("type") == "audio_queued":
-                with record.lock:
-                    if record.first_queued_at is None:
-                        record.first_queued_at = event.get("first_queued_at")
-            if event.get("type") == "forwarded":
-                receipt = event.get("receipt")
-                with record.lock:
-                    record.delivery.update(
-                        {
-                            "status": "delivered",
-                            "attempts": getattr(receipt, "attempts", 1),
-                            "http_status": getattr(receipt, "status_code", None),
-                            "last_attempt_at": _utc_now(),
-                            "error_code": None,
-                        }
-                    )
-            if event.get("type") == "forwarding_error":
-                with record.lock:
-                    record.delivery.update(
-                        {
-                            "status": "failed",
-                            "attempts": event.get("attempts") or 1,
-                            "http_status": event.get("status_code"),
-                            "last_attempt_at": _utc_now(),
-                            "error_code": event.get("error_code", "delivery_failed"),
-                        }
-                    )
-            if event.get("type") == "completed":
-                saw_completion = True
-                with record.lock:
-                    record.status = event.get("status", "completed")
-            if event.get("type") in {"workflow_error", "matching_error"}:
-                saw_error = True
-                with record.lock:
-                    record.error = event.get("error")
-            runtime.append_event(record, event)
-            if event.get("type") == "completed":
-                break
+                    record.status = "failed"
+                    record.error = error
+                runtime.append_event(
+                    record,
+                    {
+                        "type": "workflow_error",
+                        "workflow_id": record.workflow_id,
+                        "source_id": record.workflow_id,
+                        "error": error,
+                    },
+                )
+                runtime.append_event(
+                    record,
+                    {
+                        "type": "completed",
+                        "source_id": record.workflow_id,
+                        "status": "failed",
+                    },
+                )
+                record.stop_complete.set()
+                return
+            record.recovery_cancel.set()
+        else:
+            retry_delay = runtime.recovery_initial_delay
+            runtime.append_event(
+                record,
+                {
+                    "type": "recovered",
+                    "attempt": restart_count,
+                    "reason": recovery_reason,
+                    "delay_seconds": delay,
+                },
+            )
+        workflow = replacement
+
+
+def _transcript_text(transcript_events):
     transcript_events.sort(key=lambda event: event.get("sequence", 0))
+    return " ".join(
+        event.get("text", "")
+        for event in transcript_events
+        if isinstance(event.get("text", ""), str)
+    )
+
+
+def _update_microphone_transcript(record, transcript_parts, transcript_events):
     with record.lock:
         record.transcript = " ".join(
-            event.get("text", "")
-            for event in transcript_events
-            if isinstance(event.get("text", ""), str)
-        )
-        if record.status in {"recording", "stopping"}:
-            record.status = "failed"
-            record.error = (
-                record.error or "Microphone workflow ended without a completion event"
-            )
-        status = record.status
-        error = record.error
-        if record.destination_id is not None and record.delivery["status"] == "pending":
-            record.delivery.update(
-                {"status": "failed", "error_code": "not_attempted"}
-            )
-    if status == "failed" and error and not saw_error:
-        runtime.append_event(record, {"type": "workflow_error", "error": error})
-    if status == "failed" and not saw_completion:
-        runtime.append_event(
-            record,
-            {"type": "completed", "source_id": record.workflow_id, "status": "failed"},
+            part for part in (*transcript_parts, _transcript_text(transcript_events)) if part
         )

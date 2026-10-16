@@ -423,6 +423,7 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
         "language": "th",
         "source_id": run["workflow_id"],
         "silence_threshold": 0.18,
+        "overload_policy": "drop",
     }
     assert service.microphone_start_options[0][3] == execution_mode
     assert service.microphone_start_options[0][4] == "small"

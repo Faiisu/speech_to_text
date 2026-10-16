@@ -2,6 +2,7 @@
 
 import numpy as np
 import multiprocessing
+import threading
 import time
 import pytest
 
@@ -40,6 +41,12 @@ class ProcessAudioSource:
 
     def start(self):
         self.started = True
+        if self.device == "overflow":
+            from speech_to_text.features.model_deployment.capture import AudioInputOverflow
+
+            self.on_error(AudioInputOverflow("input overflow"))
+            self.on_audio(np.full(1600, 0.3, dtype=np.float32))
+            return
         if self.device == "overloaded":
             self.on_audio(np.full(4800, 0.3, dtype=np.float32))
         else:
@@ -84,6 +91,52 @@ def test_spawned_capture_and_model_processes_route_ordered_partial_chunks(api):
             [record["elapsed_seconds"] / record["audio_seconds"] for record in measurements]
         )
         assert events.index(measurements[-1]) < next(i for i, event in enumerate(events) if event["type"] == "completed")
+
+
+def test_input_overflow_is_recoverable_in_both_process_topologies(api):
+    for topology in ("shared-model", "per-input-model"):
+        group = api.start_multiprocess_microphone_flows(
+            ["overflow"],
+            model_config={},
+            flow_config={"chunk_seconds": 0.1, "silence_threshold": 0},
+            topology=topology,
+            runtime_factory=ProcessRuntimeFactory(),
+            audio_source_factory=ProcessAudioSource,
+        )
+        session, = group.sessions
+        try:
+            group.stop(timeout=10)
+            events = collect_until_completed(session, timeout=2)
+            diagnostic, = [event for event in events if event.get("code") == "INPUT_OVERFLOW"]
+            assert diagnostic["fatal"] is False
+            assert texts(events) == ["frames-1600"]
+            assert events[-1]["status"] == "stopped"
+        finally:
+            if group._manager is not None:
+                group.stop(timeout=10)
+
+
+def test_unexpected_per_input_process_exit_emits_fatal_terminal_event(api):
+    group = api.start_multiprocess_microphone_flows(
+        ["process-test-device"],
+        model_config={},
+        flow_config={"chunk_seconds": 0.1, "silence_threshold": 0},
+        topology="per-input-model",
+        runtime_factory=ProcessRuntimeFactory(),
+        audio_source_factory=ProcessAudioSource,
+    )
+    session, = group.sessions
+    try:
+        session.process.terminate()
+        session.process.join(2)
+        events = collect_until_completed(session, timeout=3)
+        error, = [event for event in events if event.get("code") == "PROCESS_EXITED"]
+        assert error["fatal"] is True
+        assert "exit code" in error["message"]
+        assert events[-1]["status"] == "failed"
+    finally:
+        if group._manager is not None:
+            group.stop(timeout=10)
 
 
 def test_shared_ipc_routes_two_spawned_sources_independently(api):
@@ -138,15 +191,18 @@ def test_shared_ipc_keeps_per_source_flow_settings_independent(api):
 
 
 class BlockingProcessRuntime:
-    def __init__(self, entered, release):
+    def __init__(self, entered, release, second_entered=None):
         self.entered = entered
         self.release = release
+        self.second_entered = second_entered
 
     def transcribe(self, audio, *, language, decoding_options):
         if not self.entered.is_set():
             self.entered.set()
             self.release.wait(10)
             return "late-overloaded-text"
+        if self.second_entered is not None:
+            self.second_entered.set()
         return "healthy-text"
 
     def close(self):
@@ -154,12 +210,129 @@ class BlockingProcessRuntime:
 
 
 class BlockingProcessRuntimeFactory:
-    def __init__(self, entered, release):
+    def __init__(self, entered, release, second_entered=None):
         self.entered = entered
         self.release = release
+        self.second_entered = second_entered
 
     def __call__(self, config):
-        return BlockingProcessRuntime(self.entered, self.release)
+        return BlockingProcessRuntime(self.entered, self.release, self.second_entered)
+
+
+class QueuePressureSource:
+    sample_rate = 16000
+    channels = 1
+
+    def __init__(self, *, device, on_audio, on_error, allow_pressure, pressure_sent, allow_later, later_sent):
+        self.on_audio = on_audio
+        self.allow_pressure = allow_pressure
+        self.pressure_sent = pressure_sent
+        self.allow_later = allow_later
+        self.later_sent = later_sent
+
+    def start(self):
+        self.on_audio(np.full(1600, 0.3, dtype=np.float32))
+
+    def start_stream(self):
+        threading.Thread(target=self._send_audio, daemon=True).start()
+
+    def _send_audio(self):
+        if not self.allow_pressure.wait(5):
+            return
+        self.on_audio(np.full(3200, 0.3, dtype=np.float32))
+        self.pressure_sent.set()
+        if self.allow_later.wait(5):
+            self.on_audio(np.full(1600, 0.4, dtype=np.float32))
+            self.later_sent.set()
+
+    def stop(self):
+        pass
+
+
+class QueuePressureSourceFactory:
+    def __init__(self, allow_pressure, pressure_sent, allow_later, later_sent):
+        self.allow_pressure = allow_pressure
+        self.pressure_sent = pressure_sent
+        self.allow_later = allow_later
+        self.later_sent = later_sent
+
+    def __call__(self, *, device, on_audio, on_error):
+        return QueuePressureSource(
+            device=device,
+            on_audio=on_audio,
+            on_error=on_error,
+            allow_pressure=self.allow_pressure,
+            pressure_sent=self.pressure_sent,
+            allow_later=self.allow_later,
+            later_sent=self.later_sent,
+        )
+
+
+def test_drop_policy_preserves_flow_after_process_queue_pressure_in_both_topologies(api):
+    for topology in ("shared-model", "per-input-model"):
+        context = multiprocessing.get_context("spawn")
+        entered, release = context.Event(), context.Event()
+        allow_pressure, pressure_sent = context.Event(), context.Event()
+        allow_later, later_sent = context.Event(), context.Event()
+        group = api.start_multiprocess_microphone_flows(
+            ["drop-pressure"],
+            model_config={"queue_capacity": 1, "enqueue_timeout_seconds": 0.15},
+            flow_config={
+                "chunk_seconds": 0.1,
+                "silence_threshold": 0,
+                "overload_policy": "drop",
+            },
+            topology=topology,
+            runtime_factory=BlockingProcessRuntimeFactory(entered, release),
+            audio_source_factory=QueuePressureSourceFactory(
+                allow_pressure, pressure_sent, allow_later, later_sent
+            ),
+        )
+        session, = group.sessions
+        try:
+            assert entered.wait(3)
+            allow_pressure.set()
+            assert pressure_sent.wait(3)
+            events_seen = []
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and not any(
+                event.get("code") == "INPUT_QUEUE_TIMEOUT" for event in events_seen
+            ):
+                try:
+                    events_seen.append(session.result_queue.get(timeout=0.1))
+                except Empty:
+                    pass
+            diagnostics = [
+                event for event in events_seen
+                if event.get("code") == "INPUT_QUEUE_TIMEOUT"
+            ]
+            assert diagnostics, (topology, events_seen)
+            diagnostic = diagnostics[0]
+            assert diagnostic["sequence"] >= 1
+            assert diagnostic["fatal"] is False
+            release.set()
+            while not any(
+                event.get("type") == "transcript" and event.get("sequence") == 1
+                for event in events_seen
+            ):
+                event = session.result_queue.get(timeout=3)
+                events_seen.append(event)
+            allow_later.set()
+            assert later_sent.wait(3)
+            group.stop(timeout=10)
+            events = [*events_seen, *collect_until_completed(session, timeout=2)]
+            assert "healthy-text" in texts(events)
+            later = [
+                event for event in events
+                if event.get("type") == "transcript" and event.get("sequence") == 3
+            ]
+            assert later, (topology, events)
+            assert later[0]["sequence"] > diagnostic["sequence"]
+            assert events[-1]["status"] == "stopped"
+        finally:
+            release.set()
+            if group._manager is not None:
+                group.stop(timeout=10)
 
 
 def test_shared_ipc_timeout_discards_inflight_source_and_keeps_other_source(api):

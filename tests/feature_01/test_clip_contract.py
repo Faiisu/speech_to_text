@@ -143,6 +143,7 @@ def test_no_repeat_ngram_default_and_zero_override_reach_runtime(api):
     {"chunk_seconds": 0}, {"chunk_seconds": 31},
     {"silence_threshold": -0.1}, {"silence_threshold": 1.0},
     {"unknown": True}, {"overlap_seconds": 0.1},
+    {"overload_policy": "drop-oldest"}, {"overload_policy": []},
     {"decoding_options": {"unsupported_option": True}},
 ])
 def test_invalid_flow_settings_are_rejected_without_inference(api, config):

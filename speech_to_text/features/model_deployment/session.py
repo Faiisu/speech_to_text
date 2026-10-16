@@ -14,7 +14,7 @@ from queue import Empty, Full, Queue
 import numpy as np
 
 from .audio import TARGET_RATE, StreamingResampler
-from .capture import SoundDeviceSource
+from .capture import AudioInputOverflow, SoundDeviceSource
 from .config import flow_config
 from .errors import AudioInputError, ConfigurationError
 from .measurements import publish_inference_measurement
@@ -127,6 +127,20 @@ class TranscriptionSession:
             self._schedule_fatal("CAPTURE_FAILED", str(exc))
 
     def _on_error(self, error):
+        if isinstance(error, AudioInputOverflow):
+            with self._condition:
+                if self._active and not self._terminal:
+                    self.result_queue.put(
+                        _event(
+                            "error",
+                            self.source_id,
+                            code="INPUT_OVERFLOW",
+                            message=str(error),
+                            sequence=None,
+                            fatal=False,
+                        )
+                    )
+            return
         self._schedule_fatal("CAPTURE_FAILED", str(error))
 
     def _schedule_fatal(self, code, message):
@@ -344,8 +358,23 @@ class TranscriptionSession:
                     timeout=timeout,
                 )
             except Full:
-                if timeout > 0:
+                if (
+                    timeout != 0
+                    and self.settings["overload_policy"] == "fail"
+                ):
                     raise
+                if self.settings["overload_policy"] == "drop":
+                    self.result_queue.put(
+                        _event(
+                            "error",
+                            self.source_id,
+                            code="INPUT_QUEUE_TIMEOUT",
+                            message="Shared audio ingress queue is full; chunk was dropped",
+                            sequence=sequence,
+                            fatal=False,
+                        )
+                    )
+                    return True
                 self._schedule_fatal(
                     "INPUT_QUEUE_TIMEOUT", "Shared audio ingress queue is full"
                 )
@@ -443,7 +472,11 @@ def ingress_worker(handle):
             try:
                 handle._work_queue.put(
                     (session, sequence, audio, queued_at),
-                    timeout=handle.config["enqueue_timeout_seconds"],
+                    timeout=(
+                        0
+                        if session.settings["overload_policy"] == "drop"
+                        else handle.config["enqueue_timeout_seconds"]
+                    ),
                 )
                 if session._first_queued_at is None:
                     session._first_queued_at = (
@@ -460,7 +493,23 @@ def ingress_worker(handle):
                 with session._condition:
                     session._pending = max(0, session._pending - 1)
                     session._condition.notify_all()
-                if session._active:
+                if (
+                    session._active
+                    and session.settings["overload_policy"] == "drop"
+                ):
+                    session.result_queue.put(
+                        _event(
+                            "error",
+                            session.source_id,
+                            code="INPUT_QUEUE_TIMEOUT",
+                            message=(
+                                "Shared inference queue is full; chunk was dropped"
+                            ),
+                            sequence=sequence,
+                            fatal=False,
+                        )
+                    )
+                elif session._active:
                     session._fatal(
                         "INPUT_QUEUE_TIMEOUT",
                         f"Shared inference queue remained full for {handle.config['enqueue_timeout_seconds']} seconds",

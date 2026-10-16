@@ -361,12 +361,23 @@ def test_profile_microphone_uses_start_time_forwarder_snapshot(
                 snapshot = client.get(
                     f"/api/v1/transcriptions/{workflow_id}"
                 ).json()
-                if snapshot["status"] in {"completed", "failed"}:
+                if snapshot["delivery"]["status"] == "delivered":
                     break
                 time.sleep(0.02)
-            assert snapshot["status"] == "completed"
+            assert snapshot["status"] == "recording"
             assert snapshot["destination_id"] == destination_id
             assert snapshot["delivery"]["status"] == "delivered"
+            stop = client.post(f"/api/v1/transcriptions/{workflow_id}/stop")
+            assert stop.status_code == 202
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                snapshot = client.get(
+                    f"/api/v1/transcriptions/{workflow_id}"
+                ).json()
+                if snapshot["status"] == "stopped":
+                    break
+                time.sleep(0.02)
+            assert snapshot["status"] == "stopped"
             assert any(path == "/old" for path, _key, _record in _Receiver.records)
             assert not any(path == "/new" for path, _key, _record in _Receiver.records)
     finally:

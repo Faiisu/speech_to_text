@@ -19,3 +19,5 @@ Implement the [configurable JSON output contract](../spec.md#configurable-json-o
 ## Comments
 
 2026-10-14: implementation assigned to a dedicated feature-development sub-agent. The parent reviews integration and verifies the backend gate before running `scripts/run_macos.sh` and starting frontend development.
+
+2026-10-16: The user prioritizes MQTT real-time matching. HTTP terminal-only output is a known limitation for always-running workflows and is deferred; see the [pipeline decision](../spec.md#pipeline-behavior). Bounded retries followed by dropping an undeliverable chunk are acceptable. Durable delivery and replay are not requested.
