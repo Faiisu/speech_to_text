@@ -59,6 +59,8 @@ An installer success means the service health check passed, `/healthz` responded
 
 Accepted microphone runs recover after unexpected workflow endings while the backend remains running; explicit stop cancels recovery. See the [microphone recovery contract](../.scratch/backend-transcription-api/spec.md#microphone-recovery) for timing and limits. This does not restore runs after a backend/container restart. Verify physical microphone disconnect/reconnect and continuous OpenVINO capture on the UBX-330M before treating hardware recovery as proven.
 
+IPCAM RTSP runs share that lifecycle and active-run capacity limit. Configure camera reachability and optional credential references through [RTSP configuration](configuration.md#ipcam-audio-through-rtsp). The current UBX installer still requires host microphone discovery during readiness checks; an installation with only network cameras requires adapting that deployment check. Camera connectivity, decoder support, reconnection, and continuous inference must be checked with the actual camera on the target deployment.
+
 ## MQTT broker
 
 The standalone [`compose.mqtt.yaml`](../compose.mqtt.yaml) runs Eclipse Mosquitto on either Linux or macOS with Docker Compose 2.23.1 or newer. From the checkout root:

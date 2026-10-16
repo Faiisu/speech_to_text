@@ -14,6 +14,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 
 from speech_to_text.backend.api.schemas.transcription import (
     MicrophoneTranscriptionRequest,
+    RTSPTranscriptionRequest,
 )
 from speech_to_text.backend.api.microphone_lifecycle import (
     start_microphone_workflow,
@@ -33,6 +34,7 @@ from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowUnavailableError,
     normalize_profile_decoding_options,
+    prepare_rtsp_source,
 )
 
 router = APIRouter(prefix="/transcriptions")
@@ -367,6 +369,34 @@ def start_microphone(request: Request, body: MicrophoneTranscriptionRequest):
         destination_id=body.destination_id,
         forwarder=forwarder,
         language=body.language,
+    )
+
+
+@router.post("/rtsp", status_code=202)
+def start_rtsp(request: Request, body: RTSPTranscriptionRequest):
+    runtime = request.app.state.backend_runtime
+    keywords = validate_keywords(runtime.workflow_service, body.keywords)
+    try:
+        source_factory = prepare_rtsp_source(
+            body.rtsp_url, body.rtsp_url_secret_ref
+        )
+    except WorkflowConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except WorkflowUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    forwarder = _resolve_forwarder(runtime, body.destination_id)
+    return start_microphone_workflow(
+        request,
+        keywords=keywords,
+        device=None,
+        execution_mode=body.execution_mode,
+        destination_id=body.destination_id,
+        forwarder=forwarder,
+        language=body.language,
+        source_type="rtsp",
+        rtsp_url=body.rtsp_url,
+        rtsp_url_secret_ref=body.rtsp_url_secret_ref,
+        audio_source_factory=source_factory,
     )
 
 

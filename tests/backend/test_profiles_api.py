@@ -53,6 +53,7 @@ class FakeTranscriptionService:
 
     def __init__(self):
         self.microphone_start_options = []
+        self.microphone_source_factories = []
         self.keep_microphone_active = False
         self.keyword_validation_barrier = None
         self.default_model = "turbo"
@@ -95,11 +96,13 @@ class FakeTranscriptionService:
         return tuple(word.strip() for word in keywords)
 
     def start_microphone(
-        self, device, keywords, flow_config=None, *, execution_mode="shared", model=None, runtime=None
+        self, device, keywords, flow_config=None, *, execution_mode="shared", model=None, runtime=None,
+        audio_source_factory=None,
     ):
         self.microphone_start_options.append(
             (device, tuple(keywords), flow_config, execution_mode, model, runtime)
         )
+        self.microphone_source_factories.append(audio_source_factory)
         if self.keep_microphone_active:
             return ActiveFakeMicrophoneWorkflow()
         return FakeMicrophoneWorkflow()
@@ -658,12 +661,18 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
     assert columns.count("model") == 1
     assert columns.count("decoding_options_json") == 1
     assert columns.count("language") == 1
+    assert columns.count("source_type") == 1
+    assert columns.count("rtsp_url") == 1
+    assert columns.count("rtsp_url_secret_ref") == 1
     assert language_column["type"] == "TEXT"
     assert language_column["notnull"] == 1
     assert language_column["dflt_value"] == "'th'"
     assert profiles[0]["profile_id"] == "existing-profile"
     assert profiles[0]["name"] == "Existing"
     assert profiles[0]["device"] is None
+    assert profiles[0]["source_type"] == "microphone"
+    assert profiles[0]["rtsp_url"] is None
+    assert profiles[0]["rtsp_url_secret_ref"] is None
     assert profiles[0]["execution_mode"] == "shared"
     assert profiles[0]["keywords"] == ["สวัสดี"]
     assert profiles[0]["created_at"] == "2026-01-01T00:00:00Z"

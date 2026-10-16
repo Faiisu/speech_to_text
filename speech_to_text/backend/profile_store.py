@@ -76,7 +76,10 @@ class SQLiteProfileStore:
                 CREATE TABLE IF NOT EXISTS workflow_profiles (
                     profile_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
+                    source_type TEXT NOT NULL DEFAULT 'microphone',
                     device TEXT,
+                    rtsp_url TEXT,
+                    rtsp_url_secret_ref TEXT,
                     execution_mode TEXT NOT NULL
                         CHECK (execution_mode IN ('shared', 'per_workflow_process')),
                     keywords_json TEXT NOT NULL,
@@ -110,6 +113,19 @@ class SQLiteProfileStore:
                     "ALTER TABLE workflow_profiles ADD COLUMN "
                     "silence_threshold REAL NOT NULL DEFAULT 0.00"
                 )
+            for column, definition in (
+                ("source_type", "TEXT NOT NULL DEFAULT 'microphone'"),
+                ("rtsp_url", "TEXT"),
+                ("rtsp_url_secret_ref", "TEXT"),
+            ):
+                if column not in columns:
+                    try:
+                        connection.execute(
+                            f"ALTER TABLE workflow_profiles ADD COLUMN {column} {definition}"
+                        )
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column name" not in str(exc).lower():
+                            raise
             if "model" not in columns:
                 connection.execute(
                     "ALTER TABLE workflow_profiles ADD COLUMN "
@@ -172,7 +188,10 @@ class SQLiteProfileStore:
         return {
             "profile_id": row["profile_id"],
             "name": row["name"],
+            "source_type": row["source_type"],
             "device": row["device"],
+            "rtsp_url": row["rtsp_url"],
+            "rtsp_url_secret_ref": row["rtsp_url_secret_ref"],
             "execution_mode": row["execution_mode"],
             "keywords": json.loads(row["keywords_json"]),
             "silence_threshold": row["silence_threshold"],
@@ -212,15 +231,19 @@ class SQLiteProfileStore:
                 connection.execute(
                     """
                     INSERT INTO workflow_profiles
-                        (profile_id, name, device, execution_mode, keywords_json,
+                        (profile_id, name, source_type, device, rtsp_url, rtsp_url_secret_ref,
+                         execution_mode, keywords_json,
                          silence_threshold, model, runtime, destination_id, decoding_options_json, language,
                          created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         profile["profile_id"],
                         profile["name"],
+                        profile.get("source_type", "microphone"),
                         profile["device"],
+                        profile.get("rtsp_url"),
+                        profile.get("rtsp_url_secret_ref"),
                         profile["execution_mode"],
                         json.dumps(profile["keywords"], ensure_ascii=False),
                         profile["silence_threshold"],
@@ -261,7 +284,8 @@ class SQLiteProfileStore:
                 connection.execute(
                     """
                     UPDATE workflow_profiles
-                    SET name = ?, device = ?, execution_mode = ?, keywords_json = ?,
+                    SET name = ?, source_type = ?, device = ?, rtsp_url = ?,
+                        rtsp_url_secret_ref = ?, execution_mode = ?, keywords_json = ?,
                         silence_threshold = ?, model = ?, runtime = ?, destination_id = ?,
                         decoding_options_json = ?,
                         language = ?,
@@ -270,7 +294,10 @@ class SQLiteProfileStore:
                     """,
                     (
                         profile["name"],
+                        profile.get("source_type", "microphone"),
                         profile["device"],
+                        profile.get("rtsp_url"),
+                        profile.get("rtsp_url_secret_ref"),
                         profile["execution_mode"],
                         json.dumps(profile["keywords"], ensure_ascii=False),
                         profile["silence_threshold"],

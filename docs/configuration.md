@@ -28,10 +28,28 @@ The Profile editor and Model tuning page also offer **Thai**, **English**, and *
 | `SPEECH_TO_TEXT_MODEL` | Feature 01 model default | Backend workflow service model key, fixed when its lazy model handle is loaded. |
 | `SPEECH_TO_TEXT_RUNTIME` | Feature 01 runtime default | Backend workflow service runtime, fixed when its lazy model handle is loaded. |
 | `SPEECH_TO_TEXT_PRECISION` | Feature 01 precision default | Backend workflow service precision, fixed when its lazy model handle is loaded. |
-| `SPEECH_TO_TEXT_PROFILE_DB` | `~/.local/share/speech_to_text/profiles.sqlite3` | SQLite file for saved microphone workflow profiles. Its parent directory is created when the backend loads its profile/destination store. |
+| `SPEECH_TO_TEXT_PROFILE_DB` | `~/.local/share/speech_to_text/profiles.sqlite3` | SQLite file for saved live audio workflow profiles. Its parent directory is created when the backend loads its profile/destination store. |
 | `SPEECH_TO_TEXT_RECORDINGS_DIR` | `data/tuning-recordings` under the current working directory; `/data/tuning-recordings` in the application image | Persistent WAV recordings and metadata for the [model tuning workflow](../.scratch/model-tuning/spec.md). |
 
 No credentials or database server are required to call Feature 01 locally. The backend initializes the SQLite profile/destination store while loading saved destinations; mount its parent directory as persistent storage when running in a container. The previous Control Center and its Mac host microphone bridge are not included in the current application.
+
+## IPCAM audio through RTSP
+
+In the Profile editor, choose **IPCAM (RTSP)** as the input source. Enter the camera/NVR's audio-enabled RTSP URL, such as `rtsp://192.168.1.50:554/stream1`, or choose an environment secret reference for an authenticated URL. The backend host or container must be able to reach the camera. The existing model, language, keyword, execution mode, and destination settings apply to either live input source. See the [RTSP source contract](../.scratch/ipcam-rtsp/spec.md) for validation, defaults, capture errors, and recovery behavior.
+
+Direct URLs cannot contain a username or password. For authenticated cameras or secret query tokens, set an environment variable containing the complete URL and allow its name before starting the backend:
+
+```bash
+export FRONT_GATE_RTSP_URL='rtsp://camera-user:camera-password@192.168.1.50:554/stream1'
+export SPEECH_TO_TEXT_RTSP_SECRET_REFS=FRONT_GATE_RTSP_URL
+./scripts/run_macos.sh
+```
+
+Choose the environment secret reference option and enter `FRONT_GATE_RTSP_URL` in the Profile editor. Percent-encode reserved characters in URL credentials. Only the variable name is saved in the profile; its resolved value is held privately for the active run and reused during recovery. Changes to the environment or profile apply to a new run.
+
+For Docker, pass both variables into the application container through its deployment environment. Host environment variables are not automatically available inside a container. The UBX installer generates its managed Compose file; use a separate operator-owned Compose override for credentials so updates do not overwrite them. Start or recreate the service with the managed file and the override together.
+
+RTSP capture uses PyAV, already included in the backend extra and application image. No separate `ffmpeg` executable is required. Confirm the camera enables an audio track and the installed decoder supports its codec. Real camera connectivity and recognition quality require validation with the actual device.
 
 ## Transcript matching and forwarding
 

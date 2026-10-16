@@ -42,12 +42,27 @@ class MicrophoneTranscriptionRequest(BaseModel):
     language: Literal["th", "en", "auto"] = "th"
 
 
+class RTSPTranscriptionRequest(BaseModel):
+    class Config:
+        extra = "forbid"
+
+    keywords: list[StrictStr]
+    rtsp_url: StrictStr | None = None
+    rtsp_url_secret_ref: StrictStr | None = None
+    execution_mode: Literal["shared", "per_workflow_process"] = "shared"
+    destination_id: StrictStr | None = None
+    language: Literal["th", "en", "auto"] = "th"
+
+
 class MicrophoneProfileDefinition(BaseModel):
     class Config:
         extra = "forbid"
 
     name: StrictStr
+    source_type: Literal["microphone", "rtsp"] = "microphone"
     device: StrictStr | None = None
+    rtsp_url: StrictStr | None = None
+    rtsp_url_secret_ref: StrictStr | None = None
     execution_mode: Literal["shared", "per_workflow_process"] = "shared"
     keywords: list[StrictStr]
     silence_threshold: float = Field(

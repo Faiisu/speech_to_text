@@ -54,6 +54,10 @@ class RunRecord:
     profile_id: str | None = None
     profile_name: str | None = None
     device: str | None = None
+    source_type: str = "microphone"
+    rtsp_url: str | None = None
+    rtsp_url_secret_ref: str | None = None
+    audio_source_factory: object | None = field(default=None, repr=False)
     execution_mode: str | None = None
     silence_threshold: float | None = None
     decoding_options: dict | None = None
@@ -378,6 +382,9 @@ def run_snapshot(record):
             "profile_id": record.profile_id,
             "profile_name": record.profile_name,
             "device": record.device,
+            "source_type": record.source_type,
+            "rtsp_url": record.rtsp_url,
+            "rtsp_url_secret_ref": record.rtsp_url_secret_ref,
             "execution_mode": record.execution_mode,
             "silence_threshold": record.silence_threshold,
             "decoding_options": deepcopy(record.decoding_options),

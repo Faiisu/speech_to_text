@@ -39,9 +39,10 @@ atexit.register(shutil.rmtree, _database_directory, ignore_errors=True)
 
 
 class FakeMicrophoneWorkflow:
-    def __init__(self, workflow_id: str):
+    def __init__(self, workflow_id: str, *, source_type: str = "microphone"):
         self.output_queue: queue.Queue[dict] = queue.Queue()
         self.workflow_id = workflow_id
+        self.source_type = source_type
         self.stopped = threading.Event()
         threading.Thread(target=self._emit_results, daemon=True).start()
 
@@ -52,7 +53,7 @@ class FakeMicrophoneWorkflow:
                 "type": "transcript",
                 "source_id": self.workflow_id,
                 "sequence": 1,
-                "text": "สวัสดีครับ",
+                "text": "สวัสดีครับ (IPCAM test source)" if self.source_type == "rtsp" else "สวัสดีครับ",
             }
         )
         self.output_queue.put(
@@ -127,8 +128,9 @@ class FakeWorkflowService(TranscriptionService):
             }
         ]
 
-    def start_microphone(self, device, keywords, flow_config, *, execution_mode, model=None, runtime=None):
-        return FakeMicrophoneWorkflow(flow_config["source_id"])
+    def start_microphone(self, device, keywords, flow_config, *, execution_mode, model=None, runtime=None, audio_source_factory=None):
+        source_type = "rtsp" if audio_source_factory is not None else "microphone"
+        return FakeMicrophoneWorkflow(flow_config["source_id"], source_type=source_type)
 
 class FakeRecordingAudioSource:
     sample_rate = 16000

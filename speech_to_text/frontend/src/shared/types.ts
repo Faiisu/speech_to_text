@@ -28,7 +28,10 @@ export const LANGUAGE_LABELS: Record<Language, string> = { th: 'Thai', en: 'Engl
 export type Profile = {
   profile_id: string
   name: string
+  source_type?: 'microphone' | 'rtsp'
   device: string | null
+  rtsp_url?: string | null
+  rtsp_url_secret_ref?: string | null
   execution_mode: 'shared' | 'per_workflow_process'
   keywords: string[]
   silence_threshold: number
@@ -48,6 +51,9 @@ export type Transcription = {
   keywords: string[]
   profile_id: string | null
   profile_name: string | null
+  source_type?: 'microphone' | 'rtsp'
+  rtsp_url?: string | null
+  rtsp_url_secret_ref?: string | null
   device: string | null
   execution_mode: 'shared' | 'per_workflow_process' | null
   silence_threshold: number | null
@@ -208,4 +214,4 @@ export type StressEvent = {
   [key: string]: unknown
 }
 
-export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options'> & { language: Language; destination_id?: string | null }
+export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options'> & { source_type?: 'microphone' | 'rtsp'; rtsp_url?: string | null; rtsp_url_secret_ref?: string | null; language: Language; destination_id?: string | null }

@@ -18,6 +18,7 @@ from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowUnavailableError,
     normalize_profile_decoding_options,
+    prepare_rtsp_source,
 )
 from speech_to_text.workflows.transcribe_match_forward.destinations import (
     DestinationConfigurationError,
@@ -37,6 +38,18 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
             status_code=422,
             detail="device must be an exact non-empty microphone name or null",
         )
+    if body.source_type == "microphone":
+        if body.rtsp_url is not None or body.rtsp_url_secret_ref is not None:
+            raise HTTPException(status_code=422, detail="microphone profiles cannot include RTSP fields")
+    else:
+        if device is not None:
+            raise HTTPException(status_code=422, detail="RTSP profiles cannot include device")
+        try:
+            prepare_rtsp_source(body.rtsp_url, body.rtsp_url_secret_ref)
+        except WorkflowConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except WorkflowUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     runtime = request.app.state.backend_runtime
     keywords = validate_keywords(runtime.workflow_service, body.keywords)
     model = body.model or runtime.workflow_service.default_model
@@ -64,7 +77,10 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         "name": name,
+        "source_type": body.source_type,
         "device": device,
+        "rtsp_url": body.rtsp_url,
+        "rtsp_url_secret_ref": body.rtsp_url_secret_ref,
         "execution_mode": body.execution_mode,
         "keywords": list(keywords),
         "silence_threshold": body.silence_threshold,
@@ -149,6 +165,16 @@ def start_profile_run(profile_id: str, request: Request):
     if profile is None:
         raise HTTPException(status_code=404, detail="profile not found")
     keywords = validate_keywords(runtime.workflow_service, profile["keywords"])
+    source_factory = None
+    if profile.get("source_type", "microphone") == "rtsp":
+        try:
+            source_factory = prepare_rtsp_source(
+                profile.get("rtsp_url"), profile.get("rtsp_url_secret_ref")
+            )
+        except WorkflowConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except WorkflowUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     forwarder = None
     destination_id = profile.get("destination_id")
     if destination_id is not None:
@@ -172,4 +198,8 @@ def start_profile_run(profile_id: str, request: Request):
         forwarder=forwarder,
         decoding_options=profile.get("decoding_options"),
         language=profile.get("language", "th"),
+        source_type=profile.get("source_type", "microphone"),
+        rtsp_url=profile.get("rtsp_url"),
+        rtsp_url_secret_ref=profile.get("rtsp_url_secret_ref"),
+        audio_source_factory=source_factory,
     )

@@ -22,6 +22,10 @@ finally:
 
 The matching feature and its output behavior are composed by the [transcript matching workflow](../.scratch/transcript-matching-forwarding/spec.md). The workflow returns results to its backend caller and can also send completed results to a configured receiver.
 
+## IPCAM RTSP input
+
+Live audio workflows also accept IP camera/NVR audio through RTSP. The [RTSP source contract](../.scratch/ipcam-rtsp/spec.md) owns the capture callable, source fields, secret references, profile persistence, and direct `POST /api/v1/transcriptions/rtsp` request. RTSP runs use the existing status, event polling, stop, matching, forwarding, and recovery interfaces. See [RTSP configuration](configuration.md#ipcam-audio-through-rtsp) for camera and credential setup.
+
 ## Backend API v1
 
 The [model tuning contract](../.scratch/model-tuning/spec.md) documents retained audio uploads, host recording, playback/download, and deletion. Uploading audio to that library does not start a transcription or load a model; tuning trials use the existing clip transcription endpoint.

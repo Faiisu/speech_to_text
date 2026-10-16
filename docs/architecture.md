@@ -39,6 +39,8 @@ The transcript-match-forward workflow consumes Feature 01's completed clip trans
 
 Microphone capture and clip decoding are normalized inside Feature 01. Inference chunks do not overlap. Successful text is assembled in sequence order; a failed chunk emits an error and later chunks continue. Stopping a flow flushes its partial chunk before the completion event. Full event and configuration contracts live in the [Feature 01 specification](../.scratch/new-speech-to-text/spec.md).
 
+IPCAM input uses Feature 01's external audio-source boundary. Its RTSP adapter decodes the first audio stream with PyAV into normalized PCM and feeds the existing session pipeline in either execution mode. The workflow selects the capture source; the backend retains the start-time source snapshot and owns reconnection through the existing live run recovery. The [RTSP source contract](../.scratch/ipcam-rtsp/spec.md) owns source validation, credential handling, and lifecycle details.
+
 Backend microphone runs use the feature's drop policy for queue pressure and recover unexpectedly ended workflows while retaining the same run ID. Explicit stop and backend shutdown cancel recovery. The [backend recovery contract](../.scratch/backend-transcription-api/spec.md#microphone-recovery) owns retry timing, replacement source identity, and lifecycle guarantees.
 
 ## Local RTF measurements

@@ -389,9 +389,15 @@ def start_microphone_and_forward(
     flow_config=None,
     *,
     on_finished=None,
+    audio_source_factory=None,
 ):
     """Start and wrap one Feature 01 microphone session as a workflow."""
-    session = start_microphone_flow(device, model_handle, flow_config)
+    source_options = (
+        {"audio_source_factory": audio_source_factory}
+        if audio_source_factory is not None
+        else {}
+    )
+    session = start_microphone_flow(device, model_handle, flow_config, **source_options)
     return forward_session(
         session, forwarder, matching_config, on_finished=on_finished
     )

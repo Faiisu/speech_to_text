@@ -21,6 +21,12 @@ from .errors import (
 from .model import ModelHandle, load_model, transcribe_clip
 from .replay_source import PacedWavSource
 from .recording import AudioRecording, start_audio_recording
+from .rtsp import (
+    RTSPAudioSourceFactory,
+    RTSPCaptureUnavailableError,
+    create_rtsp_audio_source_factory,
+    create_rtsp_secret_source_factory,
+)
 from .process_topology import (
     ProcessFlowGroup,
     ProcessSession,
@@ -80,6 +86,8 @@ __all__ = [
     "PacedWavSource",
     "ProcessFlowGroup",
     "ProcessSession",
+    "RTSPAudioSourceFactory",
+    "RTSPCaptureUnavailableError",
     "TranscriptionSession",
     "list_available_models",
     "normalize_decoding_options",
@@ -91,4 +99,6 @@ __all__ = [
     "transcribe_clip",
     "validate_wav",
     "convert_audio_to_wav",
+    "create_rtsp_audio_source_factory",
+    "create_rtsp_secret_source_factory",
 ]

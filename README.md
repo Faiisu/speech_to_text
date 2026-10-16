@@ -7,11 +7,12 @@ Speech-to-Text provides a React frontend, a FastAPI backend, and callable Python
 - Discover local speech models and transcribe WAV clips or microphone input with OpenVINO or CTranslate2 runtimes.
 - Match configured words and phrases as microphone transcript chunks arrive, with cumulative occurrence counts.
 - Save reusable microphone profiles and start, monitor, and stop workflow runs from the frontend.
+- Receive IP camera/NVR audio over RTSP in saved profiles, with automatic reconnection and optional deployment-managed credentials. See [RTSP configuration](docs/configuration.md#ipcam-audio-through-rtsp).
 - Upload WAV, MP3, or M4A files in [Model tuning](.scratch/model-tuning/spec.md) and compare settings on saved audio.
 - Run the Capacity lab file-replay stress matrix to compare shared-model and per-input-model execution at 1, 2, and 4 concurrent workflows.
 - Report per-chunk real-time factor (RTF), timing, and capacity evidence.
 
-Microphone profiles persist in SQLite. Workflow run status, transcripts, matches, and events remain in the active backend process and are lost on restart; see [API Interfaces](docs/api.md#backend-api-v1).
+Profiles persist in SQLite. Workflow run status, transcripts, matches, and events remain in the active backend process and are lost on restart; see [API Interfaces](docs/api.md#backend-api-v1).
 
 Python and backend HTTP workflows support optional JSON forwarding to saved HTTP/HTTPS or MQTT destinations; see [Configuration](docs/configuration.md#transcript-matching-and-forwarding) and the [receiver verification gate](docs/deployment.md#go-live-gate).
 
@@ -48,6 +49,7 @@ Specifications under `.scratch/` define the callable and API contracts; maintain
 - [Feature 01 specification](.scratch/new-speech-to-text/spec.md)
 - [Transcript matching and forwarding specification](.scratch/transcript-matching-forwarding/spec.md)
 - [Backend transcription API specification](.scratch/backend-transcription-api/spec.md)
+- [IPCAM RTSP specification](.scratch/ipcam-rtsp/spec.md)
 
 ## Historical records
 

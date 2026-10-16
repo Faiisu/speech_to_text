@@ -64,6 +64,10 @@ def start_microphone_workflow(
     forwarder=None,
     decoding_options=None,
     language="th",
+    source_type="microphone",
+    rtsp_url=None,
+    rtsp_url_secret_ref=None,
+    audio_source_factory=None,
 ):
     """Start one microphone workflow and register its run for API monitoring."""
     runtime = request.app.state.backend_runtime
@@ -93,6 +97,10 @@ def start_microphone_workflow(
                 forwarder=forwarder,
                 decoding_options=decoding_options,
                 language=language,
+                source_type=source_type,
+                rtsp_url=rtsp_url,
+                rtsp_url_secret_ref=rtsp_url_secret_ref,
+                audio_source_factory=audio_source_factory,
             )
     return _start_microphone_workflow(
         request,
@@ -108,6 +116,10 @@ def start_microphone_workflow(
         forwarder=forwarder,
         decoding_options=decoding_options,
         language=language,
+        source_type=source_type,
+        rtsp_url=rtsp_url,
+        rtsp_url_secret_ref=rtsp_url_secret_ref,
+        audio_source_factory=audio_source_factory,
     )
 
 
@@ -126,6 +138,10 @@ def _start_microphone_workflow(
     forwarder=None,
     decoding_options=None,
     language="th",
+    source_type="microphone",
+    rtsp_url=None,
+    rtsp_url_secret_ref=None,
+    audio_source_factory=None,
 ):
     runtime = request.app.state.backend_runtime
     effective_model = model
@@ -144,6 +160,10 @@ def _start_microphone_workflow(
         profile_id=profile_id,
         profile_name=profile_name,
         device=device,
+        source_type=source_type,
+        rtsp_url=rtsp_url,
+        rtsp_url_secret_ref=rtsp_url_secret_ref,
+        audio_source_factory=audio_source_factory,
         execution_mode=execution_mode,
         silence_threshold=silence_threshold,
         model=effective_model,
@@ -183,6 +203,14 @@ def _start_microphone_workflow(
         if decoding_options is not None:
             flow_config["decoding_options"] = deepcopy(record.decoding_options)
         start_options = {"execution_mode": execution_mode, "model": effective_model}
+        if audio_source_factory is not None:
+            if not _accepts_keyword_argument(
+                runtime.workflow_service.start_microphone, "audio_source_factory"
+            ):
+                raise WorkflowUnavailableError(
+                    "The configured workflow service cannot start an RTSP audio source"
+                )
+            start_options["audio_source_factory"] = audio_source_factory
         if effective_runtime is not None and _accepts_keyword_argument(
             runtime.workflow_service.start_microphone, "runtime"
         ):
@@ -407,13 +435,21 @@ def _pump_microphone(runtime, record, workflow):
             if record.profile_id is not None:
                 flow_config["decoding_options"] = deepcopy(record.decoding_options)
             start_options = {"execution_mode": record.execution_mode, "model": record.model}
-            if record.runtime is not None and _accepts_keyword_argument(
-                runtime.workflow_service.start_microphone, "runtime"
-            ):
-                start_options["runtime"] = record.runtime
-            if _accepts_keyword_argument(runtime.workflow_service.start_microphone, "forwarder"):
-                start_options["forwarder"] = record.forwarder
+            if record.audio_source_factory is not None:
+                start_options["audio_source_factory"] = record.audio_source_factory
             try:
+                if record.audio_source_factory is not None and not _accepts_keyword_argument(
+                    runtime.workflow_service.start_microphone, "audio_source_factory"
+                ):
+                    raise WorkflowUnavailableError(
+                        "The configured workflow service cannot restart an RTSP audio source"
+                    )
+                if record.runtime is not None and _accepts_keyword_argument(
+                    runtime.workflow_service.start_microphone, "runtime"
+                ):
+                    start_options["runtime"] = record.runtime
+                if _accepts_keyword_argument(runtime.workflow_service.start_microphone, "forwarder"):
+                    start_options["forwarder"] = record.forwarder
                 replacement = runtime.workflow_service.start_microphone(
                     record.device, record.keywords, flow_config, **start_options
                 )

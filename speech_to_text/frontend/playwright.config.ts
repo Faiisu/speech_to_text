@@ -23,6 +23,8 @@ export default defineConfig({
       env: {
         ...process.env,
         SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS: '127.0.0.1/32',
+        SPEECH_TO_TEXT_RTSP_SECRET_REFS: 'E2E_CAMERA_RTSP_URL',
+        E2E_CAMERA_RTSP_URL: 'rtsp://camera-e2e-user:camera-e2e-password@camera.example/secret',
       },
       reuseExistingServer: false,
       timeout: 30_000,

@@ -8,6 +8,10 @@ Expose the transcription workflows to a frontend through a versioned FastAPI API
 
 All endpoints use the `/api/v1` prefix.
 
+### IPCAM RTSP sources
+
+Profiles also support live IP camera/NVR input. The [RTSP source contract](../ipcam-rtsp/spec.md) owns the additive source fields, environment secret references, direct `POST /transcriptions/rtsp` endpoint, and RTSP recovery guarantees. Existing microphone requests and profiles retain their defaults. Both live input types use the monitoring and stop endpoints documented here.
+
 ### `GET /profiles` and `POST /profiles`
 
 Profiles are named, reusable microphone-workflow configurations stored in SQLite. The profile store is durable across backend restarts; run records and events remain in the existing process-local registry. Configure the SQLite file with `SPEECH_TO_TEXT_PROFILE_DB`; its default is `~/.local/share/speech_to_text/profiles.sqlite3`. The parent directory is created when needed.

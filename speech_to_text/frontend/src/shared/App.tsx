@@ -14,7 +14,7 @@ function Shell() {
       <div className="nav-label">WORKSPACE</div>
       <nav className="main-nav">
         <NavLink to="/" end><span className="nav-icon">◫</span>Overview</NavLink>
-        <NavLink to="/profiles"><span className="nav-icon">◉</span>Microphones & profiles</NavLink>
+        <NavLink to="/profiles"><span className="nav-icon">◉</span>Audio inputs & profiles</NavLink>
         <NavLink to="/destinations"><span className="nav-icon">↗</span>Destinations</NavLink>
         <NavLink to="/model-tuning"><span className="nav-icon">♫</span>Model tuning</NavLink>
         <NavLink to="/stress-tests"><span className="nav-icon">⌁</span>Stress test</NavLink>

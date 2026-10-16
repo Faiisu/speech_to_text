@@ -100,7 +100,7 @@ export default function ProfileList() {
     <header className="profile-desk-heading">
       <div className="profile-desk-copy">
         <div className="eyebrow">TRANSCRIPTION / INPUT DESK</div>
-        <h1>Profiles <span>Microphone setups, ready to run.</span></h1>
+        <h1>Profiles <span>Audio inputs, ready to run.</span></h1>
         <p>Choose a saved input and keyword set when you start a workflow.</p>
       </div>
       <div className="profile-signal" aria-hidden="true">
@@ -121,17 +121,17 @@ export default function ProfileList() {
 
     {loading ? <Loading /> : profiles.length ? <>
       <div className="profile-record-head" aria-hidden="true">
-        <span>PROFILE / MICROPHONE</span><span>KEYWORDS</span><span>MODEL / RUNTIME</span><span>EXECUTION MODE</span><span>ACTIONS</span>
+        <span>PROFILE / INPUT</span><span>KEYWORDS</span><span>MODEL / RUNTIME</span><span>EXECUTION MODE</span><span>ACTIONS</span>
       </div>
-      <section className="profile-record-list" aria-label="Saved microphone profiles">
+      <section className="profile-record-list" aria-label="Saved input profiles">
         {profiles.map(profile => {
           const activeRuns = runs.filter(run => run.kind === 'microphone' && run.profile_id === profile.profile_id && ACTIVE_STATUSES.has(run.status))
           const isStopping = stopping === profile.profile_id || (activeRuns.length > 0 && activeRuns.every(run => run.status === 'stopping'))
           return <article className="profile-record" key={profile.profile_id}>
           <div className="profile-record-identity">
-            <span className="profile-field-label">PROFILE / MICROPHONE</span>
+            <span className="profile-field-label">PROFILE / INPUT</span>
             <h2>{profile.name}</h2>
-            <p><span className="profile-mic-mark" aria-hidden="true">◉</span>{profile.device || 'System default microphone'}</p>
+            <p><span className="profile-mic-mark" aria-hidden="true">◉</span>{profile.source_type === 'rtsp' ? 'IPCAM (RTSP)' : profile.device || 'System default microphone'}</p>
             <small>Updated {new Date(profile.updated_at).toLocaleString('en-US')}</small>
           </div>
           <div className="profile-record-keywords">
@@ -164,6 +164,6 @@ export default function ProfileList() {
           </article>
         })}
       </section>
-    </> : <EmptyState title="No profiles yet">Create a reusable setup by selecting a microphone and adding the keywords you want to track.<Link className="button button-dark" to="/profiles/new">Create your first profile <span>↗</span></Link></EmptyState>}
+    </> : <EmptyState title="No profiles yet">Create a reusable setup by selecting an audio input and adding the keywords you want to track.<Link className="button button-dark" to="/profiles/new">Create your first profile <span>↗</span></Link></EmptyState>}
   </div>
 }

@@ -1,5 +1,112 @@
 import { expect, test } from '@playwright/test'
 
+test('IPCAM profiles stay usable when microphone discovery is unavailable', async ({ page }) => {
+  await page.route('**/api/v1/microphones', route => route.fulfill({
+    status: 503,
+    contentType: 'application/json',
+    body: JSON.stringify({ detail: 'Microphone discovery is unavailable.' }),
+  }))
+
+  await page.goto('/profiles/new')
+  await page.getByLabel('Name').fill('E2E IPCAM profile')
+  await page.getByLabel('Input source').selectOption('rtsp')
+  await page.getByLabel('RTSP URL').fill('rtsp://camera.example/live')
+  await page.getByLabel('Model', { exact: true }).selectOption('small')
+  await page.getByLabel('One keyword per line').fill('กล้อง')
+  await expect(page.getByRole('button', { name: /Save profile/ })).toBeEnabled()
+  await page.getByRole('button', { name: /Save profile/ }).click()
+
+  await expect(page).toHaveURL(/\/profiles$/)
+  const original = page.locator('.profile-record').filter({ hasText: 'E2E IPCAM profile' })
+  await expect(original).toContainText('IPCAM (RTSP)')
+  await original.getByRole('link', { name: 'Edit' }).click()
+  await expect(page.getByLabel('Input source')).toHaveValue('rtsp')
+  await expect(page.getByLabel('RTSP URL')).toHaveValue('rtsp://camera.example/live')
+  await page.getByLabel('RTSP URL').fill('rtsp://camera.example/edited')
+  await page.getByRole('button', { name: /Save profile/ }).click()
+  await expect(page.locator('.profile-record').filter({ hasText: 'E2E IPCAM profile' })).toContainText('IPCAM (RTSP)')
+
+  const profile = await page.request.get('/api/v1/profiles').then(async response => {
+    const payload = await response.json()
+    return payload.profiles.find((item: { name: string }) => item.name === 'E2E IPCAM profile')
+  })
+  expect(profile).toMatchObject({
+    source_type: 'rtsp',
+    rtsp_url: 'rtsp://camera.example/edited',
+    rtsp_url_secret_ref: null,
+    device: null,
+  })
+
+  await page.goto(`/profiles/new?duplicate=${profile.profile_id}`)
+  await expect(page.getByLabel('Input source')).toHaveValue('rtsp')
+  await expect(page.getByLabel('RTSP URL')).toHaveValue('rtsp://camera.example/edited')
+  await page.getByLabel('Name').fill('E2E IPCAM duplicate')
+  await page.getByRole('button', { name: /Save profile/ }).click()
+  await expect(page.locator('.profile-record').filter({ hasText: 'E2E IPCAM duplicate' })).toContainText('IPCAM (RTSP)')
+  const duplicate = await page.request.get('/api/v1/profiles').then(async response => {
+    const payload = await response.json()
+    return payload.profiles.find((item: { name: string }) => item.name === 'E2E IPCAM duplicate')
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('status')).toContainText('IPCAM profiles remain available')
+  await page.getByRole('button', { name: 'Start workflow E2E IPCAM duplicate' }).click()
+  await expect(page).toHaveURL(/\/runs\/[a-f0-9]+$/)
+  const workflowId = page.url().split('/').at(-1)!
+  const run = await page.request.get(`/api/v1/transcriptions/${workflowId}`).then(response => response.json())
+  expect(run).toMatchObject({ source_type: 'rtsp', kind: 'microphone', device: null, profile_name: 'E2E IPCAM duplicate' })
+  await expect(page.getByRole('heading', { name: 'E2E IPCAM duplicate' })).toBeVisible()
+  await expect(page.locator('.run-heading')).toContainText('IPCAM (RTSP)')
+  await expect(page.locator('.transcript-text')).toHaveText('สวัสดีครับ (IPCAM test source)', { timeout: 10_000 })
+  await page.getByRole('button', { name: 'Stop listening' }).click()
+  await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${workflowId}`).then(async response => (await response.json()).status)).toBe('stopped')
+  await page.request.delete(`/api/v1/profiles/${profile.profile_id}`)
+  await page.request.delete(`/api/v1/profiles/${duplicate.profile_id}`)
+})
+
+test('RTSP secret references can be created, edited, and reloaded without exposing the resolved URL', async ({ page }) => {
+  const resolvedUrl = 'rtsp://camera-e2e-user:camera-e2e-password@camera.example/secret'
+  await page.goto('/profiles/new')
+  await page.getByLabel('Name').fill('E2E secret IPCAM profile')
+  await page.getByLabel('Input source').selectOption('rtsp')
+  await page.getByLabel('RTSP address source').selectOption('secret')
+  await page.getByLabel('Environment variable name').fill('E2E_CAMERA_RTSP_URL')
+  await page.getByLabel('Model', { exact: true }).selectOption('small')
+  await page.getByLabel('One keyword per line').fill('กล้องลับ')
+  await page.getByRole('button', { name: /Save profile/ }).click()
+  await expect(page).toHaveURL(/\/profiles$/)
+  await expect(page.locator('body')).not.toContainText(resolvedUrl)
+  await expect(page.locator('body')).not.toContainText('camera-e2e-password')
+
+  const profile = await page.request.get('/api/v1/profiles').then(async response => {
+    const payload = await response.json()
+    return payload.profiles.find((item: { name: string }) => item.name === 'E2E secret IPCAM profile')
+  })
+  expect(profile).toMatchObject({
+    source_type: 'rtsp',
+    rtsp_url: null,
+    rtsp_url_secret_ref: 'E2E_CAMERA_RTSP_URL',
+    device: null,
+  })
+  expect(JSON.stringify(profile)).not.toContain(resolvedUrl)
+  expect(JSON.stringify(profile)).not.toContain('camera-e2e-password')
+
+  await page.goto(`/profiles/${profile.profile_id}`)
+  await expect(page.getByLabel('Environment variable name')).toHaveValue('E2E_CAMERA_RTSP_URL')
+  await page.getByLabel('Name', { exact: true }).fill('E2E edited secret IPCAM profile')
+  await page.getByRole('button', { name: /Save profile/ }).click()
+  await expect(page).toHaveURL(/\/profiles$/)
+  const edited = await page.request.get(`/api/v1/profiles/${profile.profile_id}`).then(response => response.json())
+  expect(edited).toMatchObject({ name: 'E2E edited secret IPCAM profile', rtsp_url: null, rtsp_url_secret_ref: 'E2E_CAMERA_RTSP_URL' })
+  expect(JSON.stringify(edited)).not.toContain(resolvedUrl)
+
+  await page.goto(`/profiles/${profile.profile_id}`)
+  await expect(page.getByLabel('Environment variable name')).toHaveValue('E2E_CAMERA_RTSP_URL')
+  await expect(page.locator('body')).not.toContainText(resolvedUrl)
+  await expect(page.locator('body')).not.toContainText('camera-e2e-password')
+  await page.request.delete(`/api/v1/profiles/${profile.profile_id}`)
+})
+
 test('user can create a profile, monitor its output, and stop the workflow', async ({ page }) => {
   await page.goto('/profiles/new')
   await expect(page.locator('.brand')).toContainText('EchoDesk')
@@ -20,7 +127,7 @@ test('user can create a profile, monitor its output, and stop the workflow', asy
   await expect(page.getByRole('heading', { name: 'E2E studio profile' })).toBeVisible()
   await expect(page.getByText('Model: small · ctranslate2')).toBeVisible()
 
-  await page.getByRole('link', { name: 'Edit' }).click()
+  await page.locator('.profile-record').filter({ hasText: 'E2E studio profile' }).getByRole('link', { name: 'Edit' }).click()
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue('small')
   await expect(page.getByLabel('Runtime')).toHaveValue('ctranslate2')
   await expect(page.getByLabel('Language')).toHaveValue('en')
@@ -40,7 +147,7 @@ test('user can create a profile, monitor its output, and stop the workflow', asy
   await expect(page.locator('.match-list')).toContainText('1 matches')
 
   await page.getByRole('link', { name: 'Back to overview' }).click()
-  await page.getByRole('link', { name: 'Microphones & profiles' }).click()
+  await page.getByRole('link', { name: 'Audio inputs & profiles' }).click()
   const profileRecord = page.locator('.profile-record').filter({ hasText: 'E2E studio profile' })
   await expect(profileRecord.getByRole('button', { name: 'Stop workflow E2E studio profile' })).toBeVisible()
   await page.getByRole('link', { name: 'Overview' }).click()
@@ -65,7 +172,7 @@ test('profile Play becomes Stop by profile identity, even when another profile u
 
   await page.getByRole('button', { name: 'Start workflow Alpha profile' }).click()
   await expect(page).toHaveURL(/\/runs\/[a-f0-9]+$/)
-  await page.getByRole('link', { name: 'Microphones & profiles' }).click()
+  await page.getByRole('link', { name: 'Audio inputs & profiles' }).click()
 
   const alpha = page.locator('.profile-record').filter({ hasText: 'Alpha profile' })
   const beta = page.locator('.profile-record').filter({ hasText: 'Beta profile' })
@@ -156,7 +263,7 @@ test('profile Stop returns to Play when an accepted shutdown later fails', async
   await page.goto('/profiles')
   await page.getByRole('button', { name: 'Start workflow Failed stop profile' }).click()
   await expect(page).toHaveURL(/\/runs\/[a-f0-9]+$/)
-  await page.getByRole('link', { name: 'Microphones & profiles' }).click()
+  await page.getByRole('link', { name: 'Audio inputs & profiles' }).click()
 
   let shutdownFailed = false
   await page.route('**/api/v1/transcriptions', async route => {
@@ -416,7 +523,7 @@ test('dashboard profile carousel exposes every profile and can navigate to the e
 
   const allProfiles = await page.request.get('/api/v1/profiles').then(async response => (await response.json()).profiles)
   await page.goto('/')
-  const carousel = page.getByRole('region', { name: 'Microphone profiles' })
+  const carousel = page.getByRole('region', { name: 'Audio input profiles' })
   const cards = carousel.locator('.profile-card')
   await expect(cards).toHaveCount(allProfiles.length)
   for (const name of names) {

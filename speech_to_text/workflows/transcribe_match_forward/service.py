@@ -11,10 +11,13 @@ from speech_to_text.features.model_deployment import (
     AudioInputError,
     ConfigurationError,
     ModelLoadError,
+    RTSPCaptureUnavailableError,
     list_available_models,
     load_model,
     normalize_decoding_options,
     start_multiprocess_microphone_flows,
+    create_rtsp_audio_source_factory,
+    create_rtsp_secret_source_factory,
 )
 from speech_to_text.features.word_matching import WordMatchingConfig, WordMatchingError
 
@@ -40,6 +43,22 @@ class WorkflowInputError(WorkflowServiceError):
 
 class WorkflowUnavailableError(WorkflowServiceError):
     """A model or host audio dependency is unavailable."""
+
+
+def prepare_rtsp_source(rtsp_url=None, rtsp_url_secret_ref=None):
+    """Validate RTSP source configuration and prepare its start-time snapshot."""
+    if (rtsp_url is None) == (rtsp_url_secret_ref is None):
+        raise WorkflowConfigurationError(
+            "Select exactly one RTSP URL or secret reference"
+        )
+    try:
+        if rtsp_url is not None:
+            return create_rtsp_audio_source_factory(rtsp_url)
+        return create_rtsp_secret_source_factory(rtsp_url_secret_ref)
+    except ConfigurationError as exc:
+        raise WorkflowConfigurationError(str(exc)) from exc
+    except AudioInputError as exc:
+        raise WorkflowUnavailableError(str(exc)) from exc
 
 
 def normalize_profile_decoding_options(options=None):
@@ -276,7 +295,13 @@ class TranscriptionService:
         )
 
     def _start_shared_microphone(
-        self, device, lease, matching, flow_config, forwarder=None
+        self,
+        device,
+        lease,
+        matching,
+        flow_config,
+        forwarder=None,
+        audio_source_factory=None,
     ):
         holder = {"workflow": None}
 
@@ -287,6 +312,14 @@ class TranscriptionService:
                     self._shared_workflows.discard(workflow)
                 lease.release()
 
+        source_options = {}
+        if audio_source_factory is not None:
+            if not self._supports_keyword(start_microphone_and_forward, "audio_source_factory"):
+                raise WorkflowUnavailableError(
+                    "The configured workflow adapter cannot start an RTSP audio source"
+                )
+            source_options["audio_source_factory"] = audio_source_factory
+
         if self._supports_keyword(start_microphone_and_forward, "on_finished"):
             workflow = start_microphone_and_forward(
                 device,
@@ -295,12 +328,18 @@ class TranscriptionService:
                 matching,
                 flow_config,
                 on_finished=finished,
+                **source_options,
             )
         else:
             # Keep compatibility with injected workflow factories that predate
             # the completion callback. The watcher only owns lease release.
             workflow = start_microphone_and_forward(
-                device, lease.handle, forwarder, matching, flow_config
+                device,
+                lease.handle,
+                forwarder,
+                matching,
+                flow_config,
+                **source_options,
             )
             threading.Thread(
                 target=lambda: self._wait_and_release(workflow, finished),
@@ -395,6 +434,7 @@ class TranscriptionService:
         model=None,
         runtime=None,
         forwarder=None,
+        audio_source_factory=None,
     ):
         """Start one microphone workflow in shared or child-process mode."""
         flow_config = {} if flow_config is None else dict(flow_config)
@@ -404,6 +444,10 @@ class TranscriptionService:
                 "execution_mode must be 'shared' or 'per_workflow_process'"
             )
         try:
+            if audio_source_factory is not None:
+                preflight = getattr(audio_source_factory, "preflight", None)
+                if callable(preflight):
+                    preflight()
             with self._microphone_start_lock:
                 if execution_mode == "shared":
                     lease = self._acquire_model_config(
@@ -411,7 +455,12 @@ class TranscriptionService:
                     )
                     try:
                         return self._start_shared_microphone(
-                            device, lease, matching, flow_config, forwarder
+                            device,
+                            lease,
+                            matching,
+                            flow_config,
+                            forwarder,
+                            audio_source_factory,
                         )
                     except Exception:
                         lease.release()
@@ -423,6 +472,11 @@ class TranscriptionService:
                     model_config=model_config,
                     topology="per-input-model",
                     flow_configs=[{} if flow_config is None else flow_config],
+                    **(
+                        {"audio_source_factory": audio_source_factory}
+                        if audio_source_factory is not None
+                        else {}
+                    ),
                 )
                 owner = _ProcessGroupOwner(group)
                 with self._process_groups_lock:
@@ -463,7 +517,11 @@ class TranscriptionService:
             raise WorkflowUnavailableError(
                 "microphone process did not become ready before startup timeout"
             ) from exc
+        except RTSPCaptureUnavailableError as exc:
+            raise WorkflowUnavailableError(str(exc)) from exc
         except AudioInputError as exc:
+            if audio_source_factory is not None:
+                raise WorkflowUnavailableError(str(exc)) from exc
             raise self._audio_error(exc) from exc
 
     def list_microphones(self):
