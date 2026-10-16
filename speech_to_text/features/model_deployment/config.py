@@ -25,7 +25,7 @@ FLOW_DEFAULTS = {
         "beam_size": 1,
         "temperature": 0.0,
         "condition_on_previous_text": False,
-        "no_repeat_ngram_size": 0,
+        "no_repeat_ngram_size": 3,
         "repetition_penalty": 1.0,
     },
 }

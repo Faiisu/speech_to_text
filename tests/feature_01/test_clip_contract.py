@@ -122,6 +122,23 @@ def test_language_and_decoding_options_reach_selected_runtime(api):
         handle.close()
 
 
+def test_no_repeat_ngram_default_and_zero_override_reach_runtime(api):
+    runtime = ScriptedRuntime(["default", "override"])
+    handle = api.load_model({}, runtime_factory=RuntimeFactory(runtime))
+    try:
+        clip = wav_bytes([10000] * 1600)
+        api.transcribe_clip(clip, handle, {})
+        api.transcribe_clip(
+            clip, handle, {"decoding_options": {"no_repeat_ngram_size": 0}}
+        )
+        assert runtime.settings[0][1]["no_repeat_ngram_size"] == 3
+        assert runtime.settings[0][1]["repetition_penalty"] == 1.0
+        assert runtime.settings[1][1]["no_repeat_ngram_size"] == 0
+        assert runtime.settings[1][1]["repetition_penalty"] == 1.0
+    finally:
+        handle.close()
+
+
 @pytest.mark.parametrize("config", [
     {"chunk_seconds": 0}, {"chunk_seconds": 31},
     {"silence_threshold": -0.1}, {"silence_threshold": 1.0},

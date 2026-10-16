@@ -44,10 +44,10 @@ The following table is the authoritative Feature 01 configuration contract. It r
 | Flow decoding | `beam_size` | `1` | Integer in `[1, 10]`; decoder search width. |
 | Flow decoding | `temperature` | `0.0` | Finite number in `[0, 1]`; zero keeps greedy decoding. |
 | Flow decoding | `condition_on_previous_text` | `false` | Boolean; enables conditioning on prior chunk text where supported by the adapter. |
-| Flow decoding | `no_repeat_ngram_size` | `0` | Integer in `[0, 20]`; zero disables the no-repeat n-gram constraint. |
+| Flow decoding | `no_repeat_ngram_size` | `3` | Integer in `[0, 20]`; zero disables the no-repeat n-gram constraint. The default blocks repeated token trigrams across a generated chunk; it does not guarantee that Thai words cannot repeat. |
 | Flow decoding | `repetition_penalty` | `1.0` | Finite number in `[1, 2]`; one applies no repetition penalty. |
 
-The default decoder settings are runtime-parity settings. Decoding options are forwarded to the selected adapter, which may reject options it cannot support. This is an initial inventory from the PoC, not a limit on settings discovered for additional models.
+The default decoder settings are runtime-parity settings. Decoding options are forwarded to the selected adapter, which may reject options it cannot support. No-repeat constraints apply to generated token n-grams across a chunk, not exact Thai words, so they reduce repetition loops without guaranteeing that a word will never repeat. This is an initial inventory from the PoC, not a limit on settings discovered for additional models.
 
 **PoC baseline:** The archived README reports a mean RTF of `0.53` for `typhoon-whisper-turbo` with OpenVINO GPU and int8 weights on an Advantech UBX-330M (Intel Core Ultra 5 125H, Ubuntu 24.04). The measurement used one fixed 21.1-second Thai clip with 5-second chunks. The same report says int8, int4, and bf16 GPU runs were close in speed; int8 is a candidate because the report observed worse transcripts at lower precision on the noisiest chunk. See the [PoC benchmark results](../../legacies-poc/README.md#measuring-performance--benchmark-studio) and [runtime decision](../../legacies-poc/docs/adr/0005-pluggable-inference-runtimes.md).
 
