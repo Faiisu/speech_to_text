@@ -7,6 +7,7 @@ process and reuse that handle for clips or microphone flows.
 """
 
 from .catalog import list_models
+from .config import flow_config
 from .capture import list_input_devices
 from .errors import (
     AudioInputError,
@@ -57,6 +58,13 @@ def start_microphone_flow(
     return session
 
 
+def normalize_decoding_options(value=None):
+    """Validate decoding settings and return a complete independent snapshot."""
+    return flow_config({} if value is None else {"decoding_options": value})[
+        "decoding_options"
+    ]
+
+
 __all__ = [
     "AudioInputError",
     "ChunkInferenceWarning",
@@ -69,6 +77,7 @@ __all__ = [
     "ProcessSession",
     "TranscriptionSession",
     "list_available_models",
+    "normalize_decoding_options",
     "list_microphone_devices",
     "load_model",
     "start_microphone_flow",

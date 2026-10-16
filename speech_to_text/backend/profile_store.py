@@ -10,6 +10,16 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+from speech_to_text.workflows.transcribe_match_forward import (
+    normalize_profile_decoding_options,
+)
+
+_DEFAULT_DECODING_OPTIONS_JSON = (
+    # Frozen additive migration default for old profiles and rollback-safe databases.
+    "'{\"beam_size\":1,\"temperature\":0.0,\"condition_on_previous_text\":false,"
+    "\"no_repeat_ngram_size\":3,\"repetition_penalty\":1.0}'"
+)
+
 
 def _default_database_path() -> Path:
     configured = os.environ.get("SPEECH_TO_TEXT_PROFILE_DB")
@@ -62,7 +72,7 @@ class SQLiteProfileStore:
                     if "locked" not in str(exc).lower():
                         raise
             connection.execute(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS workflow_profiles (
                     profile_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -73,6 +83,7 @@ class SQLiteProfileStore:
                     silence_threshold REAL NOT NULL DEFAULT 0.00,
                     model TEXT NOT NULL DEFAULT 'turbo',
                     runtime TEXT NOT NULL DEFAULT 'openvino-gpu',
+                    decoding_options_json TEXT NOT NULL DEFAULT {_DEFAULT_DECODING_OPTIONS_JSON},
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -130,6 +141,16 @@ class SQLiteProfileStore:
                     # PRAGMA read and before this ALTER runs.
                     if "duplicate column name" not in str(exc).lower():
                         raise
+            if "decoding_options_json" not in columns:
+                try:
+                    connection.execute(
+                        "ALTER TABLE workflow_profiles ADD COLUMN "
+                        "decoding_options_json TEXT NOT NULL DEFAULT "
+                        f"{_DEFAULT_DECODING_OPTIONS_JSON}"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             connection.commit()
             self._connection = connection
         return self._connection
@@ -148,6 +169,7 @@ class SQLiteProfileStore:
             "model": row["model"],
             "runtime": row["runtime"],
             "destination_id": row["destination_id"],
+            "decoding_options": json.loads(row["decoding_options_json"]),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -169,6 +191,7 @@ class SQLiteProfileStore:
 
     def create_profile(self, profile: dict):
         now = _utc_now()
+        decoding_options = normalize_profile_decoding_options(profile.get("decoding_options"))
         with self._lock:
             connection = self._db()
             try:
@@ -179,9 +202,9 @@ class SQLiteProfileStore:
                     """
                     INSERT INTO workflow_profiles
                         (profile_id, name, device, execution_mode, keywords_json,
-                         silence_threshold, model, runtime, destination_id,
+                         silence_threshold, model, runtime, destination_id, decoding_options_json,
                          created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         profile["profile_id"],
@@ -193,6 +216,7 @@ class SQLiteProfileStore:
                         profile["model"],
                         profile["runtime"],
                         profile.get("destination_id"),
+                        json.dumps(decoding_options),
                         now,
                         now,
                     ),
@@ -208,6 +232,7 @@ class SQLiteProfileStore:
                 raise
 
     def update_profile(self, profile_id: str, profile: dict):
+        decoding_options = normalize_profile_decoding_options(profile.get("decoding_options"))
         with self._lock:
             connection = self._db()
             try:
@@ -226,6 +251,7 @@ class SQLiteProfileStore:
                     UPDATE workflow_profiles
                     SET name = ?, device = ?, execution_mode = ?, keywords_json = ?,
                         silence_threshold = ?, model = ?, runtime = ?, destination_id = ?,
+                        decoding_options_json = ?,
                         updated_at = ?
                     WHERE profile_id = ?
                     """,
@@ -238,6 +264,7 @@ class SQLiteProfileStore:
                         profile["model"],
                         profile["runtime"],
                         profile.get("destination_id"),
+                        json.dumps(decoding_options),
                         _utc_now(),
                         profile_id,
                     ),

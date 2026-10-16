@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 import os
+from copy import deepcopy
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -53,6 +54,7 @@ class RunRecord:
     device: str | None = None
     execution_mode: str | None = None
     silence_threshold: float | None = None
+    decoding_options: dict | None = None
     model: str | None = None
     runtime: str | None = None
     destination_id: str | None = None
@@ -368,6 +370,7 @@ def run_snapshot(record):
             "device": record.device,
             "execution_mode": record.execution_mode,
             "silence_threshold": record.silence_threshold,
+            "decoding_options": deepcopy(record.decoding_options),
             "model": record.model,
             "runtime": record.runtime,
             "destination_id": record.destination_id,

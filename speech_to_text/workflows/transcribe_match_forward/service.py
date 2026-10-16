@@ -13,6 +13,7 @@ from speech_to_text.features.model_deployment import (
     ModelLoadError,
     list_available_models,
     load_model,
+    normalize_decoding_options,
     start_multiprocess_microphone_flows,
 )
 from speech_to_text.features.word_matching import WordMatchingConfig, WordMatchingError
@@ -39,6 +40,14 @@ class WorkflowInputError(WorkflowServiceError):
 
 class WorkflowUnavailableError(WorkflowServiceError):
     """A model or host audio dependency is unavailable."""
+
+
+def normalize_profile_decoding_options(options=None):
+    """Validate and default saved profile decoding settings at the workflow boundary."""
+    try:
+        return normalize_decoding_options(options)
+    except ConfigurationError as exc:
+        raise WorkflowConfigurationError(str(exc)) from exc
 
 
 class _ProcessGroupOwner:
@@ -325,6 +334,10 @@ class TranscriptionService:
     def validate_keywords(self, keywords):
         """Validate API keyword input without exposing feature configuration types."""
         return self._matching_config(keywords).keywords
+
+    def validate_decoding_options(self, options=None):
+        """Validate saved profile decoding settings using Feature 01 rules."""
+        return normalize_profile_decoding_options(options)
 
     def transcribe_clip(
         self,

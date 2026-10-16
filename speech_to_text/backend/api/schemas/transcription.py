@@ -2,7 +2,33 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, StrictStr, validator
+from pydantic import BaseModel, Field, StrictBool, StrictInt, StrictStr, validator
+from speech_to_text.workflows.transcribe_match_forward import (
+    normalize_profile_decoding_options,
+)
+
+_DEFAULT_DECODING_OPTIONS = normalize_profile_decoding_options()
+
+
+class DecodingOptionsDefinition(BaseModel):
+    class Config:
+        extra = "forbid"
+
+    beam_size: StrictInt = _DEFAULT_DECODING_OPTIONS["beam_size"]
+    temperature: float = _DEFAULT_DECODING_OPTIONS["temperature"]
+    condition_on_previous_text: StrictBool = _DEFAULT_DECODING_OPTIONS[
+        "condition_on_previous_text"
+    ]
+    no_repeat_ngram_size: StrictInt = _DEFAULT_DECODING_OPTIONS[
+        "no_repeat_ngram_size"
+    ]
+    repetition_penalty: float = _DEFAULT_DECODING_OPTIONS["repetition_penalty"]
+
+    @validator("temperature", "repetition_penalty", pre=True)
+    def reject_non_numeric_decoding_values(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("decoding settings must be numbers")
+        return value
 
 
 class MicrophoneTranscriptionRequest(BaseModel):
@@ -29,6 +55,9 @@ class MicrophoneProfileDefinition(BaseModel):
     model: StrictStr | None = None
     runtime: StrictStr | None = None
     destination_id: StrictStr | None = None
+    decoding_options: DecodingOptionsDefinition = Field(
+        default_factory=DecodingOptionsDefinition
+    )
 
     @validator("silence_threshold", pre=True)
     def reject_boolean_silence_threshold(cls, value):

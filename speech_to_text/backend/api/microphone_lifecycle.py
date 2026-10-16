@@ -3,6 +3,7 @@
 import queue
 import threading
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from inspect import Parameter, signature
 
@@ -18,6 +19,7 @@ from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowInputError,
     WorkflowUnavailableError,
+    normalize_profile_decoding_options,
 )
 
 
@@ -60,6 +62,7 @@ def start_microphone_workflow(
     profile_name=None,
     destination_id=None,
     forwarder=None,
+    decoding_options=None,
 ):
     """Start one microphone workflow and register its run for API monitoring."""
     runtime = request.app.state.backend_runtime
@@ -87,6 +90,7 @@ def start_microphone_workflow(
                 profile_name=profile_name,
                 destination_id=destination_id,
                 forwarder=forwarder,
+                decoding_options=decoding_options,
             )
     return _start_microphone_workflow(
         request,
@@ -100,6 +104,7 @@ def start_microphone_workflow(
         profile_name=profile_name,
         destination_id=destination_id,
         forwarder=forwarder,
+        decoding_options=decoding_options,
     )
 
 
@@ -116,6 +121,7 @@ def _start_microphone_workflow(
     profile_name=None,
     destination_id=None,
     forwarder=None,
+    decoding_options=None,
 ):
     runtime = request.app.state.backend_runtime
     effective_model = model
@@ -137,6 +143,9 @@ def _start_microphone_workflow(
         silence_threshold=silence_threshold,
         model=effective_model,
         runtime=effective_runtime,
+        decoding_options=deepcopy(
+            normalize_profile_decoding_options(decoding_options)
+        ),
         destination_id=destination_id,
         forwarder=forwarder,
         delivery={
@@ -166,6 +175,8 @@ def _start_microphone_workflow(
         }
         if silence_threshold is not None:
             flow_config["silence_threshold"] = silence_threshold
+        if decoding_options is not None:
+            flow_config["decoding_options"] = deepcopy(record.decoding_options)
         start_options = {"execution_mode": execution_mode, "model": effective_model}
         if effective_runtime is not None and _accepts_keyword_argument(
             runtime.workflow_service.start_microphone, "runtime"
@@ -388,6 +399,8 @@ def _pump_microphone(runtime, record, workflow):
             }
             if record.silence_threshold is not None:
                 flow_config["silence_threshold"] = record.silence_threshold
+            if record.profile_id is not None:
+                flow_config["decoding_options"] = deepcopy(record.decoding_options)
             start_options = {"execution_mode": record.execution_mode, "model": record.model}
             if record.runtime is not None and _accepts_keyword_argument(
                 runtime.workflow_service.start_microphone, "runtime"

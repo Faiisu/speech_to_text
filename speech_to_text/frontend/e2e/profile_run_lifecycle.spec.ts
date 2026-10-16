@@ -188,6 +188,11 @@ test('profile Play starts its saved snapshot and opens the workflow', async ({ p
   await page.getByLabel('Runtime').selectOption('ctranslate2')
   await page.getByLabel('One keyword per line').fill('สวัสดี\nประชุม')
   await page.getByLabel('Noise floor (RMS silence threshold)').fill('0.17')
+  await page.getByLabel('Beam size').fill('4')
+  await page.getByLabel('Temperature').fill('0.25')
+  await page.getByLabel('Condition on previous text').check()
+  await page.getByLabel('No-repeat n-gram size').fill('6')
+  await page.getByLabel('Repetition penalty').fill('1.4')
   await page.getByLabel('Separate process').check()
   await page.getByRole('button', { name: /Save profile/ }).click()
 
@@ -265,6 +270,15 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await page.getByRole('button', { name: /Save profile/ }).click()
 
   await expect(page).toHaveURL(/\/profiles$/)
+  await page.locator('.profile-record').filter({ hasText: 'Source profile' }).getByRole('link', { name: 'Edit' }).click()
+  await expect(page.getByLabel('Beam size')).toHaveValue('1')
+  await page.getByLabel('Beam size').fill('4')
+  await page.getByLabel('Temperature').fill('0.25')
+  await page.getByLabel('Condition on previous text').check()
+  await page.getByLabel('No-repeat n-gram size').fill('6')
+  await page.getByLabel('Repetition penalty').fill('1.4')
+  await page.getByRole('button', { name: /Save profile/ }).click()
+  await expect(page).toHaveURL(/\/profiles$/)
   const sourceId = await page.request.get('/api/v1/profiles').then(async response => {
     const data = await response.json()
     return data.profiles.find((profile: { name: string }) => profile.name === 'Source profile').profile_id as string
@@ -292,11 +306,21 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await expect(page.getByLabel('Runtime')).toHaveValue('ctranslate2')
   await expect(page.getByLabel('One keyword per line')).toHaveValue('สวัสดี\nประชุม')
   await expect(page.getByLabel('Noise floor (RMS silence threshold)')).toHaveValue('0.17')
+  await expect(page.getByLabel('Beam size')).toHaveValue('4')
+  await expect(page.getByLabel('Temperature')).toHaveValue('0.25')
+  await expect(page.getByLabel('Condition on previous text')).toBeChecked()
+  await expect(page.getByLabel('No-repeat n-gram size')).toHaveValue('6')
+  await expect(page.getByLabel('Repetition penalty')).toHaveValue('1.4')
   await expect(page.getByLabel('Separate process')).toBeChecked()
 
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Duplicate profile' })).toBeVisible()
   await expect(page.getByLabel('Name')).toHaveValue('')
+  await expect(page.getByLabel('Beam size')).toHaveValue('4')
+  await expect(page.getByLabel('Temperature')).toHaveValue('0.25')
+  await expect(page.getByLabel('Condition on previous text')).toBeChecked()
+  await expect(page.getByLabel('No-repeat n-gram size')).toHaveValue('6')
+  await expect(page.getByLabel('Repetition penalty')).toHaveValue('1.4')
   await expect(page.getByLabel('One keyword per line')).toHaveValue('สวัสดี\nประชุม')
 
   await page.getByRole('button', { name: /Save profile/ }).click()
@@ -324,7 +348,14 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
     runtime: originalBefore.runtime,
     keywords: originalBefore.keywords,
     silence_threshold: originalBefore.silence_threshold,
+    decoding_options: { beam_size: 4, temperature: 0.25, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.4 },
   })
+  await page.getByRole('button', { name: 'Start workflow Copied profile' }).click()
+  await expect(page).toHaveURL(/\/runs\/[a-f0-9]+$/)
+  const copiedWorkflowId = page.url().split('/').at(-1)!
+  await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${copiedWorkflowId}`).then(response => response.json())).toMatchObject({ decoding_options: copy.decoding_options })
+  await page.getByRole('button', { name: 'Stop listening' }).click()
+  await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${copiedWorkflowId}`).then(async response => (await response.json()).status)).toBe('stopped')
   const originalAfter = await page.request.get(`/api/v1/profiles/${sourceId}`).then(response => response.json())
   expect(originalAfter).toEqual(originalBefore)
 

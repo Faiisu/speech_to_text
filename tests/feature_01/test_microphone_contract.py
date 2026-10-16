@@ -320,11 +320,14 @@ def test_sounddevice_input_overflow_keeps_current_callback_frames(monkeypatch):
         output_overflow=False,
         priming_output=False,
     )
-    threading.Thread(
+    callback_thread = threading.Thread(
         target=blocked_source._callback,
         args=(np.ones(8, dtype=np.float32), 8, None, overflow_status),
-    ).start()
+    )
+    callback_thread.start()
     assert overflow_handler_entered.wait(1)
+    callback_thread.join(timeout=1)
+    assert not callback_thread.is_alive()
     blocked_source._callback(
         np.ones(8, dtype=np.float32),
         8,

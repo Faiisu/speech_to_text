@@ -17,6 +17,7 @@ from speech_to_text.backend.profile_store import (
 from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowUnavailableError,
+    normalize_profile_decoding_options,
 )
 from speech_to_text.workflows.transcribe_match_forward.destinations import (
     DestinationConfigurationError,
@@ -50,6 +51,17 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
     if destination_id is not None:
         if runtime.destination_registry.get_config(destination_id) is None:
             raise HTTPException(status_code=422, detail="unknown destination_id")
+    try:
+        validate_decoding_options = getattr(
+            runtime.workflow_service, "validate_decoding_options", None
+        )
+        decoding_options = (
+            validate_decoding_options(body.decoding_options.dict())
+            if callable(validate_decoding_options)
+            else normalize_profile_decoding_options(body.decoding_options.dict())
+        )
+    except WorkflowConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         "name": name,
         "device": device,
@@ -59,6 +71,7 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
         "model": model,
         "runtime": selected_runtime,
         "destination_id": destination_id,
+        "decoding_options": decoding_options,
     }
 
 
@@ -156,4 +169,5 @@ def start_profile_run(profile_id: str, request: Request):
         profile_name=profile["name"],
         destination_id=destination_id,
         forwarder=forwarder,
+        decoding_options=profile.get("decoding_options"),
     )

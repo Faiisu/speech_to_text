@@ -143,6 +143,8 @@ The callable functions above are the agreed test boundaries. Configuration, cata
 
 ### Configuration validation and error types
 
+`normalize_decoding_options(value=None) -> dict` is a public model-deployment helper for callers that need to save validated decoding settings before loading a model. It accepts an omitted value or a partial decoding-options mapping, fills the defaults from the configuration table, rejects unsupported keys/types/ranges with `ConfigurationError`, and returns an independent complete mapping. Validation does not load model weights or require a runtime. The workflow service exposes this validation through its own boundary for backend profile configuration.
+
 Model configuration accepts `model`, `runtime`, `precision`, `queue_capacity`, and `enqueue_timeout_seconds`. Defaults are documented above; `precision="source"` means the checkpoint's published precision. Queue capacity is a positive integer; enqueue timeout is a finite positive number of seconds. Runtime/precision compatibility must be validated before loading. Unknown keys/options raise `ConfigurationError` rather than being ignored.
 
 Flow configuration accepts `source_id`, `language`, `chunk_seconds`, `silence_threshold`, `overload_policy`, and `decoding_options`. The default chunk length is 30 seconds; accepted lengths are finite values in `(0, 30]` for the initial Whisper adapters. RMS threshold is in `[0, 1)`; default `0.05`. Silence skips inference without producing invented text. No overlap is supported. Decoding options are validated against the selected adapter; unsupported options fail explicitly. Source IDs identify events and IPC routing; an omitted ID is generated uniquely.

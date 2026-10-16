@@ -32,6 +32,7 @@ export type Profile = {
   model: string
   runtime: RuntimeChoice['key']
   destination_id?: string | null
+  decoding_options: DecodingOptions
   created_at: string
   updated_at: string
 }
@@ -46,6 +47,7 @@ export type Transcription = {
   device: string | null
   execution_mode: 'shared' | 'per_workflow_process' | null
   silence_threshold: number | null
+  decoding_options: DecodingOptions | null
   model: string | null
   runtime: RuntimeChoice['key'] | null
   transcript: string | null
@@ -55,6 +57,14 @@ export type Transcription = {
   destination_id?: string | null
   delivery?: DeliveryStatus | null
   created_at: string
+}
+
+export type DecodingOptions = {
+  beam_size: number
+  temperature: number
+  condition_on_previous_text: boolean
+  no_repeat_ngram_size: number
+  repetition_penalty: number
 }
 
 export type DeliveryStatus = {
@@ -181,4 +191,4 @@ export type StressEvent = {
   [key: string]: unknown
 }
 
-export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime'> & { destination_id?: string | null }
+export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options'> & { destination_id?: string | null }

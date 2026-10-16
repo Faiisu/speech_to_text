@@ -16,6 +16,8 @@ Pass flow settings to a clip or microphone flow; each input can have independent
 
 The Python callable accepts decoding options listed in the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults).
 
+The frontend Profile editor also saves those decoding options for microphone runs. Save changes, stop the current workflow, and start it again to apply them. Active runs and their automatic recovery keep the original start-time settings; shared-model workflows retain independent decoding settings. See the [profile decoding settings contract](../.scratch/backend-transcription-api/spec.md#profile-decoding-settings) for API persistence and validation behavior.
+
 ## Local environment variables
 
 | Variable | Default | Purpose |

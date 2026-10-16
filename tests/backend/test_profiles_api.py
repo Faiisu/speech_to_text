@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import queue
+import json
 import sqlite3
 import threading
+import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
@@ -150,6 +152,13 @@ def test_profiles_can_be_created_listed_replaced_and_deleted(api):
     assert profile["silence_threshold"] == 0.0
     assert profile["model"] == "turbo"
     assert profile["runtime"] == "openvino-gpu"
+    assert profile["decoding_options"] == {
+        "beam_size": 1,
+        "temperature": 0.0,
+        "condition_on_previous_text": False,
+        "no_repeat_ngram_size": 3,
+        "repetition_penalty": 1.0,
+    }
     assert client.get("/api/v1/models").json()["models"][0]["runtimes"]
     assert profile["created_at"]
     assert profile["updated_at"] == profile["created_at"]
@@ -384,6 +393,58 @@ def test_profile_update_rejects_out_of_range_silence_threshold(api):
     )
 
 
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"beam_size": True}, {"beam_size": "2"}, {"beam_size": 0},
+        {"beam_size": 11}, {"temperature": "0.5"}, {"temperature": 1.1},
+        {"condition_on_previous_text": 1},
+        {"no_repeat_ngram_size": False}, {"no_repeat_ngram_size": 21},
+        {"repetition_penalty": True}, {"repetition_penalty": 2.1},
+        {"unexpected": 1},
+    ],
+)
+def test_profile_decoding_options_reject_invalid_values(api, options):
+    client, _ = api
+    response = client.post(
+        "/api/v1/profiles", json=profile_body(decoding_options=options)
+    )
+    assert response.status_code == 422
+    assert client.get("/api/v1/profiles").json() == {"profiles": []}
+
+
+def test_profile_decoding_options_reject_non_finite_json_number(api):
+    client, _ = api
+    response = client.post(
+        "/api/v1/profiles",
+        content='{"name":"Bad","keywords":["ไทย"],"decoding_options":{"temperature":NaN}}',
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 422
+
+
+def test_profile_decoding_options_normalize_partial_values_and_round_trip(api):
+    client, _ = api
+    response = client.post(
+        "/api/v1/profiles",
+        json=profile_body(decoding_options={"beam_size": 3, "temperature": 0}),
+    )
+    assert response.status_code == 201
+    profile = response.json()
+    assert profile["decoding_options"] == {
+        "beam_size": 3, "temperature": 0.0,
+        "condition_on_previous_text": False, "no_repeat_ngram_size": 3,
+        "repetition_penalty": 1.0,
+    }
+    assert client.get(f"/api/v1/profiles/{profile['profile_id']}").json() == profile
+    store = client.app.state.backend_runtime.profile_store
+    raw = store._db().execute(
+        "SELECT decoding_options_json FROM workflow_profiles WHERE profile_id = ?",
+        (profile["profile_id"],),
+    ).fetchone()[0]
+    assert json.loads(raw) == profile["decoding_options"]
+
+
 @pytest.mark.parametrize("method", ["get", "put", "delete", "run"])
 def test_unknown_profile_ids_return_not_found(api, method):
     client, _ = api
@@ -407,7 +468,15 @@ def test_unknown_profile_ids_return_not_found(api, method):
 def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, execution_mode):
     client, service = api
     created = client.post(
-        "/api/v1/profiles", json=profile_body(execution_mode=execution_mode, silence_threshold=0.18, model="small", runtime="ctranslate2")
+        "/api/v1/profiles", json=profile_body(
+            execution_mode=execution_mode, silence_threshold=0.18,
+            model="small", runtime="ctranslate2",
+            decoding_options={
+                "beam_size": 4, "temperature": 0.3,
+                "condition_on_previous_text": True,
+                "no_repeat_ngram_size": 5, "repetition_penalty": 1.2,
+            },
+        )
     )
     assert created.status_code == 201
     profile = created.json()
@@ -424,10 +493,20 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
         "source_id": run["workflow_id"],
         "silence_threshold": 0.18,
         "overload_policy": "drop",
+        "decoding_options": {
+            "beam_size": 4,
+            "temperature": 0.3,
+            "condition_on_previous_text": True,
+            "no_repeat_ngram_size": 5,
+            "repetition_penalty": 1.2,
+        },
     }
     assert service.microphone_start_options[0][3] == execution_mode
     assert service.microphone_start_options[0][4] == "small"
     assert service.microphone_start_options[0][5] == "ctranslate2"
+    assert client.get(f"/api/v1/transcriptions/{run['workflow_id']}").json()[
+        "decoding_options"
+    ] == profile["decoding_options"]
 
     edited = client.put(
         f"/api/v1/profiles/{profile['profile_id']}",
@@ -437,9 +516,17 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
             execution_mode="shared",
             keywords=["ใหม่"],
             silence_threshold=0.3,
+            decoding_options={"beam_size": 7},
         ),
     )
     assert edited.status_code == 200
+    assert edited.json()["decoding_options"] == {
+        "beam_size": 7,
+        "temperature": 0.0,
+        "condition_on_previous_text": False,
+        "no_repeat_ngram_size": 3,
+        "repetition_penalty": 1.0,
+    }
     deleted = client.delete(f"/api/v1/profiles/{profile['profile_id']}")
     assert deleted.status_code == 204
 
@@ -458,8 +545,43 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
     assert transcription["execution_mode"] == profile["execution_mode"]
     assert transcription["keywords"] == profile["keywords"]
     assert transcription["silence_threshold"] == profile["silence_threshold"]
+    assert transcription["decoding_options"] == profile["decoding_options"]
     assert transcription["model"] == "small"
     assert transcription["runtime"] == "ctranslate2"
+
+
+def test_stop_then_start_uses_latest_profile_decoding_options(api):
+    client, service = api
+    created = client.post("/api/v1/profiles", json=profile_body())
+    profile = created.json()
+    service.keep_microphone_active = True
+
+    first = client.post(f"/api/v1/profiles/{profile['profile_id']}/runs").json()
+    first_snapshot = client.get(
+        f"/api/v1/transcriptions/{first['workflow_id']}"
+    ).json()
+    assert first_snapshot["decoding_options"]["beam_size"] == 1
+    assert client.post(f"/api/v1/transcriptions/{first['workflow_id']}/stop").status_code == 202
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if client.get(f"/api/v1/transcriptions/{first['workflow_id']}").json()["status"] == "stopped":
+            break
+        time.sleep(0.01)
+    assert client.get(f"/api/v1/transcriptions/{first['workflow_id']}").json()["status"] == "stopped"
+
+    updated = client.put(
+        f"/api/v1/profiles/{profile['profile_id']}",
+        json=profile_body(decoding_options={"beam_size": 8}),
+    )
+    assert updated.status_code == 200
+    second = client.post(f"/api/v1/profiles/{profile['profile_id']}/runs").json()
+    second_snapshot = client.get(
+        f"/api/v1/transcriptions/{second['workflow_id']}"
+    ).json()
+
+    assert second["workflow_id"] != first["workflow_id"]
+    assert second_snapshot["decoding_options"]["beam_size"] == 8
+    assert service.microphone_start_options[-1][2]["decoding_options"]["beam_size"] == 8
 
 
 def test_profile_survives_a_new_app_and_runtime_lifecycle(tmp_path):
@@ -525,14 +647,23 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
 
     assert columns.count("silence_threshold") == 1
     assert columns.count("model") == 1
+    assert columns.count("decoding_options_json") == 1
     assert profiles[0]["profile_id"] == "existing-profile"
     assert profiles[0]["silence_threshold"] == 0.0
     assert profiles[0]["model"] == "small"
     assert profiles[0]["runtime"] == "openvino-cpu"
+    assert profiles[0]["decoding_options"] == {
+        "beam_size": 1,
+        "temperature": 0.0,
+        "condition_on_previous_text": False,
+        "no_repeat_ngram_size": 3,
+        "repetition_penalty": 1.0,
+    }
 
     migrated_store = SQLiteProfileStore(database_path)
     assert migrated_store.get_profile("existing-profile")["silence_threshold"] == 0.0
     assert migrated_store.get_profile("existing-profile")["model"] == "small"
+    assert migrated_store.get_profile("existing-profile")["decoding_options"] == profiles[0]["decoding_options"]
     monkeypatch.setenv("SPEECH_TO_TEXT_RUNTIME", "ctranslate2")
     assert migrated_store.get_profile("existing-profile")["runtime"] == "openvino-cpu"
     migrated_store.close()

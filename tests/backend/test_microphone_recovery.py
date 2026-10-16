@@ -338,6 +338,7 @@ def test_profile_run_remains_deduplicated_during_recovery(tmp_path):
                 "runtime": "openvino-cpu",
                 "keywords": ["ไทย"],
                 "silence_threshold": 0,
+                "decoding_options": {"beam_size": 2},
             },
         )
         assert profile.status_code == 201, profile.text
@@ -345,9 +346,29 @@ def test_profile_run_remains_deduplicated_during_recovery(tmp_path):
         first = client.post(run_url)
         workflow_id = first.json()["workflow_id"]
         _wait_until(lambda: any(event["type"] == "recovering" for event in _api_events(client, workflow_id)))
+        edited = client.put(
+            f"/api/v1/profiles/{profile.json()['profile_id']}",
+            json={
+                "name": "Studio",
+                "device": "Studio Mic",
+                "execution_mode": "shared",
+                "model": "turbo",
+                "runtime": "openvino-cpu",
+                "keywords": ["ไทย"],
+                "silence_threshold": 0,
+                "decoding_options": {"beam_size": 8},
+            },
+        )
+        assert edited.status_code == 200
+        _wait_until(lambda: len(service.starts) == 2)
+        assert service.starts[0]["decoding_options"]["beam_size"] == 2
+        assert service.starts[1]["decoding_options"]["beam_size"] == 2
+        assert client.get(f"/api/v1/transcriptions/{workflow_id}").json()[
+            "decoding_options"
+        ]["beam_size"] == 2
         repeated = client.post(run_url)
         assert repeated.json()["workflow_id"] == workflow_id
-        assert len(service.starts) == 1
+        assert len(service.starts) == 2
         assert client.post(f"/api/v1/transcriptions/{workflow_id}/stop").status_code == 202
         assert _wait_for_status(client, workflow_id, "stopped")["status"] == "stopped"
 
