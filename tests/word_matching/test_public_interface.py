@@ -85,7 +85,20 @@ def test_rejects_keywords_that_duplicate_after_normalization():
 
 def test_rejects_unsupported_matching_languages():
     with pytest.raises(WordMatchingError):
-        WordMatchingConfig(keywords=("hello",), language="en")
+        WordMatchingConfig(keywords=("hello",), language="fr")
+
+
+@pytest.mark.parametrize("language", ["en", "auto"])
+def test_matches_english_and_mixed_script_targets_without_tokenization(language):
+    config = WordMatchingConfig(keywords=("HELLO", "สวัสดี"), language=language)
+
+    result = match_keywords("hello สวัสดี hello", config)
+
+    assert result.language == language
+    assert result.matches == (
+        KeywordMatch(keyword="HELLO", count=2),
+        KeywordMatch(keyword="สวัสดี", count=1),
+    )
 
 
 @pytest.mark.parametrize("text", [None, 42, "สวัสดี".encode()])

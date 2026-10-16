@@ -71,6 +71,7 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
         "model": model,
         "runtime": selected_runtime,
         "destination_id": destination_id,
+        "language": body.language,
         "decoding_options": decoding_options,
     }
 
@@ -170,4 +171,5 @@ def start_profile_run(profile_id: str, request: Request):
         destination_id=destination_id,
         forwarder=forwarder,
         decoding_options=profile.get("decoding_options"),
+        language=profile.get("language", "th"),
     )

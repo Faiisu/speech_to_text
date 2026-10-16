@@ -2,15 +2,15 @@
 
 ## Purpose
 
-Compose the existing Feature 01 transcription interface with Thai keyword/phrase matching and workflow-owned output delivery. Feature 01 continues to own audio input, model execution, chunking, transcript events, and session lifecycle. The matching feature finds configured terms in transcript text. The workflow emits cumulative match snapshots to its backend caller; MQTT microphone output contains chunk-local transcript and match results, while HTTP clip and session output retain their terminal completed-transcript behavior. MQTT does not publish audio-file clip results.
+Compose the existing Feature 01 transcription interface with literal keyword/phrase matching and workflow-owned output delivery. Feature 01 continues to own audio input, model execution, chunking, transcript events, and session lifecycle. The matching feature finds configured terms in transcript text. The workflow emits cumulative match snapshots to its backend caller; MQTT microphone output contains chunk-local transcript and match results, while HTTP clip and session output retain their terminal completed-transcript behavior. MQTT does not publish audio-file clip results.
 
 ## Matching contract
 
-- `WordMatchingConfig` contains a non-empty list of unique target keywords or phrases and `language="th"`.
+- `WordMatchingConfig` contains a non-empty list of unique target keywords or phrases and a selected `language` of `th`, `en`, or `auto` (default `th`). `auto` selects automatic language detection; it does not represent a detected language. Recognition of code-switched speech depends on the selected model.
 - `match_keywords(text, config)` returns a `WordMatchResult` containing the language and one `{keyword, count}` result per configured target, including targets with zero occurrences.
 - Normalize source text and each configured target to Unicode NFC, then case-fold them before comparison.
 - Match literal substrings. Whitespace and punctuation are ordinary characters and only match when present in both source and target. Count overlapping occurrences for each target independently; different targets may match overlapping spans.
-- The initial implementation supports Thai matching configuration. Raise `WordMatchingError` for unsupported languages or invalid targets. Matching does not require a tokenizer dependency.
+- All three language selections use the same NFC-normalized, case-folded literal-substring matching algorithm. Raise `WordMatchingError` for unsupported languages or invalid targets. Matching does not require a tokenizer dependency or add language detection.
 
 ## Pipeline behavior
 

@@ -221,6 +221,63 @@ def test_openvino_auto_language_budget_includes_unforced_timestamp_token():
     assert observed["max_new_tokens"] == 444
 
 
+def test_openvino_auto_clears_checkpoint_language_without_mutating_shared_config():
+    observed = []
+    original = SimpleNamespace(
+        language="th", task="translate", forced_decoder_ids=[(1, 50266)]
+    )
+
+    class Processor:
+        def __call__(self, audio, **kwargs):
+            return SimpleNamespace(input_features="features")
+
+        def batch_decode(self, ids, **kwargs):
+            return ["reset alarm"]
+
+    class Model:
+        config = SimpleNamespace(max_target_positions=448)
+        generation_config = original
+
+        def generate(self, features, **kwargs):
+            observed.append(kwargs)
+            return "ids"
+
+    from speech_to_text.features.model_deployment import normalize_decoding_options
+
+    adapter = OpenVINOAdapter.__new__(OpenVINOAdapter)
+    adapter.model, adapter.processor = Model(), Processor()
+    for language in ("auto", "en", "auto"):
+        assert adapter.transcribe(
+            [0.0], language=language, decoding_options=normalize_decoding_options()
+        ) == "reset alarm"
+    for kwargs in (observed[0], observed[2]):
+        assert kwargs["task"] == "transcribe"
+        assert kwargs["generation_config"] is not original
+        assert kwargs["generation_config"].language is None
+        assert kwargs["generation_config"].forced_decoder_ids is None
+    assert observed[1]["language"] == "en"
+    assert observed[1]["task"] == "transcribe"
+    assert original.language == "th"
+    assert original.task == "translate"
+    assert original.forced_decoder_ids == [(1, 50266)]
+
+
+@pytest.mark.parametrize("language, expected", [("th", "th"), ("en", "en"), ("auto", None)])
+def test_ctranslate2_passes_selected_language_to_decoder(language, expected):
+    from speech_to_text.features.model_deployment import normalize_decoding_options
+
+    class Model:
+        def transcribe(self, audio, **kwargs):
+            assert kwargs["language"] == expected
+            return iter([SimpleNamespace(text=" reset alarm ")]), object()
+
+    adapter = CTranslate2Adapter.__new__(CTranslate2Adapter)
+    adapter.model = Model()
+    assert adapter.transcribe(
+        [0.0], language=language, decoding_options=normalize_decoding_options()
+    ) == "reset alarm"
+
+
 def test_capacity_tool_reports_missing_prerequisites_without_fake_measurements(monkeypatch):
     monkeypatch.setattr(capacity, "start_multiprocess_microphone_flows",
                         lambda *args, **kwargs: (_ for _ in ()).throw(ModelLoadError("OpenVINO GPU unavailable")))

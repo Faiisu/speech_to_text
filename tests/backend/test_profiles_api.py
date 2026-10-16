@@ -470,6 +470,7 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
     created = client.post(
         "/api/v1/profiles", json=profile_body(
             execution_mode=execution_mode, silence_threshold=0.18,
+            language="en",
             model="small", runtime="ctranslate2",
             decoding_options={
                 "beam_size": 4, "temperature": 0.3,
@@ -489,7 +490,7 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
     assert service.microphone_start_options[0][0] == "Studio Mic"
     assert service.microphone_start_options[0][1] == ("สวัสดี", "ขอบคุณ")
     assert service.microphone_start_options[0][2] == {
-        "language": "th",
+        "language": "en",
         "source_id": run["workflow_id"],
         "silence_threshold": 0.18,
         "overload_policy": "drop",
@@ -507,6 +508,7 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
     assert client.get(f"/api/v1/transcriptions/{run['workflow_id']}").json()[
         "decoding_options"
     ] == profile["decoding_options"]
+    assert client.get(f"/api/v1/transcriptions/{run['workflow_id']}").json()["language"] == "en"
 
     edited = client.put(
         f"/api/v1/profiles/{profile['profile_id']}",
@@ -544,6 +546,7 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
     assert transcription["device"] == profile["device"]
     assert transcription["execution_mode"] == profile["execution_mode"]
     assert transcription["keywords"] == profile["keywords"]
+    assert transcription["language"] == "en"
     assert transcription["silence_threshold"] == profile["silence_threshold"]
     assert transcription["decoding_options"] == profile["decoding_options"]
     assert transcription["model"] == "small"
@@ -589,7 +592,7 @@ def test_profile_survives_a_new_app_and_runtime_lifecycle(tmp_path):
     first_client, _ = make_client(database_path)
 
     with first_client:
-        created = first_client.post("/api/v1/profiles", json=profile_body())
+        created = first_client.post("/api/v1/profiles", json=profile_body(language="auto"))
         assert created.status_code == 201
         profile = created.json()
 
@@ -599,6 +602,7 @@ def test_profile_survives_a_new_app_and_runtime_lifecycle(tmp_path):
         listed = second_client.get("/api/v1/profiles")
 
     assert retrieved.status_code == 200
+    assert retrieved.json()["language"] == "auto"
     assert retrieved.json() == profile
     assert listed.status_code == 200
     assert listed.json() == {"profiles": [profile]}
@@ -643,15 +647,31 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
         row["name"]
         for row in store._db().execute("PRAGMA table_info(workflow_profiles)")
     ]
+    language_column = next(
+        row
+        for row in store._db().execute("PRAGMA table_info(workflow_profiles)")
+        if row["name"] == "language"
+    )
     store.close()
 
     assert columns.count("silence_threshold") == 1
     assert columns.count("model") == 1
     assert columns.count("decoding_options_json") == 1
+    assert columns.count("language") == 1
+    assert language_column["type"] == "TEXT"
+    assert language_column["notnull"] == 1
+    assert language_column["dflt_value"] == "'th'"
     assert profiles[0]["profile_id"] == "existing-profile"
+    assert profiles[0]["name"] == "Existing"
+    assert profiles[0]["device"] is None
+    assert profiles[0]["execution_mode"] == "shared"
+    assert profiles[0]["keywords"] == ["สวัสดี"]
+    assert profiles[0]["created_at"] == "2026-01-01T00:00:00Z"
+    assert profiles[0]["updated_at"] == "2026-01-01T00:00:00Z"
     assert profiles[0]["silence_threshold"] == 0.0
     assert profiles[0]["model"] == "small"
     assert profiles[0]["runtime"] == "openvino-cpu"
+    assert profiles[0]["language"] == "th"
     assert profiles[0]["decoding_options"] == {
         "beam_size": 1,
         "temperature": 0.0,
@@ -664,6 +684,7 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
     assert migrated_store.get_profile("existing-profile")["silence_threshold"] == 0.0
     assert migrated_store.get_profile("existing-profile")["model"] == "small"
     assert migrated_store.get_profile("existing-profile")["decoding_options"] == profiles[0]["decoding_options"]
+    assert migrated_store.get_profile("existing-profile")["language"] == "th"
     monkeypatch.setenv("SPEECH_TO_TEXT_RUNTIME", "ctranslate2")
     assert migrated_store.get_profile("existing-profile")["runtime"] == "openvino-cpu"
     migrated_store.close()

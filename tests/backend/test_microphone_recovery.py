@@ -264,7 +264,7 @@ def test_recovery_retries_with_capped_backoff_and_clears_stale_error(execution_m
     with client:
         started = client.post(
             "/api/v1/transcriptions/microphones",
-            json={"keywords": ["ไทย"], "execution_mode": execution_mode},
+            json={"keywords": ["ไทย"], "execution_mode": execution_mode, "language": "auto"},
         )
         workflow_id = started.json()["workflow_id"]
         _wait_until(lambda: any(event["type"] == "recovered" for event in _api_events(client, workflow_id)))
@@ -277,8 +277,10 @@ def test_recovery_retries_with_capped_backoff_and_clears_stale_error(execution_m
         assert [event["delay_seconds"] for event in failures] == [0.02, 0.04]
         assert all(option["execution_mode"] == execution_mode for option in service.options)
         assert all(option["runtime"] == "openvino-cpu" for option in service.options)
+        assert all(start["language"] == "auto" for start in service.starts)
         status = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
         assert status["status"] == "recording"
+        assert status["language"] == "auto"
         assert status["error"] is None
         stop = client.post(f"/api/v1/transcriptions/{workflow_id}/stop")
         assert stop.status_code == 202
@@ -515,7 +517,7 @@ def test_recovery_reuses_mqtt_snapshot_and_unique_chunk_identity(tmp_path, monke
         destination_id = created.json()["destination_id"]
         started = client.post(
             "/api/v1/transcriptions/microphones",
-            json={"keywords": ["สวัสดี"], "device": "Studio Mic", "destination_id": destination_id},
+            json={"keywords": ["สวัสดี"], "device": "Studio Mic", "destination_id": destination_id, "language": "auto"},
         )
         assert started.status_code == 202, started.text
         workflow_id = started.json()["workflow_id"]
@@ -553,6 +555,8 @@ def test_recovery_reuses_mqtt_snapshot_and_unique_chunk_identity(tmp_path, monke
         assert len(starts) == 2
         assert starts[1]["source_id"] == f"{workflow_id}:restart:1"
         assert starts[1]["overload_policy"] == "drop"
+        assert starts[0]["language"] == starts[1]["language"] == "auto"
+        assert client.get(f"/api/v1/transcriptions/{workflow_id}").json()["language"] == "auto"
         assert {item[0] for item in chunks} == {"speech/original"}
         messages = [json.loads(item[1]) for item in chunks]
         assert {message["source_id"] for message in messages} == {

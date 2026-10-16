@@ -10,6 +10,8 @@ test('user can create a profile, monitor its output, and stop the workflow', asy
   await page.getByLabel('Microphone').selectOption('E2E Studio Mic')
   await page.getByLabel('Model', { exact: true }).selectOption('small')
   await page.getByLabel('Runtime').selectOption('ctranslate2')
+  await expect(page.getByLabel('Language')).toHaveValue('th')
+  await page.getByLabel('Language').selectOption('en')
   await expect(page.getByLabel('Runtime')).toContainText('unavailable')
   await page.getByLabel('One keyword per line').fill('สวัสดี')
   await page.getByRole('button', { name: /Save profile/ }).click()
@@ -21,6 +23,7 @@ test('user can create a profile, monitor its output, and stop the workflow', asy
   await page.getByRole('link', { name: 'Edit' }).click()
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue('small')
   await expect(page.getByLabel('Runtime')).toHaveValue('ctranslate2')
+  await expect(page.getByLabel('Language')).toHaveValue('en')
   await page.getByLabel('Runtime').selectOption('openvino-cpu')
   await page.getByLabel('Model', { exact: true }).selectOption('tiny')
   await page.getByRole('button', { name: /Save profile/ }).click()
@@ -264,6 +267,8 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await page.getByLabel('Microphone').selectOption('E2E Studio Mic')
   await page.getByLabel('Model', { exact: true }).selectOption('small')
   await page.getByLabel('Runtime').selectOption('ctranslate2')
+  await expect(page.getByLabel('Language')).toHaveValue('th')
+  await page.getByLabel('Language').selectOption('en')
   await page.getByLabel('One keyword per line').fill('สวัสดี\nประชุม')
   await page.getByLabel('Noise floor (RMS silence threshold)').fill('0.17')
   await page.getByLabel('Separate process').check()
@@ -304,6 +309,7 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await expect(page.getByLabel('Microphone')).toHaveValue('E2E Studio Mic')
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue('small')
   await expect(page.getByLabel('Runtime')).toHaveValue('ctranslate2')
+  await expect(page.getByLabel('Language')).toHaveValue('en')
   await expect(page.getByLabel('One keyword per line')).toHaveValue('สวัสดี\nประชุม')
   await expect(page.getByLabel('Noise floor (RMS silence threshold)')).toHaveValue('0.17')
   await expect(page.getByLabel('Beam size')).toHaveValue('4')
@@ -346,6 +352,7 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
     execution_mode: originalBefore.execution_mode,
     model: originalBefore.model,
     runtime: originalBefore.runtime,
+    language: 'en',
     keywords: originalBefore.keywords,
     silence_threshold: originalBefore.silence_threshold,
     decoding_options: { beam_size: 4, temperature: 0.25, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.4 },
@@ -353,9 +360,32 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await page.getByRole('button', { name: 'Start workflow Copied profile' }).click()
   await expect(page).toHaveURL(/\/runs\/[a-f0-9]+$/)
   const copiedWorkflowId = page.url().split('/').at(-1)!
-  await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${copiedWorkflowId}`).then(response => response.json())).toMatchObject({ decoding_options: copy.decoding_options })
+  await expect(page.locator('.run-kpis')).toContainText('English')
+  await expect(page.locator('.transcript-language')).toContainText('ENGLISH')
+  await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${copiedWorkflowId}`).then(response => response.json())).toMatchObject({ language: 'en', decoding_options: copy.decoding_options })
+  const updateResponse = await page.request.put(`/api/v1/profiles/${copy.profile_id}`, { data: {
+    name: copy.name,
+    device: copy.device,
+    execution_mode: copy.execution_mode,
+    keywords: copy.keywords,
+    silence_threshold: copy.silence_threshold,
+    model: copy.model,
+    runtime: copy.runtime,
+    destination_id: copy.destination_id,
+    decoding_options: copy.decoding_options,
+    language: 'auto',
+  } })
+  expect(updateResponse.ok()).toBeTruthy()
+  await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${copiedWorkflowId}`).then(response => response.json())).toMatchObject({ language: 'en' })
   await page.getByRole('button', { name: 'Stop listening' }).click()
   await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${copiedWorkflowId}`).then(async response => (await response.json()).status)).toBe('stopped')
+  await page.goto('/profiles')
+  await page.getByRole('button', { name: 'Start workflow Copied profile' }).click()
+  await expect(page).toHaveURL(/\/runs\/[a-f0-9]+$/)
+  const restartedWorkflowId = page.url().split('/').at(-1)!
+  await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${restartedWorkflowId}`).then(response => response.json())).toMatchObject({ language: 'auto' })
+  await page.getByRole('button', { name: 'Stop listening' }).click()
+  await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${restartedWorkflowId}`).then(async response => (await response.json()).status)).toBe('stopped')
   const originalAfter = await page.request.get(`/api/v1/profiles/${sourceId}`).then(response => response.json())
   expect(originalAfter).toEqual(originalBefore)
 

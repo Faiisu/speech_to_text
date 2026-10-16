@@ -39,6 +39,7 @@ class MicrophoneTranscriptionRequest(BaseModel):
     device: StrictStr | None = None
     execution_mode: Literal["shared", "per_workflow_process"] = "shared"
     destination_id: StrictStr | None = None
+    language: Literal["th", "en", "auto"] = "th"
 
 
 class MicrophoneProfileDefinition(BaseModel):
@@ -55,6 +56,7 @@ class MicrophoneProfileDefinition(BaseModel):
     model: StrictStr | None = None
     runtime: StrictStr | None = None
     destination_id: StrictStr | None = None
+    language: Literal["th", "en", "auto"] = "th"
     decoding_options: DecodingOptionsDefinition = Field(
         default_factory=DecodingOptionsDefinition
     )

@@ -23,7 +23,7 @@ from speech_to_text.workflows.transcribe_match_forward import service as transcr
 
 class FakeDecoderRuntime:
     def transcribe(self, audio, *, language, decoding_options):
-        return "สวัสดีครับ"
+        return "Hello there" if language == "en" else "สวัสดีครับ"
 
     def close(self):
         pass

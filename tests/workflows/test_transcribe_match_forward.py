@@ -92,6 +92,28 @@ def test_clip_workflow_returns_matches_and_forwards_one_completed_record(monkeyp
     assert receipts[0]["completed_at"].endswith("Z")
 
 
+@pytest.mark.parametrize("language", ["en", "auto"])
+def test_clip_forwarding_uses_configured_language_for_mixed_script_matches(
+    monkeypatch, language
+):
+    monkeypatch.setattr(api, "transcribe_clip", lambda *args, **kwargs: "Hello สวัสดี")
+    records = []
+
+    result = workflow.transcribe_clip_and_forward(
+        "clip.wav",
+        object(),
+        lambda record: records.append(record),
+        WordMatchingConfig(keywords=("hello", "สวัสดี"), language=language),
+        {"language": language},
+    )
+
+    assert [(match.keyword, match.count) for match in result.matches] == [
+        ("hello", 1),
+        ("สวัสดี", 1),
+    ]
+    assert records[0]["language"] == language
+
+
 def test_clip_workflow_without_forwarder_returns_transcript_and_matches(monkeypatch):
     monkeypatch.setattr(api, "transcribe_clip", lambda *args, **kwargs: "ประเทศไทย")
 
@@ -216,7 +238,8 @@ def test_session_without_forwarder_emits_matches_and_completion_only():
 
     wrapped.wait(timeout=1)
 
-    assert [event["type"] for event in drain_events(wrapped)] == [
+    events = drain_events(wrapped)
+    assert [event["type"] for event in events] == [
         "transcript",
         "match_results",
         "match_results",
@@ -589,16 +612,18 @@ def test_service_defaults_to_shared_microphone_mode(monkeypatch):
     )
 
     result = service_instance.start_microphone(
-        "USB mic", ["สวัสดี"], {"source_id": "shared-1"}
+        "USB mic", ["สวัสดี"], {"source_id": "shared-1", "language": "auto"}
     )
     result.wait(timeout=1)
 
-    assert calls == [("USB mic", handle, None, {"source_id": "shared-1"})]
+    assert calls == [("USB mic", handle, None, {"source_id": "shared-1", "language": "auto"})]
+    assert next(event for event in drain_events(result) if event["type"] == "match_results")["language"] == "auto"
     assert handle.close_calls == 1
     assert service_instance._model_handles == {}
 
 
-def test_service_clip_uses_requested_model_runtime_and_flow_snapshot(monkeypatch):
+@pytest.mark.parametrize("language", ["en", "auto"])
+def test_service_clip_uses_selected_language_and_flow_snapshot(monkeypatch, language):
     from speech_to_text.workflows.transcribe_match_forward import service
 
     loaded = []
@@ -615,7 +640,7 @@ def test_service_clip_uses_requested_model_runtime_and_flow_snapshot(monkeypatch
         return handle
 
     def transcribe(clip, model_handle, forwarder, matching, flow_config, **kwargs):
-        forwarded.append((clip, model_handle, flow_config, kwargs))
+        forwarded.append((clip, model_handle, matching.language, flow_config, kwargs))
         return workflow.PipelineResult("alpha", matching.keywords, "clip-1", None)
 
     monkeypatch.setattr(service, "load_model", load)
@@ -626,7 +651,7 @@ def test_service_clip_uses_requested_model_runtime_and_flow_snapshot(monkeypatch
         "clip.wav",
         ["alpha"],
         {
-            "language": "th",
+            "language": language,
             "source_id": "clip-1",
             "silence_threshold": 0.2,
             "decoding_options": {"beam_size": 3},
@@ -649,8 +674,9 @@ def test_service_clip_uses_requested_model_runtime_and_flow_snapshot(monkeypatch
         (
             "clip.wav",
             handle,
+            language,
             {
-                "language": "th",
+                "language": language,
                 "source_id": "clip-1",
                 "silence_threshold": 0.2,
                 "decoding_options": {"beam_size": 3},
@@ -707,7 +733,7 @@ def test_per_workflow_process_mode_owns_group_through_natural_completion(monkeyp
     wrapped = service_instance.start_microphone(
         "USB mic",
         ["สวัสดี"],
-        {"source_id": "process-1"},
+        {"source_id": "process-1", "language": "en"},
         execution_mode="per_workflow_process",
         model="small",
         runtime="ctranslate2",
@@ -725,15 +751,21 @@ def test_per_workflow_process_mode_owns_group_through_natural_completion(monkeyp
                 "enqueue_timeout_seconds": 30.0,
             },
             "topology": "per-input-model",
-            "flow_configs": [{"source_id": "process-1"}],
+            "flow_configs": [{"source_id": "process-1", "language": "en"}],
         }
     ]
-    assert [event["type"] for event in drain_events(wrapped)] == [
+    events = drain_events(wrapped)
+    assert [event["type"] for event in events] == [
         "transcript",
         "match_results",
         "match_results",
         "completed",
     ]
+    assert all(
+        event["language"] == "en"
+        for event in events
+        if event["type"] == "match_results"
+    )
     assert group.stop_calls == [30]
     assert group.abort_calls == []
     assert service_instance._model_handle is None

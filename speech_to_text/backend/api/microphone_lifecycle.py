@@ -63,6 +63,7 @@ def start_microphone_workflow(
     destination_id=None,
     forwarder=None,
     decoding_options=None,
+    language="th",
 ):
     """Start one microphone workflow and register its run for API monitoring."""
     runtime = request.app.state.backend_runtime
@@ -91,6 +92,7 @@ def start_microphone_workflow(
                 destination_id=destination_id,
                 forwarder=forwarder,
                 decoding_options=decoding_options,
+                language=language,
             )
     return _start_microphone_workflow(
         request,
@@ -105,6 +107,7 @@ def start_microphone_workflow(
         destination_id=destination_id,
         forwarder=forwarder,
         decoding_options=decoding_options,
+        language=language,
     )
 
 
@@ -122,6 +125,7 @@ def _start_microphone_workflow(
     destination_id=None,
     forwarder=None,
     decoding_options=None,
+    language="th",
 ):
     runtime = request.app.state.backend_runtime
     effective_model = model
@@ -136,6 +140,7 @@ def _start_microphone_workflow(
         "microphone",
         "starting",
         tuple(keywords),
+        language=language,
         profile_id=profile_id,
         profile_name=profile_name,
         device=device,
@@ -169,7 +174,7 @@ def _start_microphone_workflow(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         flow_config = {
-            "language": "th",
+            "language": language,
             "source_id": workflow_id,
             "overload_policy": "drop",
         }
@@ -393,7 +398,7 @@ def _pump_microphone(runtime, record, workflow):
                 record.recovery_cancel.set()
                 break
             flow_config = {
-                "language": "th",
+                "language": record.language,
                 "source_id": f"{record.workflow_id}:restart:{restart_count}",
                 "overload_policy": "drop",
             }

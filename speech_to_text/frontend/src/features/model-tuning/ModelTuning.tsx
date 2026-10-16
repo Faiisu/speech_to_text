@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiRequestError, api } from '../../shared/api'
-import type { DecodingOptions, Microphone, ModelChoice, Recording, RuntimeChoice, Transcription } from '../../shared/types'
+import { LANGUAGE_LABELS, type DecodingOptions, type Language, type Microphone, type ModelChoice, type Recording, type RuntimeChoice, type Transcription } from '../../shared/types'
 
 type Settings = {
   model: string
   runtime: RuntimeChoice['key']
+  language: Language
   silence_threshold: number
   keywords: string[]
   decoding_options: DecodingOptions
@@ -33,6 +34,7 @@ export default function ModelTuning() {
   const [device, setDevice] = useState('')
   const [model, setModel] = useState('')
   const [runtime, setRuntime] = useState<RuntimeChoice['key'] | ''>('')
+  const [language, setLanguage] = useState<Language>('th')
   const [silenceThreshold, setSilenceThreshold] = useState('0')
   const [beamSize, setBeamSize] = useState('1')
   const [temperature, setTemperature] = useState('0')
@@ -170,7 +172,7 @@ export default function ModelTuning() {
     if (!Number.isFinite(threshold) || threshold < 0 || threshold >= 1) { setError('Noise floor must be at least 0 and less than 1.'); return }
     if (!Number.isInteger(beam) || beam < 1 || beam > 10 || !Number.isFinite(temp) || temp < 0 || temp > 1 || !Number.isInteger(noRepeat) || noRepeat < 0 || noRepeat > 20 || !Number.isFinite(penalty) || penalty < 1 || penalty > 2) { setError('Check the decoding settings and their allowed ranges.'); return }
     if (!selectedModel || !selectedRuntime?.compatible) { setError('Choose a model and compatible runtime.'); return }
-    const settings: Settings = { model, runtime: runtime as RuntimeChoice['key'], silence_threshold: threshold, keywords: words, decoding_options: { beam_size: beam, temperature: temp, condition_on_previous_text: conditionOnPreviousText, no_repeat_ngram_size: noRepeat, repetition_penalty: penalty } }
+    const settings: Settings = { model, runtime: runtime as RuntimeChoice['key'], language, silence_threshold: threshold, keywords: words, decoding_options: { beam_size: beam, temperature: temp, condition_on_previous_text: conditionOnPreviousText, no_repeat_ngram_size: noRepeat, repetition_penalty: penalty } }
     setTuningBusy(true); setError('')
     try {
       const blob = await api.recordingAudio(selectedRecording.recording_id)
@@ -180,6 +182,7 @@ export default function ModelTuning() {
       words.forEach(word => form.append('keywords', word))
       form.append('model', settings.model)
       form.append('runtime', settings.runtime)
+      form.append('language', settings.language)
       form.append('silence_threshold', String(settings.silence_threshold))
       form.append('decoding_options', JSON.stringify(settings.decoding_options))
       const started = await api.transcribeClip(form)
@@ -219,6 +222,7 @@ export default function ModelTuning() {
       <div className="tuning-config-head"><div className="tuning-section-label"><span className="tuning-step">02</span><div><h2>Choose model settings</h2><p>Each trial records a snapshot of these values for comparison.</p></div></div><span className={`tuning-readiness ${ready ? 'ready' : ''}`}><i />{ready ? 'MODEL READY' : selectedRuntime?.reason || 'CHECK MODEL READINESS'}</span></div>
       <div className="tuning-config-grid">
         <label>Keywords<textarea rows={3} value={keywords} onChange={event => setKeywords(event.target.value)} placeholder="One keyword per line" /><small>One phrase per line or comma separated.</small></label>
+        <label>Language<select value={language} onChange={event => setLanguage(event.target.value as Language)}>{(['th', 'en', 'auto'] as const).map(value => <option key={value} value={value}>{LANGUAGE_LABELS[value]}</option>)}</select><small>Auto detect allows runtime language detection but does not guarantee recognition of code switching. Language support depends on the model.</small></label>
         <label>Model<select value={model} onChange={event => { const next = models.find(item => item.key === event.target.value); setModel(event.target.value); if (!next?.runtimes.some(item => item.key === runtime && item.compatible)) setRuntime((next?.runtimes.find(item => item.compatible)?.key ?? 'openvino-gpu') as RuntimeChoice['key']) }}>{models.map(item => <option key={item.key} value={item.key}>{item.display_name} ({item.key}){!item.installed ? ' · not installed' : !item.ready ? ' · unavailable' : ''}</option>)}</select><small>{selectedModel?.ready ? 'Installed and available on this host.' : selectedModel?.installed ? 'Model is installed; a compatible runtime may be unavailable.' : 'Model is not installed on this host.'}</small></label>
         <label>Runtime<select value={runtime} onChange={event => setRuntime(event.target.value as RuntimeChoice['key'])}>{runtimes.map(item => <option key={item.key} value={item.key} disabled={!item.compatible}>{item.key}{!item.compatible ? ' · incompatible' : !item.ready ? ' · unavailable' : ' · ready'}</option>)}</select><small>{selectedRuntime?.reason || 'Choose a runtime supported by the selected model.'}</small></label>
         <label>Noise floor (RMS silence threshold)<input type="number" min="0" max="0.999999" step="any" value={silenceThreshold} onChange={event => setSilenceThreshold(event.target.value)} /><small>0 disables silence filtering. Range: 0 to less than 1.</small></label>
@@ -244,17 +248,18 @@ function TrialCard({ trial, index }: { trial: Trial; index: number }) {
     ...trial.settings,
     model: snapshot?.model ?? trial.settings.model,
     runtime: snapshot?.runtime ?? trial.settings.runtime,
+    language: snapshot?.language ?? trial.settings.language,
     silence_threshold: snapshot?.silence_threshold ?? trial.settings.silence_threshold,
     keywords: snapshot?.keywords ?? trial.settings.keywords,
     decoding_options: snapshot?.decoding_options ?? trial.settings.decoding_options,
   }
   const counts = snapshot?.matches ?? []
   return <article className="tuning-trial-card">
-    <header><div className="trial-number">{String(index).padStart(2, '0')}</div><div className="trial-card-title"><b>Trial {index}</b><small>{trial.recordingLabel} · WAV {trial.recordingId.slice(0, 8)}</small><small>{config.model} · {config.runtime} · silence {config.silence_threshold}</small></div><span className={`trial-status ${trial.status}`}><i />{trial.status}</span></header>
+    <header><div className="trial-number">{String(index).padStart(2, '0')}</div><div className="trial-card-title"><b>Trial {index}</b><small>{trial.recordingLabel} · WAV {trial.recordingId.slice(0, 8)}</small><small>{config.model} · {config.runtime} · {LANGUAGE_LABELS[config.language]} · silence {config.silence_threshold}</small></div><span className={`trial-status ${trial.status}`}><i />{trial.status}</span></header>
     {trial.error && <p className="trial-error">{trial.error}</p>}
     {snapshot?.error && snapshot.error !== trial.error && <p className="trial-error">{snapshot.error}</p>}
-    {snapshot?.transcript && <div className="trial-transcript"><small>TRANSCRIPT</small><p>{snapshot.transcript}</p></div>}
+    {snapshot?.transcript && <div className="trial-transcript"><small>TRANSCRIPT · {LANGUAGE_LABELS[config.language].toUpperCase()}</small><p>{snapshot.transcript}</p></div>}
     {snapshot?.status === 'completed' && <div className="trial-result-grid"><div><small>KEYWORD COUNTS</small>{counts.length ? counts.map(match => <span key={match.keyword}>{match.keyword}<b>{match.count}</b></span>) : <span>No matches</span>}</div><div><small>LATEST CHUNK RTF</small><b>{snapshot.latest_rtf == null ? '—' : snapshot.latest_rtf.toFixed(3)}</b></div></div>}
-    <details className="trial-settings"><summary>Settings snapshot</summary><div className="trial-setting-values"><span>Model <b>{config.model}</b></span><span>Runtime <b>{config.runtime}</b></span><span>Silence threshold <b>{config.silence_threshold}</b></span><span>Keywords <b>{config.keywords.join(', ')}</b></span>{Object.entries(config.decoding_options).map(([key, value]) => <span key={key}>{key.replaceAll('_', ' ')} <b>{String(value)}</b></span>)}</div></details>
+    <details className="trial-settings"><summary>Settings snapshot</summary><div className="trial-setting-values"><span>Model <b>{config.model}</b></span><span>Runtime <b>{config.runtime}</b></span><span>Language <b>{LANGUAGE_LABELS[config.language]}</b></span><span>Silence threshold <b>{config.silence_threshold}</b></span><span>Keywords <b>{config.keywords.join(', ')}</b></span>{Object.entries(config.decoding_options).map(([key, value]) => <span key={key}>{key.replaceAll('_', ' ')} <b>{String(value)}</b></span>)}</div></details>
   </article>
 }

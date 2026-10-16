@@ -27,6 +27,8 @@ Snapshots contain `recording_id`, `status` (`recording`, `completed`, or `failed
 
 ## Tuning workflow
 
+Language is selected per trial and retained with the trial's immutable configuration snapshot. The [backend language configuration contract](../backend-transcription-api/spec.md) owns supported choices, defaults, and the meaning of automatic language detection; this page does not identify detected languages or promise code-switching accuracy.
+
 The user can select a discovered host input device, record, listen to or download the saved WAV, then rerun that WAV through the existing clip transcription operation with selected model/runtime/decoding options and keywords. Each run shows transcript, keyword matches, and real-time factor (RTF), including the last reported chunk RTF for a completed run. The page keeps its comparison history for the current browser page session; transcription status and event history follow the existing backend run registry's retention rules. The original recording remains unchanged across reruns. Model loading remains owned by the existing transcription workflow.
 
 ## Boundaries

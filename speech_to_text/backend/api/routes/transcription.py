@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from inspect import Parameter, signature
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 
@@ -124,7 +125,7 @@ def _clip_worker(
             {
                 "type": "match_results",
                 "source_id": record.workflow_id,
-                "language": "th",
+                "language": record.language,
                 "matches": matches,
             },
         )
@@ -197,6 +198,7 @@ async def transcribe_clip(
     file: UploadFile = File(...),
     keywords: list[str] = Form(...),
     destination_id: str | None = Form(default=None),
+    language: Literal["th", "en", "auto"] = Form(default="th"),
     model: str | None = Form(default=None),
     runtime_name: str | None = Form(default=None, alias="runtime"),
     silence_threshold: float | None = Form(default=None),
@@ -286,6 +288,7 @@ async def transcribe_clip(
         "clip",
         "queued",
         validated_keywords,
+        language=language,
         silence_threshold=effective_silence_threshold,
         decoding_options=dict(effective_decoding_options),
         model=effective_model,
@@ -313,7 +316,7 @@ async def transcribe_clip(
     try:
         with record.lock:
             flow_config = {
-                "language": "th",
+                "language": language,
                 "source_id": workflow_id,
                 "silence_threshold": effective_silence_threshold,
                 "decoding_options": dict(effective_decoding_options),
@@ -363,6 +366,7 @@ def start_microphone(request: Request, body: MicrophoneTranscriptionRequest):
         execution_mode=body.execution_mode,
         destination_id=body.destination_id,
         forwarder=forwarder,
+        language=body.language,
     )
 
 

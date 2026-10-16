@@ -1,11 +1,11 @@
 # Speech-to-Text
 
-Speech-to-Text provides a React frontend, a FastAPI backend, and callable Python feature and workflow modules for audio transcription and Thai keyword matching. The application follows `frontend → backend API → workflow → features`; see [Architecture](docs/architecture.md) for module responsibilities.
+Speech-to-Text provides a React frontend, a FastAPI backend, and callable Python feature and workflow modules for audio transcription and keyword matching. The application follows `frontend → backend API → workflow → features`; see [Architecture](docs/architecture.md) for module responsibilities.
 
 ## Current capabilities
 
 - Discover local speech models and transcribe WAV clips or microphone input with OpenVINO or CTranslate2 runtimes.
-- Match configured Thai words and phrases as microphone transcript chunks arrive, with cumulative occurrence counts.
+- Match configured words and phrases as microphone transcript chunks arrive, with cumulative occurrence counts.
 - Save reusable microphone profiles and start, monitor, and stop workflow runs from the frontend.
 - Run the Capacity lab file-replay stress matrix to compare shared-model and per-input-model execution at 1, 2, and 4 concurrent workflows.
 - Report per-chunk real-time factor (RTF), timing, and capacity evidence.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import numpy as np
 
 from .catalog import default_models_root, resolve_repository
@@ -108,8 +110,15 @@ class OpenVINOAdapter:
             "no_repeat_ngram_size": decoding_options["no_repeat_ngram_size"],
             "repetition_penalty": decoding_options["repetition_penalty"],
         }
+        kwargs["task"] = "transcribe"
         if language != "auto":
-            kwargs.update(language=language, task="transcribe")
+            kwargs["language"] = language
+        elif getattr(self.model, "generation_config", None) is not None:
+            # Auto must not inherit a checkpoint's fixed language or translation task.
+            generation_config = deepcopy(self.model.generation_config)
+            generation_config.language = None
+            generation_config.forced_decoder_ids = None
+            kwargs["generation_config"] = generation_config
         ids = self.model.generate(features, **kwargs)
         return self.processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
 

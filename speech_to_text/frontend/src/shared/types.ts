@@ -22,6 +22,9 @@ export type RuntimeChoice = {
   reason: string | null
 }
 
+export type Language = 'th' | 'en' | 'auto'
+export const LANGUAGE_LABELS: Record<Language, string> = { th: 'Thai', en: 'English', auto: 'Auto detect' }
+
 export type Profile = {
   profile_id: string
   name: string
@@ -31,6 +34,7 @@ export type Profile = {
   silence_threshold: number
   model: string
   runtime: RuntimeChoice['key']
+  language?: Language
   destination_id?: string | null
   decoding_options: DecodingOptions
   created_at: string
@@ -50,6 +54,7 @@ export type Transcription = {
   decoding_options: DecodingOptions | null
   model: string | null
   runtime: RuntimeChoice['key'] | null
+  language?: Language | null
   transcript: string | null
   matches: { keyword: string; count: number }[] | null
   latest_rtf: number | null
@@ -201,4 +206,4 @@ export type StressEvent = {
   [key: string]: unknown
 }
 
-export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options'> & { destination_id?: string | null }
+export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options'> & { language: Language; destination_id?: string | null }

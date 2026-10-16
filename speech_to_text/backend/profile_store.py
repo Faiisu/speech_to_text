@@ -84,6 +84,7 @@ class SQLiteProfileStore:
                     model TEXT NOT NULL DEFAULT 'turbo',
                     runtime TEXT NOT NULL DEFAULT 'openvino-gpu',
                     decoding_options_json TEXT NOT NULL DEFAULT {_DEFAULT_DECODING_OPTIONS_JSON},
+                    language TEXT NOT NULL DEFAULT 'th',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -151,6 +152,15 @@ class SQLiteProfileStore:
                 except sqlite3.OperationalError as exc:
                     if "duplicate column name" not in str(exc).lower():
                         raise
+            if "language" not in columns:
+                try:
+                    connection.execute(
+                        "ALTER TABLE workflow_profiles ADD COLUMN "
+                        "language TEXT NOT NULL DEFAULT 'th'"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             connection.commit()
             self._connection = connection
         return self._connection
@@ -170,6 +180,7 @@ class SQLiteProfileStore:
             "runtime": row["runtime"],
             "destination_id": row["destination_id"],
             "decoding_options": json.loads(row["decoding_options_json"]),
+            "language": row["language"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -202,9 +213,9 @@ class SQLiteProfileStore:
                     """
                     INSERT INTO workflow_profiles
                         (profile_id, name, device, execution_mode, keywords_json,
-                         silence_threshold, model, runtime, destination_id, decoding_options_json,
+                         silence_threshold, model, runtime, destination_id, decoding_options_json, language,
                          created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         profile["profile_id"],
@@ -217,6 +228,7 @@ class SQLiteProfileStore:
                         profile["runtime"],
                         profile.get("destination_id"),
                         json.dumps(decoding_options),
+                        profile.get("language", "th"),
                         now,
                         now,
                     ),
@@ -252,6 +264,7 @@ class SQLiteProfileStore:
                     SET name = ?, device = ?, execution_mode = ?, keywords_json = ?,
                         silence_threshold = ?, model = ?, runtime = ?, destination_id = ?,
                         decoding_options_json = ?,
+                        language = ?,
                         updated_at = ?
                     WHERE profile_id = ?
                     """,
@@ -265,6 +278,7 @@ class SQLiteProfileStore:
                         profile["runtime"],
                         profile.get("destination_id"),
                         json.dumps(decoding_options),
+                        profile.get("language", "th"),
                         _utc_now(),
                         profile_id,
                     ),

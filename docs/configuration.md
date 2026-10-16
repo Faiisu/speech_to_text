@@ -18,6 +18,8 @@ The Python callable accepts decoding options listed in the [Feature 01 configura
 
 The frontend Profile editor also saves those decoding options for microphone runs. Save changes, stop the current workflow, and start it again to apply them. Active runs and their automatic recovery keep the original start-time settings; shared-model workflows retain independent decoding settings. See the [profile decoding settings contract](../.scratch/backend-transcription-api/spec.md#profile-decoding-settings) for API persistence and validation behavior.
 
+The Profile editor and Model tuning page also offer **Thai**, **English**, and **Auto detect** language selection. Existing profiles keep Thai by default. Save and restart a profile to apply its language; a tuning trial captures the selection when it starts. Auto delegates language detection to the runtime and does not guarantee accurate recognition of speech that switches languages within a sentence. See the [backend API contract](../.scratch/backend-transcription-api/spec.md) for validation, persistence, and run snapshots.
+
 ## Local environment variables
 
 | Variable | Default | Purpose |

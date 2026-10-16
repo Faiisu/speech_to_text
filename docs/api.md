@@ -18,7 +18,7 @@ finally:
     model.close()
 ```
 
-## Thai word matching and forwarding
+## Word matching and forwarding
 
 The matching feature and its output behavior are composed by the [transcript matching workflow](../.scratch/transcript-matching-forwarding/spec.md). The workflow returns results to its backend caller and can also send completed results to a configured receiver.
 

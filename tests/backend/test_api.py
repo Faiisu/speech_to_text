@@ -249,6 +249,7 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
     client, service = api
     form = [
         ("keywords", (None, "alpha")),
+        ("language", (None, "en")),
         ("model", (None, "tiny")),
         ("runtime", (None, "ctranslate2")),
         ("silence_threshold", (None, "0.2")),
@@ -272,7 +273,7 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
     assert service.clip_calls == [
         (
             {
-                "language": "th",
+                "language": "en",
                 "source_id": workflow_id,
                 "silence_threshold": 0.2,
                 "decoding_options": {
@@ -287,6 +288,36 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
             "ctranslate2",
         )
     ]
+    assert status["language"] == "en"
+    match_event = next(
+        event for event in client.get(f"/api/v1/transcriptions/{workflow_id}/events").json()["events"]
+        if event["type"] == "match_results"
+    )
+    assert match_event["language"] == "en"
+
+
+@pytest.mark.parametrize("kind", ["clip", "microphone"])
+def test_invalid_language_is_rejected_before_workflow_starts(api, kind):
+    client, service = api
+
+    if kind == "clip":
+        response = client.post(
+            "/api/v1/transcriptions/clips",
+            files=[
+                ("keywords", (None, "hello")),
+                ("language", (None, "fr")),
+                ("file", ("sample.wav", b"hello", "audio/wav")),
+            ],
+        )
+        assert not service.clip_calls
+    else:
+        response = client.post(
+            "/api/v1/transcriptions/microphones",
+            json={"keywords": ["hello"], "language": "fr"},
+        )
+        assert not service.microphone_start_options
+
+    assert response.status_code == 422
 
 
 @pytest.mark.parametrize(

@@ -16,7 +16,7 @@ flowchart LR
     Backend --> Workflow[Workflow]
     Workflow --> F01[Feature 01: model deployment]
     F01 --> Runtime[Model runtime]
-    Workflow --> WordMatching[Thai keyword/phrase matching]
+    Workflow --> WordMatching[Keyword/phrase matching]
     Workflow -->|result| Backend
     Backend -->|response or stream| Frontend
     Workflow -. optional output .-> Destination[Another backend or system]
@@ -26,7 +26,7 @@ flowchart LR
 ## Main modules
 
 - `speech_to_text/features/model_deployment/` owns the model catalog, runtime adapters, configuration validation, audio normalization, chunking, transcription, sessions, and process topologies.
-- `speech_to_text/features/word_matching/` matches configured Thai keywords and phrases and counts occurrences per target.
+- `speech_to_text/features/word_matching/` matches configured keywords and phrases and counts occurrences per target.
 - `speech_to_text/workflows/transcribe_match_forward/` composes Feature 01 and matching, returns results to its caller, and owns optional output delivery for clips and per-source microphone sessions.
 - `speech_to_text/backend/` owns the FastAPI application, process lifecycle, inbound API routes, and HTTP schemas.
 - `tests/feature_01/` verifies Feature 01 callable contracts independently from any frontend or backend adapter.

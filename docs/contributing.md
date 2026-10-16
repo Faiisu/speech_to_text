@@ -42,7 +42,7 @@ Run all default suites from the repository root:
 The suites are organized by boundary:
 
 - `tests/feature_01/` verifies model, clip, microphone, runtime, and process-topology contracts.
-- `tests/word_matching/` verifies Thai literal substring matching and configuration validation.
+- `tests/word_matching/` verifies Unicode literal substring matching and configuration validation.
 - `tests/workflows/` verifies transcription and matching orchestration through workflow interfaces.
 - `tests/backend/` verifies HTTP requests, run monitoring, microphone discovery, and lifecycle responses through the FastAPI app.
 - `speech_to_text/frontend/e2e/` drives the browser through profile creation, workflow output monitoring, and stop against the backend API. Its deterministic backend fixture is in `tests/frontend_e2e/`. Capacity lab browser scenarios use mocked HTTP responses to exercise matrix rendering, configuration, polling, and recovery.

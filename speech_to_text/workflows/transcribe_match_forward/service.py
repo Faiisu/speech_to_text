@@ -321,19 +321,19 @@ class TranscriptionService:
             finished()
 
     @staticmethod
-    def _matching_config(keywords):
+    def _matching_config(keywords, language="th"):
         if isinstance(keywords, (str, bytes)):
             raise WorkflowConfigurationError(
                 "keywords must be a non-empty sequence of strings"
             )
         try:
-            return WordMatchingConfig(keywords=tuple(keywords), language="th")
+            return WordMatchingConfig(keywords=tuple(keywords), language=language)
         except (WordMatchingError, TypeError) as exc:
             raise WorkflowConfigurationError(str(exc)) from exc
 
-    def validate_keywords(self, keywords):
+    def validate_keywords(self, keywords, language="th"):
         """Validate API keyword input without exposing feature configuration types."""
-        return self._matching_config(keywords).keywords
+        return self._matching_config(keywords, language).keywords
 
     def validate_decoding_options(self, options=None):
         """Validate saved profile decoding settings using Feature 01 rules."""
@@ -351,7 +351,8 @@ class TranscriptionService:
         forwarder=None,
     ):
         """Transcribe and match one clip, with optional configured output."""
-        matching = self._matching_config(keywords)
+        flow_config = {} if flow_config is None else dict(flow_config)
+        matching = self._matching_config(keywords, flow_config.get("language", "th"))
         try:
             lease = self._acquire_model_config(
                 self._effective_model_config(model, runtime)
@@ -396,7 +397,8 @@ class TranscriptionService:
         forwarder=None,
     ):
         """Start one microphone workflow in shared or child-process mode."""
-        matching = self._matching_config(keywords)
+        flow_config = {} if flow_config is None else dict(flow_config)
+        matching = self._matching_config(keywords, flow_config.get("language", "th"))
         if execution_mode not in ("shared", "per_workflow_process"):
             raise WorkflowConfigurationError(
                 "execution_mode must be 'shared' or 'per_workflow_process'"

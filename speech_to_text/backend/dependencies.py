@@ -43,6 +43,7 @@ class RunRecord:
     kind: str
     status: str
     keywords: tuple[str, ...]
+    language: str = "th"
     created_at: float = field(default_factory=time.time)
     transcript: str | None = None
     matches: list[dict] | None = None
@@ -373,6 +374,7 @@ def run_snapshot(record):
             "kind": record.kind,
             "status": record.status,
             "keywords": list(record.keywords),
+            "language": record.language,
             "profile_id": record.profile_id,
             "profile_name": record.profile_name,
             "device": record.device,

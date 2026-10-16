@@ -37,7 +37,11 @@ class WordMatchingConfig:
             raise WordMatchingError(
                 "keywords must be unique after NFC normalization and case folding"
             )
-        if self.language != "th":
+        if not isinstance(self.language, str) or self.language not in {
+            "th",
+            "en",
+            "auto",
+        }:
             raise WordMatchingError(f"Unsupported matching language: {self.language!r}")
         object.__setattr__(self, "keywords", keywords)
 
