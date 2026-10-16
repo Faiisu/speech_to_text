@@ -37,6 +37,8 @@ export default function ModelTuning() {
   const [sourceType, setSourceType] = useState<'microphone' | 'rtsp'>('microphone')
   const [rtspMode, setRtspMode] = useState<'url' | 'secret_ref'>('url')
   const [rtspUrl, setRtspUrl] = useState('')
+  const [rtspUsername, setRtspUsername] = useState('')
+  const [rtspPassword, setRtspPassword] = useState('')
   const [rtspSecretRef, setRtspSecretRef] = useState('')
   const [model, setModel] = useState('')
   const [runtime, setRuntime] = useState<RuntimeChoice['key'] | ''>('')
@@ -133,7 +135,7 @@ export default function ModelTuning() {
     try {
       const source = sourceType === 'rtsp'
         ? rtspMode === 'url'
-          ? { source_type: 'rtsp' as const, rtsp_url: rtspUrl.trim() }
+          ? { source_type: 'rtsp' as const, rtsp_url: rtspUrl.trim(), ...(rtspUsername.trim() ? { rtsp_username: rtspUsername.trim() } : {}), ...(rtspPassword ? { rtsp_password: rtspPassword } : {}) }
           : { source_type: 'rtsp' as const, rtsp_url_secret_ref: rtspSecretRef.trim() }
         : undefined
       const started = await api.startRecording(sourceType === 'rtsp' ? null : device || null, source)
@@ -236,7 +238,7 @@ export default function ModelTuning() {
       <div className="tuning-recording-main">
         <div className="tuning-section-label"><span className="tuning-step">01</span><div><h2>Record a reusable clip</h2><p>Audio is saved by the backend and reused for every trial.</p></div></div>
         <label htmlFor="tuning-source">Input source</label>
-        <select id="tuning-source" value={sourceType} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setSourceType(event.target.value as 'microphone' | 'rtsp')}><option value="microphone">Microphone</option><option value="rtsp">IPCAM (RTSP)</option></select>
+        <select id="tuning-source" value={sourceType} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => { const next = event.target.value as 'microphone' | 'rtsp'; setSourceType(next); if (next === 'microphone') { setRtspUsername(''); setRtspPassword('') } }}><option value="microphone">Microphone</option><option value="rtsp">IPCAM (RTSP)</option></select>
         {sourceType === 'microphone' ? <>
           <label htmlFor="tuning-microphone">Microphone</label>
           <select id="tuning-microphone" value={device} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setDevice(event.target.value)}><option value="">System default microphone</option>{device && !enabledMicrophones.some(item => item.name === device) && <option value={device}>{device} · unavailable</option>}{enabledMicrophones.map(item => <option key={item.name} value={item.name}>{item.name}{item.is_default ? ' · Default' : ''}</option>)}</select>
@@ -244,9 +246,9 @@ export default function ModelTuning() {
           {microphoneError && <small className="tuning-mic-notice" role="status">{microphoneError}</small>}
         </> : <>
           <label htmlFor="tuning-rtsp-mode">RTSP address source</label>
-          <select id="tuning-rtsp-mode" value={rtspMode} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspMode(event.target.value as 'url' | 'secret_ref')}><option value="url">Direct URL</option><option value="secret_ref">Environment variable reference</option></select>
-          {rtspMode === 'url' ? <label htmlFor="tuning-rtsp-url">RTSP URL<input id="tuning-rtsp-url" type="url" value={rtspUrl} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspUrl(event.target.value)} placeholder="rtsp://camera.local:554/audio" /></label> : <label htmlFor="tuning-rtsp-secret-ref">Environment variable name<input id="tuning-rtsp-secret-ref" value={rtspSecretRef} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspSecretRef(event.target.value)} placeholder="CAMERA_AUDIO_URL" /></label>}
-          <small>For authenticated cameras, store the complete RTSP URL in an approved backend environment variable.</small>
+          <select id="tuning-rtsp-mode" value={rtspMode} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => { const next = event.target.value as 'url' | 'secret_ref'; setRtspMode(next); if (next === 'secret_ref') { setRtspUsername(''); setRtspPassword('') } }}><option value="url">Direct URL</option><option value="secret_ref">Environment variable reference</option></select>
+          {rtspMode === 'url' ? <><label htmlFor="tuning-rtsp-url">RTSP URL<input id="tuning-rtsp-url" type="text" value={rtspUrl} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => { const value = event.target.value; setRtspUrl(value); if (/^rtsps?:\/\/[^/]*@/i.test(value)) { setRtspUsername(''); setRtspPassword('') } }} placeholder="rtsp://camera.local:554/audio" /></label><label htmlFor="tuning-rtsp-username">Username<input id="tuning-rtsp-username" value={rtspUsername} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspUsername(event.target.value)} autoComplete="username" /></label><label htmlFor="tuning-rtsp-password">Password<input id="tuning-rtsp-password" type="password" value={rtspPassword} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspPassword(event.target.value)} autoComplete="new-password" /></label><small>Paste a complete authenticated URL, or enter separate credentials. Password stays in this page until you leave.</small></> : <label htmlFor="tuning-rtsp-secret-ref">Environment variable name<input id="tuning-rtsp-secret-ref" value={rtspSecretRef} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspSecretRef(event.target.value)} placeholder="CAMERA_AUDIO_URL" /></label>}
+          {rtspMode === 'secret_ref' && <small>Use an approved backend environment variable for the complete RTSP URL.</small>}
         </>}
         <div className="tuning-rec-actions">{activeRecording ? <button className="button button-dark" disabled={recordingBusy} onClick={() => void stopRecording()}><i className="recording-square" />{recordingBusy ? 'Stopping…' : 'Stop recording'}</button> : <button className="button button-lime" disabled={recordingBusy || (sourceType === 'rtsp' && (rtspMode === 'url' ? !rtspUrl.trim() : !rtspSecretRef.trim()))} onClick={() => void startRecording()}><i className="recording-dot" />{recordingBusy ? 'Starting…' : 'Start recording'}</button>}<span className={activeRecording ? 'recording-state active' : 'recording-state'}><i />{activeRecording ? `Recording · ${formatDuration(activeRecording.duration_seconds)}` : selectedRecording?.status === 'completed' ? `Saved · ${formatDuration(selectedRecording.duration_seconds)}` : 'Ready to record'}</span></div>
         {activeRecording && <p className="tuning-live-hint" role="status">The backend will end capture at 120 seconds. You can stop it here at any time.</p>}

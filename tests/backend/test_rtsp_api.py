@@ -161,10 +161,20 @@ def test_direct_rtsp_endpoint_validates_source_and_redacts_resolved_value(
     with client:
         invalid = client.post(
             "/api/v1/transcriptions/rtsp",
-            json={"keywords": ["สวัสดี"], "rtsp_url": "rtsp://user:pass@camera:554/live"},
+            json={"keywords": ["สวัสดี"], "rtsp_url": "rtsp://user:pass@camera:554/live", "rtsp_username": "another"},
         )
         assert invalid.status_code == 422
         assert "user:pass" not in invalid.text
+
+        authenticated = client.post(
+            "/api/v1/transcriptions/rtsp",
+            json={"keywords": ["สวัสดี"], "rtsp_url": "rtsp://camera:554/live", "rtsp_username": "operator", "rtsp_password": "p@ss:/%#"},
+        )
+        assert authenticated.status_code == 202
+        auth_run = client.get(f"/api/v1/transcriptions/{authenticated.json()['workflow_id']}").json()
+        factory = service.started[-1]["audio_source_factory"]
+        assert factory._url == "rtsp://operator:p%40ss%3A%2F%25%23@camera:554/live"
+        assert "p@ss" not in repr(factory) + authenticated.text + str(auth_run)
 
         started = client.post(
             "/api/v1/transcriptions/rtsp",
@@ -185,6 +195,23 @@ def test_direct_rtsp_endpoint_validates_source_and_redacts_resolved_value(
         )
         assert rejected.status_code == 422
         assert secret_url not in rejected.text
+
+
+def test_credential_request_model_representations_hide_password_and_inline_url():
+    from speech_to_text.backend.api.schemas.transcription import (
+        MicrophoneProfileDefinition,
+        RTSPTranscriptionRequest,
+    )
+
+    password = "request-secret"
+    url = f"rtsp://user:{password}@camera/live"
+    request = RTSPTranscriptionRequest(keywords=["word"], rtsp_url=url, rtsp_password=password)
+    profile = MicrophoneProfileDefinition(
+        name="camera", source_type="rtsp", device=None, rtsp_url=url,
+        rtsp_password=password, keywords=["word"],
+    )
+    assert password not in repr(request) + repr(profile)
+    assert url not in repr(request) + repr(profile)
 
 
 def test_rtsp_secret_ref_must_be_allowlisted_and_configured(monkeypatch):

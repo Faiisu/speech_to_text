@@ -34,6 +34,7 @@ from .service import (
     WorkflowUnavailableError,
     normalize_profile_decoding_options,
     prepare_rtsp_source,
+    prepare_rtsp_configuration,
 )
 
 __all__ = [
@@ -63,6 +64,7 @@ __all__ = [
     "list_available_microphones",
     "normalize_profile_decoding_options",
     "prepare_rtsp_source",
+    "prepare_rtsp_configuration",
     "start_microphone_and_forward",
     "transcribe_clip_and_forward",
     "validate_destination_config",

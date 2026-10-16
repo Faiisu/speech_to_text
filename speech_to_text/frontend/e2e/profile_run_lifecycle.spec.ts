@@ -8,7 +8,7 @@ test('IPCAM profiles stay usable when microphone discovery is unavailable', asyn
   }))
 
   await page.goto('/profiles/new')
-  await page.getByLabel('Name').fill('E2E IPCAM profile')
+  await page.getByLabel('Name', { exact: true }).fill('E2E IPCAM profile')
   await page.getByLabel('Input source').selectOption('rtsp')
   await page.getByLabel('RTSP URL').fill('rtsp://camera.example/live')
   await page.getByLabel('Model', { exact: true }).selectOption('small')
@@ -40,7 +40,7 @@ test('IPCAM profiles stay usable when microphone discovery is unavailable', asyn
   await page.goto(`/profiles/new?duplicate=${profile.profile_id}`)
   await expect(page.getByLabel('Input source')).toHaveValue('rtsp')
   await expect(page.getByLabel('RTSP URL')).toHaveValue('rtsp://camera.example/edited')
-  await page.getByLabel('Name').fill('E2E IPCAM duplicate')
+  await page.getByLabel('Name', { exact: true }).fill('E2E IPCAM duplicate')
   await page.getByRole('button', { name: /Save profile/ }).click()
   await expect(page.locator('.profile-record').filter({ hasText: 'E2E IPCAM duplicate' })).toContainText('IPCAM (RTSP)')
   const duplicate = await page.request.get('/api/v1/profiles').then(async response => {
@@ -67,7 +67,7 @@ test('IPCAM profiles stay usable when microphone discovery is unavailable', asyn
 test('RTSP secret references can be created, edited, and reloaded without exposing the resolved URL', async ({ page }) => {
   const resolvedUrl = 'rtsp://camera-e2e-user:camera-e2e-password@camera.example/secret'
   await page.goto('/profiles/new')
-  await page.getByLabel('Name').fill('E2E secret IPCAM profile')
+  await page.getByLabel('Name', { exact: true }).fill('E2E secret IPCAM profile')
   await page.getByLabel('Input source').selectOption('rtsp')
   await page.getByLabel('RTSP address source').selectOption('secret')
   await page.getByLabel('Environment variable name').fill('E2E_CAMERA_RTSP_URL')
@@ -113,7 +113,7 @@ test('user can create a profile, monitor its output, and stop the workflow', asy
   await expect(page.locator('.brand')).toContainText('AUDIO TRANSCRIPTION')
   await expect(page.locator('.crumb')).toContainText('ECHODESK')
 
-  await page.getByLabel('Name').fill('E2E studio profile')
+  await page.getByLabel('Name', { exact: true }).fill('E2E studio profile')
   await page.getByLabel('Microphone').selectOption('E2E Studio Mic')
   await page.getByLabel('Model', { exact: true }).selectOption('small')
   await page.getByLabel('Runtime').selectOption('ctranslate2')
@@ -292,7 +292,7 @@ test('profile Stop returns to Play when an accepted shutdown later fails', async
 
 test('profile Play starts its saved snapshot and opens the workflow', async ({ page }) => {
   await page.goto('/profiles/new')
-  await page.getByLabel('Name').fill('Play snapshot profile')
+  await page.getByLabel('Name', { exact: true }).fill('Play snapshot profile')
   await page.getByLabel('Microphone').selectOption('E2E Studio Mic')
   await page.getByLabel('Model', { exact: true }).selectOption('small')
   await page.getByLabel('Runtime').selectOption('ctranslate2')
@@ -329,7 +329,7 @@ test('profile Play starts its saved snapshot and opens the workflow', async ({ p
 
 test('profile Play prevents duplicate starts while pending and can retry a failed start', async ({ page }) => {
   await page.goto('/profiles/new')
-  await page.getByLabel('Name').fill('Play retry profile')
+  await page.getByLabel('Name', { exact: true }).fill('Play retry profile')
   await page.getByLabel('Microphone').selectOption('E2E Studio Mic')
   await page.getByLabel('One keyword per line').fill('ทดสอบ')
   await page.getByRole('button', { name: /Save profile/ }).click()
@@ -370,7 +370,7 @@ test('profile Play prevents duplicate starts while pending and can retry a faile
 
 test('duplicate profile copies settings into a reload-safe new profile draft', async ({ page }) => {
   await page.goto('/profiles/new')
-  await page.getByLabel('Name').fill('Source profile')
+  await page.getByLabel('Name', { exact: true }).fill('Source profile')
   await page.getByLabel('Microphone').selectOption('E2E Studio Mic')
   await page.getByLabel('Model', { exact: true }).selectOption('small')
   await page.getByLabel('Runtime').selectOption('ctranslate2')
@@ -412,7 +412,7 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await expect(page).toHaveURL(new RegExp(`/profiles/new\\?duplicate=${sourceId}`))
   await expect.poll(async () => page.request.get('/api/v1/profiles').then(async response => (await response.json()).profiles.length)).toBe(profileCountBeforeDuplicate)
   await expect(page.getByRole('heading', { name: 'Duplicate profile' })).toBeVisible()
-  await expect(page.getByLabel('Name')).toHaveValue('')
+  await expect(page.getByLabel('Name', { exact: true })).toHaveValue('')
   await expect(page.getByLabel('Microphone')).toHaveValue('E2E Studio Mic')
   await expect(page.getByLabel('Model', { exact: true })).toHaveValue('small')
   await expect(page.getByLabel('Runtime')).toHaveValue('ctranslate2')
@@ -428,7 +428,7 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
 
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Duplicate profile' })).toBeVisible()
-  await expect(page.getByLabel('Name')).toHaveValue('')
+  await expect(page.getByLabel('Name', { exact: true })).toHaveValue('')
   await expect(page.getByLabel('Beam size')).toHaveValue('4')
   await expect(page.getByLabel('Temperature')).toHaveValue('0.25')
   await expect(page.getByLabel('Condition on previous text')).toBeChecked()
@@ -438,14 +438,14 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
 
   await page.getByRole('button', { name: /Save profile/ }).click()
   await expect(page.getByRole('alert')).toContainText('Enter a profile name')
-  await expect(page.getByLabel('Name')).toHaveValue('')
+  await expect(page.getByLabel('Name', { exact: true })).toHaveValue('')
 
-  await page.getByLabel('Name').fill('  SOURCE PROFILE  ')
+  await page.getByLabel('Name', { exact: true }).fill('  SOURCE PROFILE  ')
   await page.getByRole('button', { name: /Save profile/ }).click()
   await expect(page.getByRole('alert')).toContainText('already exists')
   await expect(page).toHaveURL(new RegExp(`/profiles/new\\?duplicate=${sourceId}`))
 
-  await page.getByLabel('Name').fill('Copied profile')
+  await page.getByLabel('Name', { exact: true }).fill('Copied profile')
   await page.getByRole('button', { name: /Save profile/ }).click()
   await expect(page).toHaveURL(/\/profiles$/)
   await expect(page.getByRole('heading', { name: 'Copied profile' })).toBeVisible()
@@ -590,4 +590,34 @@ test('stale workflow IDs explain that run history is process-local', async ({ pa
 
   await expect(page.getByRole('status')).toContainText('This workflow is not in the current backend history.')
   await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('authenticated RTSP profiles keep passwords write-only and require duplicate re-entry', async ({ page }) => {
+  const password = 'camera-p@ss:/%#'
+  await page.goto('/profiles/new')
+  await page.getByLabel('Name', { exact: true }).fill('E2E authenticated camera')
+  await page.getByLabel('Input source').selectOption('rtsp')
+  await page.getByLabel('RTSP URL').fill('rtsp://camera.example:554/live')
+  await page.getByLabel('Username').fill('operator')
+  await page.getByLabel('Password').fill(password)
+  await page.getByLabel('One keyword per line').fill('กล้อง')
+  await page.getByRole('button', { name: /Save profile/ }).click()
+  await expect(page).toHaveURL(/\/profiles$/)
+
+  const profile = await page.request.get('/api/v1/profiles').then(async response => {
+    const payload = await response.json()
+    return payload.profiles.find((item: { name: string }) => item.name === 'E2E authenticated camera')
+  })
+  expect(profile).toMatchObject({ rtsp_url: 'rtsp://camera.example:554/live', rtsp_username: 'operator', rtsp_has_password: true })
+  expect(JSON.stringify(profile)).not.toContain(password)
+
+  await page.goto(`/profiles/new?duplicate=${profile.profile_id}`)
+  await page.getByLabel('Name', { exact: true }).fill('E2E authenticated duplicate')
+  await page.getByRole('button', { name: /Save profile/ }).click()
+  await expect(page.getByRole('alert')).toContainText('Re-enter the saved camera password')
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: /Save profile/ }).click()
+  await expect(page).toHaveURL(/\/profiles$/)
+  await expect(page.locator('body')).not.toContainText(password)
+  await page.request.delete(`/api/v1/profiles/${profile.profile_id}`)
 })

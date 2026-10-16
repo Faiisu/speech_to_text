@@ -123,7 +123,7 @@ def test_rtsp_recording_validates_source_and_persists_only_non_secret_definition
             {"source_type": "rtsp", "device": "Studio Mic", "rtsp_url": "rtsp://camera/audio"},
             {"source_type": "rtsp"},
             {"source_type": "rtsp", "rtsp_url": "rtsp://camera/audio", "rtsp_url_secret_ref": "CAMERA_URL"},
-            {"source_type": "rtsp", "rtsp_url": "rtsp://user:password@camera/audio"},
+            {"source_type": "rtsp", "rtsp_url": "rtsp://camera/audio", "rtsp_username": "user", "rtsp_password": "password", "rtsp_url_secret_ref": "CAMERA_URL"},
             {"source_type": "microphone", "rtsp_url": None},
             {"source_type": "rtsp", "rtsp_url_secret_ref": "UNAPPROVED"},
             {"source_type": None},
@@ -150,7 +150,7 @@ def test_rtsp_recording_validates_source_and_persists_only_non_secret_definition
         stopped = client.post(f"/api/v1/recordings/{snapshot['recording_id']}/stop").json()
         assert stopped["status"] == "completed"
         assert client.get(f"/api/v1/recordings/{snapshot['recording_id']}/audio").content[:4] == b"RIFF"
-        assert "password" not in (tmp_path / f"{snapshot['recording_id']}.json").read_text()
+        assert "user:password" not in (tmp_path / f"{snapshot['recording_id']}.json").read_text()
         assert "token=secret" not in (tmp_path / f"{snapshot['recording_id']}.json").read_text()
 
     restored = RecordingService(output_directory=tmp_path)
@@ -188,7 +188,11 @@ def test_rtsp_uses_feature_factory_without_opening_default_microphone(tmp_path, 
         def __init__(self, **_):
             raise AssertionError("RTSP selection must not open the host microphone")
 
-    monkeypatch.setattr(recording_module, "create_rtsp_audio_source_factory", rtsp_factory)
+    from types import SimpleNamespace
+    monkeypatch.setattr(recording_module, "normalize_rtsp_source", lambda url, *_: SimpleNamespace(
+        audio_source_factory=rtsp_factory(url), rtsp_url=url, rtsp_username=None,
+        rtsp_has_password=False, _password=None,
+    ))
     monkeypatch.setattr(capture_module, "SoundDeviceSource", NoMicrophone)
     service = RecordingService(output_directory=tmp_path)
     started = service.start(source_type="rtsp", rtsp_url="rtsp://camera.local/audio")
@@ -201,7 +205,11 @@ def test_rtsp_disconnect_keeps_partial_wav_and_failed_metadata_after_restart(tmp
     import time
     from speech_to_text.workflows.audio_recording import service as recording_module
 
-    monkeypatch.setattr(recording_module, "create_rtsp_audio_source_factory", lambda _url: DisconnectingSource)
+    from types import SimpleNamespace
+    monkeypatch.setattr(recording_module, "normalize_rtsp_source", lambda url, *_: SimpleNamespace(
+        audio_source_factory=DisconnectingSource, rtsp_url=url, rtsp_username=None,
+        rtsp_has_password=False, _password=None,
+    ))
     service = RecordingService(output_directory=tmp_path)
     started = service.start(source_type="rtsp", rtsp_url="rtsp://camera.local/audio")
     deadline = time.monotonic() + 2

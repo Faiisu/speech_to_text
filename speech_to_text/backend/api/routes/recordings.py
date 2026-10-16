@@ -34,10 +34,10 @@ def upload_recording(request: Request, file: UploadFile = File(...)):
 
 @router.post("", status_code=201)
 def start_recording(request: Request, payload: dict):
-    if set(payload) - {"device", "source_type", "rtsp_url", "rtsp_url_secret_ref"}:
+    if set(payload) - {"device", "source_type", "rtsp_url", "rtsp_url_secret_ref", "rtsp_username", "rtsp_password"}:
         raise HTTPException(status_code=422, detail="request contains unsupported fields")
     if payload.get("source_type", "microphone") == "microphone" and (
-        "rtsp_url" in payload or "rtsp_url_secret_ref" in payload
+        any(name in payload for name in ("rtsp_url", "rtsp_url_secret_ref", "rtsp_username", "rtsp_password"))
     ):
         raise HTTPException(status_code=422, detail="Microphone recordings cannot include RTSP fields")
     device = payload.get("device")
@@ -49,6 +49,8 @@ def start_recording(request: Request, payload: dict):
             source_type=payload.get("source_type", "microphone"),
             rtsp_url=payload.get("rtsp_url"),
             rtsp_url_secret_ref=payload.get("rtsp_url_secret_ref"),
+            rtsp_username=payload.get("rtsp_username"),
+            rtsp_password=payload.get("rtsp_password"),
         )
     except RecordingConfigurationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

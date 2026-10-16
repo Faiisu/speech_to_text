@@ -24,7 +24,7 @@ The matching feature and its output behavior are composed by the [transcript mat
 
 ## IPCAM RTSP input
 
-Live audio workflows also accept IP camera/NVR audio through RTSP. The [RTSP source contract](../.scratch/ipcam-rtsp/spec.md) owns the capture callable, source fields, secret references, profile persistence, and direct `POST /api/v1/transcriptions/rtsp` request. RTSP runs use the existing status, event polling, stop, matching, forwarding, and recovery interfaces. See [RTSP configuration](configuration.md#ipcam-audio-through-rtsp) for camera and credential setup.
+Live audio workflows also accept IP camera/NVR audio through RTSP. The [RTSP source contract](../.scratch/ipcam-rtsp/spec.md) owns the capture callable, source fields, direct camera credentials, secret references, profile persistence, and direct `POST /api/v1/transcriptions/rtsp` request. Password inputs are write-only; public source URLs are stripped of credentials. RTSP runs use the existing status, event polling, stop, matching, forwarding, and recovery interfaces. See [RTSP configuration](configuration.md#ipcam-audio-through-rtsp) for camera and credential setup.
 
 ## Backend API v1
 

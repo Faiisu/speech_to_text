@@ -68,6 +68,7 @@ speech_to_text/backend/
 ├── app.py                      # FastAPI app factory and process lifecycle
 ├── dependencies.py             # Own workflow service, worker pool, and run registries
 ├── profile_store.py            # Persist microphone profiles and output destinations in SQLite
+├── profile_credentials.py      # Encrypt saved camera passwords and manage the private database-side key
 └── api/
     ├── router.py               # Combine and mount inbound API routes
     ├── microphone_lifecycle.py # Shared microphone start/stop lifecycle helpers
@@ -89,6 +90,8 @@ Frontend code calls the backend API. Backend routes validate requests and call w
 The audio-recording workflow owns generated IDs, retained WAV metadata, and the storage lifecycle around host capture and audio uploads. The model-deployment feature owns host capture, WAV validation, and compressed-audio conversion. Recordings live under ignored `data/` storage. Its contract is maintained in the [model-tuning specification](../.scratch/model-tuning/spec.md).
 
 The model-deployment feature also owns IP camera audio capture in `model_deployment/rtsp.py`, exported through its public package interface. The transcription and audio-recording workflows select the source through that interface. Backend profile persistence and the existing live run lifecycle own saved profile source definitions and recovery snapshots; the audio-recording workflow owns finite RTSP recording metadata and storage under its [model-tuning contract](../.scratch/model-tuning/spec.md#ipcam-recording). RTSP adapter tests belong under `tests/feature_01/`, recording workflow tests under `tests/workflows/`, API/persistence/recovery tests under `tests/backend/`, and browser lifecycle coverage under `frontend/e2e/`. The [RTSP specification](../.scratch/ipcam-rtsp/spec.md) owns the capture source contract.
+
+`backend/profile_credentials.py` owns saved camera password encryption and the private `<profile database filename>.key` file beside the configured SQLite database. `profile_store.py` persists encrypted passwords and exposes sanitized profile responses plus a private workflow-start credential boundary. That key is runtime deployment state in the existing persistent profile directory, not application source. The [credential contract](../.scratch/ipcam-rtsp/spec.md#saved-profiles) owns key lifecycle and response/edit behavior.
 
 The transcribe-match-forward workflow owns destination configuration and validation in `destinations.py`, and outbound JSON/HTTP transport in `http_output.py` and MQTT publication in `mqtt_output.py`. The backend's destination routes manage stored definitions through the existing profile store and call the workflow's public sender for synthetic tests. Destination credentials remain deployment-managed references, not database secret values. The [workflow output specification](../.scratch/transcript-matching-forwarding/spec.md) owns their configuration contract.
 

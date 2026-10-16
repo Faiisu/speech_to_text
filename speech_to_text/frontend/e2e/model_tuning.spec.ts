@@ -160,3 +160,21 @@ test('records IPCAM through the bounded recording workflow when microphone disco
   expect(snapshot).toMatchObject({ source: 'rtsp', device: null, rtsp_url: null, rtsp_url_secret_ref: 'E2E_CAMERA_RTSP_URL' })
   expect(JSON.stringify(snapshot)).not.toContain('camera-e2e-password')
 })
+
+test('model tuning accepts direct RTSP credentials without persisting them in recording metadata', async ({ page }) => {
+  const password = 'tuning-p@ss:/%#'
+  await page.goto('/model-tuning')
+  await page.getByLabel('Input source').selectOption('rtsp')
+  await page.getByLabel('RTSP URL').fill('rtsp://camera.example/audio')
+  await page.getByLabel('Username').fill('tuning-user')
+  await page.getByLabel('Password').fill(password)
+  await page.getByRole('button', { name: 'Start recording' }).click()
+  await expect(page.getByText(/Recording ·/)).toBeVisible()
+  const recordingId = await page.getByLabel('Choose a clip').inputValue()
+  await page.getByRole('button', { name: 'Stop recording' }).click()
+  await expect(page.locator('.recording-status.completed')).toBeVisible()
+  const snapshot = await page.request.get(`/api/v1/recordings/${recordingId}`).then(response => response.json())
+  expect(snapshot).toMatchObject({ source: 'rtsp', rtsp_url: 'rtsp://camera.example/audio', rtsp_username: 'tuning-user', rtsp_has_password: true })
+  expect(JSON.stringify(snapshot)).not.toContain(password)
+  await expect(page.locator('body')).not.toContainText(password)
+})

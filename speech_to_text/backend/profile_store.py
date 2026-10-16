@@ -13,6 +13,7 @@ from pathlib import Path
 from speech_to_text.workflows.transcribe_match_forward import (
     normalize_profile_decoding_options,
 )
+from .profile_credentials import ProfileCredentialCipher, ProfileCredentialError
 
 _DEFAULT_DECODING_OPTIONS_JSON = (
     # Frozen additive migration default for old profiles and rollback-safe databases.
@@ -55,6 +56,7 @@ class SQLiteProfileStore:
         )
         self._lock = threading.RLock()
         self._connection: sqlite3.Connection | None = None
+        self._credential_cipher = ProfileCredentialCipher(self.database_path)
 
     def _db(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -80,6 +82,8 @@ class SQLiteProfileStore:
                     device TEXT,
                     rtsp_url TEXT,
                     rtsp_url_secret_ref TEXT,
+                    rtsp_username TEXT,
+                    rtsp_password_encrypted TEXT,
                     execution_mode TEXT NOT NULL
                         CHECK (execution_mode IN ('shared', 'per_workflow_process')),
                     keywords_json TEXT NOT NULL,
@@ -117,6 +121,8 @@ class SQLiteProfileStore:
                 ("source_type", "TEXT NOT NULL DEFAULT 'microphone'"),
                 ("rtsp_url", "TEXT"),
                 ("rtsp_url_secret_ref", "TEXT"),
+                ("rtsp_username", "TEXT"),
+                ("rtsp_password_encrypted", "TEXT"),
             ):
                 if column not in columns:
                     try:
@@ -192,6 +198,8 @@ class SQLiteProfileStore:
             "device": row["device"],
             "rtsp_url": row["rtsp_url"],
             "rtsp_url_secret_ref": row["rtsp_url_secret_ref"],
+            "rtsp_username": row["rtsp_username"],
+            "rtsp_has_password": bool(row["rtsp_password_encrypted"]),
             "execution_mode": row["execution_mode"],
             "keywords": json.loads(row["keywords_json"]),
             "silence_threshold": row["silence_threshold"],
@@ -219,6 +227,27 @@ class SQLiteProfileStore:
             ).fetchone()
             return self._serialize(row)
 
+    def get_profile_for_run(self, profile_id: str):
+        """Atomically snapshot public source definition and private credentials."""
+        with self._lock:
+            row = self._db().execute(
+                "SELECT * FROM workflow_profiles WHERE profile_id = ?", (profile_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            token = row["rtsp_password_encrypted"]
+            password = self._credential_cipher.decrypt(token) if token else None
+            return {**self._serialize(row), "_credentials": {
+                "rtsp_username": row["rtsp_username"], "rtsp_password": password
+            }}
+
+    def _validate_existing_credentials(self, connection):
+        row = connection.execute(
+            "SELECT rtsp_password_encrypted FROM workflow_profiles WHERE rtsp_password_encrypted IS NOT NULL LIMIT 1"
+        ).fetchone()
+        if row is not None:
+            self._credential_cipher.decrypt(row["rtsp_password_encrypted"])
+
     def create_profile(self, profile: dict):
         now = _utc_now()
         decoding_options = normalize_profile_decoding_options(profile.get("decoding_options"))
@@ -226,16 +255,19 @@ class SQLiteProfileStore:
             connection = self._db()
             try:
                 connection.execute("BEGIN IMMEDIATE")
+                if profile.get("rtsp_password"):
+                    self._validate_existing_credentials(connection)
                 self._ensure_name_available(connection, profile["name"])
                 self._ensure_destination_exists(connection, profile.get("destination_id"))
                 connection.execute(
                     """
                     INSERT INTO workflow_profiles
-                        (profile_id, name, source_type, device, rtsp_url, rtsp_url_secret_ref,
+                         (profile_id, name, source_type, device, rtsp_url, rtsp_url_secret_ref,
+                         rtsp_username, rtsp_password_encrypted,
                          execution_mode, keywords_json,
                          silence_threshold, model, runtime, destination_id, decoding_options_json, language,
                          created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         profile["profile_id"],
@@ -244,6 +276,8 @@ class SQLiteProfileStore:
                         profile["device"],
                         profile.get("rtsp_url"),
                         profile.get("rtsp_url_secret_ref"),
+                        profile.get("rtsp_username"),
+                        self._credential_cipher.encrypt(profile["rtsp_password"]) if profile.get("rtsp_password") else None,
                         profile["execution_mode"],
                         json.dumps(profile["keywords"], ensure_ascii=False),
                         profile["silence_threshold"],
@@ -273,7 +307,7 @@ class SQLiteProfileStore:
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 current = connection.execute(
-                    "SELECT profile_id FROM workflow_profiles WHERE profile_id = ?",
+                    "SELECT * FROM workflow_profiles WHERE profile_id = ?",
                     (profile_id,),
                 ).fetchone()
                 if current is None:
@@ -281,11 +315,20 @@ class SQLiteProfileStore:
                     return None
                 self._ensure_name_available(connection, profile["name"], profile_id)
                 self._ensure_destination_exists(connection, profile.get("destination_id"))
+                current_identity = (current["source_type"], current["rtsp_url"], current["rtsp_url_secret_ref"], current["rtsp_username"])
+                next_identity = (profile.get("source_type", "microphone"), profile.get("rtsp_url"), profile.get("rtsp_url_secret_ref"), profile.get("rtsp_username"))
+                password = profile.get("rtsp_password")
+                if password is None and current_identity == next_identity:
+                    encrypted_password = current["rtsp_password_encrypted"]
+                else:
+                    if password:
+                        self._validate_existing_credentials(connection)
+                    encrypted_password = self._credential_cipher.encrypt(password) if password else None
                 connection.execute(
                     """
                     UPDATE workflow_profiles
                     SET name = ?, source_type = ?, device = ?, rtsp_url = ?,
-                        rtsp_url_secret_ref = ?, execution_mode = ?, keywords_json = ?,
+                        rtsp_url_secret_ref = ?, rtsp_username = ?, rtsp_password_encrypted = ?, execution_mode = ?, keywords_json = ?,
                         silence_threshold = ?, model = ?, runtime = ?, destination_id = ?,
                         decoding_options_json = ?,
                         language = ?,
@@ -298,6 +341,8 @@ class SQLiteProfileStore:
                         profile["device"],
                         profile.get("rtsp_url"),
                         profile.get("rtsp_url_secret_ref"),
+                        profile.get("rtsp_username"),
+                        encrypted_password,
                         profile["execution_mode"],
                         json.dumps(profile["keywords"], ensure_ascii=False),
                         profile["silence_threshold"],

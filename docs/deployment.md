@@ -61,6 +61,8 @@ Accepted microphone runs recover after unexpected workflow endings while the bac
 
 IPCAM RTSP runs share that lifecycle and active-run capacity limit. Configure camera reachability and optional credential references through [RTSP configuration](configuration.md#ipcam-audio-through-rtsp). The current UBX installer still requires host microphone discovery during readiness checks; an installation with only network cameras requires adapting that deployment check. Camera connectivity, decoder support, reconnection, and continuous inference must be checked with the actual camera on the target deployment.
 
+Camera usernames/passwords can be entered directly in Profile or Model tuning. The backend/test extras include the credential encryption dependency, so rebuild the application image when updating to this feature. Saved Profile passwords use an automatically generated `/data/profiles.sqlite3.key` under the existing persistent mount; preserve it with the profile database when backing up or moving a container. See [credential setup and key handling](configuration.md#ipcam-audio-through-rtsp).
+
 ## MQTT broker
 
 The standalone [`compose.mqtt.yaml`](../compose.mqtt.yaml) runs Eclipse Mosquitto on either Linux or macOS with Docker Compose 2.23.1 or newer. From the checkout root:

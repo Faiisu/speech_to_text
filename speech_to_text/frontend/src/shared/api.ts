@@ -51,7 +51,7 @@ export const api = {
   transcription: (id: string) => request<Transcription>(`/transcriptions/${encodeURIComponent(id)}`),
   events: (id: string, after: number) => request<{ events: WorkflowEvent[]; next_cursor: number }>(`/transcriptions/${encodeURIComponent(id)}/events?after=${after}`),
   recordings: async () => (await request<{ recordings: Recording[] }>('/recordings')).recordings,
-  startRecording: (device: string | null, source?: { source_type: 'microphone' | 'rtsp'; rtsp_url?: string; rtsp_url_secret_ref?: string }) => request<Recording>('/recordings', { method: 'POST', body: JSON.stringify({ device, ...source }) }),
+  startRecording: (device: string | null, source?: { source_type: 'microphone' | 'rtsp'; rtsp_url?: string; rtsp_url_secret_ref?: string; rtsp_username?: string; rtsp_password?: string }) => request<Recording>('/recordings', { method: 'POST', body: JSON.stringify({ device, ...source }) }),
   uploadRecording: async (file: File) => {
     const form = new FormData()
     form.append('file', file)

@@ -35,9 +35,13 @@ No credentials or database server are required to call Feature 01 locally. The b
 
 ## IPCAM audio through RTSP
 
-In the Profile editor or Model tuning capture panel, choose **IPCAM (RTSP)** as the input source. Enter the camera/NVR's audio-enabled RTSP URL, such as `rtsp://192.168.1.50:554/stream1`, or choose an environment secret reference for an authenticated URL. The backend host or container must be able to reach the camera. Profiles use the existing model, language, keyword, execution mode, and destination settings for either live input source. Model tuning records a finite sample for repeated clip trials; its [recording contract](../.scratch/model-tuning/spec.md#ipcam-recording) owns capture limits and disconnect behavior. See the [RTSP source contract](../.scratch/ipcam-rtsp/spec.md) for source validation, decoder defaults, and safe errors.
+In the Profile editor or Model tuning capture panel, choose **IPCAM (RTSP)** as the input source. Enter the camera/NVR's audio-enabled RTSP URL, such as `rtsp://192.168.1.50:554/stream1`. For an authenticated camera, enter **Username** and **Password** in the same form; no environment configuration is required. Passwords entered separately can contain characters such as `@` without manual percent-encoding. You can also paste a complete credential URL; the backend normalizes it and removes credentials from public source metadata. The backend host or container must be able to reach the camera. Profiles use the existing model, language, keyword, execution mode, and destination settings for either live input source. Model tuning records a finite sample for repeated clip trials; its [recording contract](../.scratch/model-tuning/spec.md#ipcam-recording) owns capture limits and disconnect behavior. See the [RTSP source contract](../.scratch/ipcam-rtsp/spec.md) for source validation, decoder defaults, and safe errors.
 
-Direct URLs cannot contain a username or password. For authenticated cameras or secret query tokens, set an environment variable containing the complete URL and allow its name before starting the backend:
+Saved Profile passwords are encrypted by the backend. Editing shows a blank password field: leaving it unchanged keeps the saved password when the URL and username are unchanged; use the explicit clear action to remove it. Duplicating a profile asks for its password again. Model tuning uses entered passwords only for capture and does not save them in recording manifests. Both pages keep entered passwords only in memory for the open page. Use HTTPS when sending camera credentials to a backend across a network.
+
+The backend automatically creates a private encryption key at `<profile database path>.key`, for example `/data/profiles.sqlite3.key` in the application container. Keep that key with the database when backing up or moving the deployment. Losing it makes saved passwords unreadable; the backend reports a safe error instead of replacing the key for existing encrypted credentials. The [credential contract](../.scratch/ipcam-rtsp/spec.md#saved-profiles) owns storage and key lifecycle behavior.
+
+Environment references remain an optional alternative, including for secret query tokens. Set a variable containing the complete URL and allow its name before starting the backend:
 
 ```bash
 export FRONT_GATE_RTSP_URL='rtsp://camera-user:camera-password@192.168.1.50:554/stream1'
@@ -45,7 +49,7 @@ export SPEECH_TO_TEXT_RTSP_SECRET_REFS=FRONT_GATE_RTSP_URL
 ./scripts/run_macos.sh
 ```
 
-Choose the environment secret reference option and enter `FRONT_GATE_RTSP_URL` in the Profile editor or Model tuning. Percent-encode reserved characters in URL credentials. Only the variable name is saved in the profile or recording metadata; its resolved value is held privately for the active capture. Live transcription runs reuse that value during recovery. Changes to the environment or profile apply to a new capture/run.
+Choose the environment secret reference option and enter `FRONT_GATE_RTSP_URL` in the Profile editor or Model tuning. Percent-encode reserved characters in credentials embedded in this environment URL. Only the variable name is saved in the profile or recording metadata; its resolved value is held privately for the active capture. Live transcription runs reuse that value during recovery. Changes to the environment or profile apply to a new capture/run.
 
 For Docker, pass both variables into the application container through its deployment environment. Host environment variables are not automatically available inside a container. The UBX installer generates its managed Compose file; use a separate operator-owned Compose override for credentials so updates do not overwrite them. Start or recreate the service with the managed file and the override together.
 

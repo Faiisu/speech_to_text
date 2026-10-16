@@ -67,6 +67,8 @@ def start_microphone_workflow(
     source_type="microphone",
     rtsp_url=None,
     rtsp_url_secret_ref=None,
+    rtsp_username=None,
+    rtsp_has_password=False,
     audio_source_factory=None,
 ):
     """Start one microphone workflow and register its run for API monitoring."""
@@ -100,6 +102,8 @@ def start_microphone_workflow(
                 source_type=source_type,
                 rtsp_url=rtsp_url,
                 rtsp_url_secret_ref=rtsp_url_secret_ref,
+                rtsp_username=rtsp_username,
+                rtsp_has_password=rtsp_has_password,
                 audio_source_factory=audio_source_factory,
             )
     return _start_microphone_workflow(
@@ -119,6 +123,8 @@ def start_microphone_workflow(
         source_type=source_type,
         rtsp_url=rtsp_url,
         rtsp_url_secret_ref=rtsp_url_secret_ref,
+        rtsp_username=rtsp_username,
+        rtsp_has_password=rtsp_has_password,
         audio_source_factory=audio_source_factory,
     )
 
@@ -141,6 +147,8 @@ def _start_microphone_workflow(
     source_type="microphone",
     rtsp_url=None,
     rtsp_url_secret_ref=None,
+    rtsp_username=None,
+    rtsp_has_password=False,
     audio_source_factory=None,
 ):
     runtime = request.app.state.backend_runtime
@@ -163,6 +171,8 @@ def _start_microphone_workflow(
         source_type=source_type,
         rtsp_url=rtsp_url,
         rtsp_url_secret_ref=rtsp_url_secret_ref,
+        rtsp_username=rtsp_username,
+        rtsp_has_password=rtsp_has_password,
         audio_source_factory=audio_source_factory,
         execution_mode=execution_mode,
         silence_threshold=silence_threshold,

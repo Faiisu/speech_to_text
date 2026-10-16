@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import threading
+from urllib.parse import quote, urlsplit, urlunsplit, unquote
 
 import numpy as np
 
@@ -188,6 +189,67 @@ def create_rtsp_audio_source_factory(
         )
     _validate_timeouts(open_timeout_seconds, read_timeout_seconds)
     return RTSPAudioSourceFactory(url, float(open_timeout_seconds), float(read_timeout_seconds))
+
+
+@dataclass(frozen=True)
+class RTSPSourceConfiguration:
+    """Validated, sanitized source identity and private capture factory."""
+
+    rtsp_url: str | None
+    rtsp_username: str | None
+    rtsp_has_password: bool
+    audio_source_factory: RTSPAudioSourceFactory = field(repr=False)
+    _password: str | None = field(default=None, repr=False)
+    rtsp_url_secret_ref: str | None = None
+
+def normalize_rtsp_source(rtsp_url, rtsp_username=None, rtsp_password=None):
+    """Normalize direct RTSP input, keeping authentication out of source metadata."""
+    if not isinstance(rtsp_url, str):
+        raise ConfigurationError("rtsp_url must be a valid RTSP URL")
+    if any(ord(char) <= 32 or ord(char) == 127 for char in rtsp_url):
+        raise ConfigurationError("rtsp_url must be a valid RTSP URL")
+    try:
+        parsed = urlsplit(rtsp_url)
+        if parsed.fragment:
+            raise ConfigurationError("rtsp_url must not contain a fragment")
+        embedded = parsed.username is not None or parsed.password is not None
+        if embedded and (rtsp_username is not None or rtsp_password is not None):
+            raise ConfigurationError("Use either URL credentials or separate credential fields")
+        if embedded:
+            username = unquote(parsed.username or "")
+            password = unquote(parsed.password or "") if parsed.password is not None else None
+        else:
+            username = rtsp_username
+            password = rtsp_password
+        if username is not None and (not isinstance(username, str) or not username):
+            raise ConfigurationError("rtsp_username must be a non-empty string")
+        if password is not None and not isinstance(password, str):
+            raise ConfigurationError("rtsp_password must be a string or null")
+        hostname = parsed.hostname
+        if not hostname:
+            raise ConfigurationError("rtsp_url must be a valid RTSP URL")
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        if parsed.port is not None:
+            host += f":{parsed.port}"
+        clean_url = urlunsplit((parsed.scheme, host, parsed.path, parsed.query, ""))
+        clean_factory = create_rtsp_audio_source_factory(clean_url)
+        if username is None and password not in (None, ""):
+            raise ConfigurationError("A password requires a username")
+        auth = ""
+        if username is not None:
+            auth = quote(username, safe="")
+            if password is not None:
+                auth += ":" + quote(password, safe="")
+            auth += "@"
+        private_url = urlunsplit((parsed.scheme, auth + host, parsed.path, parsed.query, ""))
+        factory = clean_factory if not auth else RTSPAudioSourceFactory(
+            private_url, clean_factory.open_timeout_seconds, clean_factory.read_timeout_seconds
+        )
+        return RTSPSourceConfiguration(clean_url, username, password is not None and password != "", factory, password)
+    except ConfigurationError:
+        raise
+    except (ValueError, UnicodeError):
+        raise ConfigurationError("rtsp_url must be a valid RTSP URL") from None
 
 
 def create_rtsp_secret_source_factory(

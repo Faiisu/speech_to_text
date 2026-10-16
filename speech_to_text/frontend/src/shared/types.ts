@@ -32,6 +32,8 @@ export type Profile = {
   device: string | null
   rtsp_url?: string | null
   rtsp_url_secret_ref?: string | null
+  rtsp_username?: string | null
+  rtsp_has_password?: boolean
   execution_mode: 'shared' | 'per_workflow_process'
   keywords: string[]
   silence_threshold: number
@@ -54,6 +56,8 @@ export type Transcription = {
   source_type?: 'microphone' | 'rtsp'
   rtsp_url?: string | null
   rtsp_url_secret_ref?: string | null
+  rtsp_username?: string | null
+  rtsp_has_password?: boolean
   device: string | null
   execution_mode: 'shared' | 'per_workflow_process' | null
   silence_threshold: number | null
@@ -154,6 +158,8 @@ export type Recording = {
   source?: 'microphone' | 'rtsp' | 'upload'
   rtsp_url?: string | null
   rtsp_url_secret_ref?: string | null
+  rtsp_username?: string | null
+  rtsp_has_password?: boolean
   filename?: string | null
   error: string | null
   created_at: string
@@ -216,4 +222,4 @@ export type StressEvent = {
   [key: string]: unknown
 }
 
-export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options'> & { source_type?: 'microphone' | 'rtsp'; rtsp_url?: string | null; rtsp_url_secret_ref?: string | null; language: Language; destination_id?: string | null }
+export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options'> & { source_type?: 'microphone' | 'rtsp'; rtsp_url?: string | null; rtsp_url_secret_ref?: string | null; rtsp_username?: string | null; rtsp_password?: string; language: Language; destination_id?: string | null }

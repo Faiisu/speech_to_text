@@ -16,8 +16,9 @@ from speech_to_text.features.model_deployment import (
     load_model,
     normalize_decoding_options,
     start_multiprocess_microphone_flows,
-    create_rtsp_audio_source_factory,
     create_rtsp_secret_source_factory,
+    normalize_rtsp_source,
+    RTSPSourceConfiguration,
 )
 from speech_to_text.features.word_matching import WordMatchingConfig, WordMatchingError
 
@@ -45,16 +46,35 @@ class WorkflowUnavailableError(WorkflowServiceError):
     """A model or host audio dependency is unavailable."""
 
 
-def prepare_rtsp_source(rtsp_url=None, rtsp_url_secret_ref=None):
+def prepare_rtsp_configuration(rtsp_url=None, rtsp_url_secret_ref=None, rtsp_username=None, rtsp_password=None):
+    """Validate and normalize a direct URL or approved reference for one operation."""
+    if (rtsp_url is None) == (rtsp_url_secret_ref is None):
+        raise WorkflowConfigurationError("Select exactly one RTSP URL or secret reference")
+    if rtsp_url_secret_ref is not None:
+        if rtsp_username is not None or rtsp_password not in (None, ""):
+            raise WorkflowConfigurationError("Credential fields cannot be combined with an RTSP secret reference")
+        try:
+            factory = create_rtsp_secret_source_factory(rtsp_url_secret_ref)
+            return RTSPSourceConfiguration(None, None, False, factory, None, rtsp_url_secret_ref)
+        except ConfigurationError as exc:
+            raise WorkflowConfigurationError(str(exc)) from exc
+        except AudioInputError as exc:
+            raise WorkflowUnavailableError(str(exc)) from exc
+    try:
+        config = normalize_rtsp_source(rtsp_url, rtsp_username, rtsp_password)
+        return config
+    except ConfigurationError as exc:
+        raise WorkflowConfigurationError(str(exc)) from exc
+
+
+def prepare_rtsp_source(rtsp_url=None, rtsp_url_secret_ref=None, rtsp_username=None, rtsp_password=None):
     """Validate RTSP source configuration and prepare its start-time snapshot."""
     if (rtsp_url is None) == (rtsp_url_secret_ref is None):
         raise WorkflowConfigurationError(
             "Select exactly one RTSP URL or secret reference"
         )
     try:
-        if rtsp_url is not None:
-            return create_rtsp_audio_source_factory(rtsp_url)
-        return create_rtsp_secret_source_factory(rtsp_url_secret_ref)
+        return prepare_rtsp_configuration(rtsp_url, rtsp_url_secret_ref, rtsp_username, rtsp_password).audio_source_factory
     except ConfigurationError as exc:
         raise WorkflowConfigurationError(str(exc)) from exc
     except AudioInputError as exc:

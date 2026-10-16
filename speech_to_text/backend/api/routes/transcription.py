@@ -34,7 +34,7 @@ from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowUnavailableError,
     normalize_profile_decoding_options,
-    prepare_rtsp_source,
+    prepare_rtsp_configuration,
 )
 
 router = APIRouter(prefix="/transcriptions")
@@ -377,8 +377,8 @@ def start_rtsp(request: Request, body: RTSPTranscriptionRequest):
     runtime = request.app.state.backend_runtime
     keywords = validate_keywords(runtime.workflow_service, body.keywords)
     try:
-        source_factory = prepare_rtsp_source(
-            body.rtsp_url, body.rtsp_url_secret_ref
+        source_config = prepare_rtsp_configuration(
+            body.rtsp_url, body.rtsp_url_secret_ref, body.rtsp_username, body.rtsp_password
         )
     except WorkflowConfigurationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -394,9 +394,11 @@ def start_rtsp(request: Request, body: RTSPTranscriptionRequest):
         forwarder=forwarder,
         language=body.language,
         source_type="rtsp",
-        rtsp_url=body.rtsp_url,
+        rtsp_url=source_config.rtsp_url,
         rtsp_url_secret_ref=body.rtsp_url_secret_ref,
-        audio_source_factory=source_factory,
+        rtsp_username=source_config.rtsp_username,
+        rtsp_has_password=source_config.rtsp_has_password,
+        audio_source_factory=source_config.audio_source_factory,
     )
 
 

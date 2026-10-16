@@ -4,8 +4,10 @@ from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import FileResponse, JSONResponse
 
 from speech_to_text.backend.api.router import router
 from speech_to_text.backend.dependencies import BackendRuntime
@@ -23,6 +25,21 @@ def create_app(*, runtime=None):
     app = FastAPI(title="Speech to Text API", version="1", lifespan=lifespan)
     app.state.backend_runtime = backend_runtime
     app.include_router(router, prefix="/api/v1")
+
+    @app.exception_handler(RequestValidationError)
+    async def safe_validation_error(request: Request, exc: RequestValidationError):
+        if request.url.path == "/api/v1/profiles" or request.url.path.startswith("/api/v1/profiles/") or request.url.path in {
+            "/api/v1/transcriptions/rtsp",
+            "/api/v1/recordings",
+        }:
+            return JSONResponse(
+                status_code=422,
+                content={"detail": [
+                    {"loc": list(error.get("loc", ())), "msg": error.get("msg", "Invalid request"), "type": error.get("type", "value_error")}
+                    for error in exc.errors()
+                ]},
+            )
+        return await request_validation_exception_handler(request, exc)
 
     @app.get("/healthz", include_in_schema=False)
     def healthz():

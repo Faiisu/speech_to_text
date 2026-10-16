@@ -697,3 +697,161 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
     monkeypatch.setenv("SPEECH_TO_TEXT_RUNTIME", "ctranslate2")
     assert migrated_store.get_profile("existing-profile")["runtime"] == "openvino-cpu"
     migrated_store.close()
+
+
+def test_profile_credentials_are_encrypted_write_only_and_identity_scoped(tmp_path):
+    import os
+    import sqlite3
+
+    database_path = tmp_path / "profiles.sqlite3"
+    client, service = make_client(database_path)
+    secret = "camera-p@ss:/%#"
+    with client:
+        invalid = client.post("/api/v1/profiles", json=profile_body(
+            source_type="rtsp", device=None, rtsp_url="rtsp://camera/live",
+            rtsp_username="operator", rtsp_password=secret, keywords=None,
+        ))
+        assert invalid.status_code == 422
+        assert secret not in invalid.text
+        assert "operator:" not in invalid.text
+
+        pasted = client.post("/api/v1/profiles", json=profile_body(
+            source_type="rtsp", device=None,
+            rtsp_url="rtsp://operator:camera-p%40ss%3A%2F%25%23@camera/live",
+            keywords=None,
+        ))
+        assert pasted.status_code == 422
+        assert "camera-p%40ss" not in pasted.text
+        assert "camera-p@ss" not in pasted.text
+
+        created = client.post("/api/v1/profiles", json=profile_body(
+            name="Authenticated camera", source_type="rtsp", device=None,
+            rtsp_url="rtsp://camera/live", rtsp_username="operator",
+            rtsp_password=secret,
+        ))
+        assert created.status_code == 201, created.text
+        profile = created.json()
+        assert profile["rtsp_url"] == "rtsp://camera/live"
+        assert profile["rtsp_username"] == "operator"
+        assert profile["rtsp_has_password"] is True
+        assert "rtsp_password" not in profile
+        assert secret not in created.text
+
+        pasted = client.post("/api/v1/profiles", json=profile_body(
+            name="Pasted credentials", source_type="rtsp", device=None,
+            rtsp_url="rtsp://operator:camera-p%40ss%3A%2F%25%23@camera/live",
+        ))
+        assert pasted.status_code == 201
+        assert pasted.json()["rtsp_url"] == "rtsp://camera/live"
+        assert pasted.json()["rtsp_username"] == "operator"
+        assert pasted.json()["rtsp_has_password"] is True
+        assert "camera-p%40ss" not in pasted.text
+        assert client.app.state.backend_runtime.profile_store.get_profile_for_run(
+            pasted.json()["profile_id"]
+        )["_credentials"]["rtsp_password"] == "camera-p@ss:/%#"
+
+        invalid_update = client.put(
+            f"/api/v1/profiles/{profile['profile_id']}",
+            json={"name": "Authenticated camera", "source_type": "rtsp", "device": None,
+                  "rtsp_url": f"rtsp://operator:{secret}@camera/live", "rtsp_password": secret},
+        )
+        assert invalid_update.status_code == 422
+        assert secret not in invalid_update.text
+        assert "operator:" not in invalid_update.text
+        invalid_credential_type = client.post(
+            "/api/v1/profiles",
+            json={**profile_body(name="Bad credential type", source_type="rtsp", device=None,
+                                 rtsp_url="rtsp://camera/live"), "rtsp_password": 123},
+        )
+        assert invalid_credential_type.status_code == 422
+        assert "123" not in invalid_credential_type.text
+
+        with sqlite3.connect(database_path) as connection:
+            db_text = str(connection.execute("SELECT * FROM workflow_profiles").fetchone())
+        assert secret not in db_text
+        assert "camera-p%40ss" not in db_text
+        key_path = tmp_path / "profiles.sqlite3.key"
+        assert key_path.stat().st_mode & 0o777 == 0o600
+
+        same = client.put(f"/api/v1/profiles/{profile['profile_id']}", json=profile_body(
+            name="Authenticated camera", source_type="rtsp", device=None,
+            rtsp_url="rtsp://camera/live", rtsp_username="operator",
+        ))
+        assert same.status_code == 200
+        assert same.json()["rtsp_has_password"] is True
+        private = client.app.state.backend_runtime.profile_store.get_profile_for_run(profile["profile_id"])
+        assert private["_credentials"]["rtsp_password"] == secret
+
+        changed = client.put(f"/api/v1/profiles/{profile['profile_id']}", json=profile_body(
+            name="Authenticated camera", source_type="rtsp", device=None,
+            rtsp_url="rtsp://camera/other", rtsp_username="operator",
+        ))
+        assert changed.status_code == 200
+        assert changed.json()["rtsp_has_password"] is False
+
+        reset = client.put(f"/api/v1/profiles/{profile['profile_id']}", json=profile_body(
+            name="Authenticated camera", source_type="rtsp", device=None,
+            rtsp_url="rtsp://camera/other", rtsp_username="operator", rtsp_password=secret,
+        ))
+        assert reset.status_code == 200
+        cleared = client.put(f"/api/v1/profiles/{profile['profile_id']}", json=profile_body(
+            name="Authenticated camera", source_type="rtsp", device=None,
+            rtsp_url="rtsp://camera/other", rtsp_username="operator", rtsp_password="",
+        ))
+        assert cleared.status_code == 200
+        assert cleared.json()["rtsp_has_password"] is False
+    client.app.state.backend_runtime.shutdown()
+
+    from speech_to_text.backend.profile_store import SQLiteProfileStore
+    reopened = SQLiteProfileStore(database_path)
+    assert reopened.get_profile(profile["profile_id"])["rtsp_has_password"] is False
+    reopened.close()
+
+
+def test_profile_credentials_survive_reopen_and_missing_key_fails_safely(tmp_path):
+    database_path = tmp_path / "profiles.sqlite3"
+    store = SQLiteProfileStore(database_path)
+    data = profile_body(
+        name="Camera", source_type="rtsp", device=None,
+        rtsp_url="rtsp://camera/live", rtsp_username="viewer", rtsp_password="secret",
+    )
+    data.update(silence_threshold=0.0, model="turbo", runtime="openvino-gpu")
+    data["profile_id"] = "credential-profile"
+    store.create_profile(data)
+    store.close()
+
+    reopened = SQLiteProfileStore(database_path)
+    assert reopened.get_profile_for_run("credential-profile")["_credentials"]["rtsp_password"] == "secret"
+    reopened.close()
+
+    (tmp_path / "profiles.sqlite3.key").unlink()
+    missing = SQLiteProfileStore(database_path)
+    with pytest.raises(RuntimeError, match="credentials are unavailable"):
+        missing.get_profile_for_run("credential-profile")
+    with pytest.raises(RuntimeError, match="credentials are unavailable"):
+        missing.create_profile({**data, "profile_id": "another-profile", "name": "Another"})
+    assert not (tmp_path / "profiles.sqlite3.key").exists()
+    cleared = missing.update_profile("credential-profile", {**data, "rtsp_password": ""})
+    assert cleared["rtsp_has_password"] is False
+    microphone = {**data, "profile_id": "microphone-profile", "name": "Microphone", "source_type": "microphone", "device": "Studio Mic", "rtsp_url": None, "rtsp_username": None, "rtsp_password": None}
+    missing.create_profile(microphone)
+    assert not (tmp_path / "profiles.sqlite3.key").exists()
+    missing.close()
+
+
+def test_profile_credential_key_corruption_fails_safely(tmp_path):
+    database_path = tmp_path / "profiles.sqlite3"
+    store = SQLiteProfileStore(database_path)
+    data = profile_body(
+        name="Camera", source_type="rtsp", device=None,
+        rtsp_url="rtsp://camera/live", rtsp_username="viewer", rtsp_password="secret",
+    )
+    data.update(silence_threshold=0.0, model="turbo", runtime="openvino-gpu")
+    data["profile_id"] = "credential-profile"
+    store.create_profile(data)
+    store.close()
+    (tmp_path / "profiles.sqlite3.key").write_bytes(b"bad-key")
+    corrupted = SQLiteProfileStore(database_path)
+    with pytest.raises(RuntimeError, match="credentials are unavailable"):
+        corrupted.get_profile_for_run("credential-profile")
+    corrupted.close()

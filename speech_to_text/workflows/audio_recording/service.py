@@ -16,8 +16,8 @@ from speech_to_text.features.model_deployment import (
     AudioInputError,
     ConfigurationError,
     convert_audio_to_wav,
-    create_rtsp_audio_source_factory,
     create_rtsp_secret_source_factory,
+    normalize_rtsp_source,
     start_audio_recording,
     validate_wav,
 )
@@ -114,6 +114,8 @@ class RecordingService:
         source_type="microphone",
         rtsp_url=None,
         rtsp_url_secret_ref=None,
+        rtsp_username=None,
+        rtsp_password=None,
     ):
         if not isinstance(source_type, str) or source_type not in {"microphone", "rtsp"}:
             raise RecordingConfigurationError("source_type must be microphone or rtsp")
@@ -124,7 +126,7 @@ class RecordingService:
         if rtsp_url_secret_ref is not None and not isinstance(rtsp_url_secret_ref, str):
             raise RecordingConfigurationError("rtsp_url_secret_ref must be a string or null")
         if source_type == "microphone":
-            if rtsp_url is not None or rtsp_url_secret_ref is not None:
+            if rtsp_url is not None or rtsp_url_secret_ref is not None or rtsp_username is not None or rtsp_password is not None:
                 raise RecordingConfigurationError("Microphone recordings cannot include RTSP fields")
             source_factory = self.audio_source_factory
             source_definition = {"source": "microphone", "device": device}
@@ -133,19 +135,29 @@ class RecordingService:
                 raise RecordingConfigurationError("RTSP recordings cannot include a microphone device")
             if (rtsp_url is None) == (rtsp_url_secret_ref is None):
                 raise RecordingConfigurationError("RTSP recordings require exactly one URL or secret reference")
+            username = None
+            has_password = False
+            safe_url = rtsp_url
             try:
-                source_factory = (
-                    create_rtsp_audio_source_factory(rtsp_url)
-                    if rtsp_url is not None
-                    else create_rtsp_secret_source_factory(rtsp_url_secret_ref)
-                )
+                if rtsp_url is not None:
+                    config = normalize_rtsp_source(rtsp_url, rtsp_username, rtsp_password)
+                    source_factory = config.audio_source_factory
+                    safe_url = config.rtsp_url
+                    username = config.rtsp_username
+                    has_password = config.rtsp_has_password
+                else:
+                    if rtsp_username is not None or rtsp_password not in (None, ""):
+                        raise ConfigurationError("Credential fields cannot be combined with an RTSP secret reference")
+                    source_factory = create_rtsp_secret_source_factory(rtsp_url_secret_ref)
             except ConfigurationError as exc:
                 raise RecordingConfigurationError(str(exc)) from None
             source_definition = {
                 "source": "rtsp",
                 "device": None,
-                "rtsp_url": rtsp_url,
+                "rtsp_url": safe_url,
                 "rtsp_url_secret_ref": rtsp_url_secret_ref,
+                "rtsp_username": username,
+                "rtsp_has_password": has_password,
             }
             # Tests and embedders can inject a source through the same production capture seam.
             if self.audio_source_factory is not None:

@@ -14,11 +14,13 @@ from speech_to_text.backend.profile_store import (
     ProfileNameConflictError,
     UnknownDestinationError,
 )
+from speech_to_text.backend.profile_credentials import ProfileCredentialError
 from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowUnavailableError,
     normalize_profile_decoding_options,
     prepare_rtsp_source,
+    prepare_rtsp_configuration,
 )
 from speech_to_text.workflows.transcribe_match_forward.destinations import (
     DestinationConfigurationError,
@@ -39,13 +41,21 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
             detail="device must be an exact non-empty microphone name or null",
         )
     if body.source_type == "microphone":
-        if body.rtsp_url is not None or body.rtsp_url_secret_ref is not None:
+        if body.rtsp_url is not None or body.rtsp_url_secret_ref is not None or body.rtsp_username is not None or body.rtsp_password is not None:
             raise HTTPException(status_code=422, detail="microphone profiles cannot include RTSP fields")
+        rtsp_url = rtsp_username = rtsp_password = None
+        rtsp_secret_ref = None
     else:
         if device is not None:
             raise HTTPException(status_code=422, detail="RTSP profiles cannot include device")
         try:
-            prepare_rtsp_source(body.rtsp_url, body.rtsp_url_secret_ref)
+            normalized_source = prepare_rtsp_configuration(
+                body.rtsp_url, body.rtsp_url_secret_ref, body.rtsp_username, body.rtsp_password
+            )
+            rtsp_url = normalized_source.rtsp_url
+            rtsp_username = normalized_source.rtsp_username
+            rtsp_password = normalized_source._password
+            rtsp_secret_ref = normalized_source.rtsp_url_secret_ref
         except WorkflowConfigurationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except WorkflowUnavailableError as exc:
@@ -79,8 +89,10 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
         "name": name,
         "source_type": body.source_type,
         "device": device,
-        "rtsp_url": body.rtsp_url,
-        "rtsp_url_secret_ref": body.rtsp_url_secret_ref,
+        "rtsp_url": rtsp_url,
+        "rtsp_url_secret_ref": rtsp_secret_ref,
+        "rtsp_username": rtsp_username,
+        "rtsp_password": rtsp_password,
         "execution_mode": body.execution_mode,
         "keywords": list(keywords),
         "silence_threshold": body.silence_threshold,
@@ -101,7 +113,7 @@ def _store_call(callback):
         ) from exc
     except UnknownDestinationError as exc:
         raise HTTPException(status_code=422, detail="unknown destination_id") from exc
-    except (OSError, sqlite3.Error) as exc:
+    except (OSError, sqlite3.Error, ProfileCredentialError) as exc:
         raise HTTPException(status_code=503, detail="profile database unavailable") from exc
 
 
@@ -161,16 +173,21 @@ def delete_profile(profile_id: str, request: Request):
 @router.post("/{profile_id}/runs", status_code=status.HTTP_202_ACCEPTED)
 def start_profile_run(profile_id: str, request: Request):
     runtime = request.app.state.backend_runtime
-    profile = _store_call(lambda: runtime.profile_store.get_profile(profile_id))
+    run_getter = getattr(runtime.profile_store, "get_profile_for_run", None)
+    profile = _store_call(lambda: run_getter(profile_id) if callable(run_getter) else runtime.profile_store.get_profile(profile_id))
     if profile is None:
         raise HTTPException(status_code=404, detail="profile not found")
     keywords = validate_keywords(runtime.workflow_service, profile["keywords"])
     source_factory = None
     if profile.get("source_type", "microphone") == "rtsp":
         try:
+            credentials = profile.pop("_credentials", {})
             source_factory = prepare_rtsp_source(
-                profile.get("rtsp_url"), profile.get("rtsp_url_secret_ref")
+                profile.get("rtsp_url"), profile.get("rtsp_url_secret_ref"),
+                profile.get("rtsp_username"), credentials.get("rtsp_password") if credentials else None,
             )
+        except ProfileCredentialError:
+            raise HTTPException(status_code=503, detail="Saved camera credentials are unavailable") from None
         except WorkflowConfigurationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except WorkflowUnavailableError as exc:
@@ -201,5 +218,7 @@ def start_profile_run(profile_id: str, request: Request):
         source_type=profile.get("source_type", "microphone"),
         rtsp_url=profile.get("rtsp_url"),
         rtsp_url_secret_ref=profile.get("rtsp_url_secret_ref"),
+        rtsp_username=profile.get("rtsp_username"),
+        rtsp_has_password=profile.get("rtsp_has_password", False),
         audio_source_factory=source_factory,
     )

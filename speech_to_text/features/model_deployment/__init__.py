@@ -24,8 +24,10 @@ from .recording import AudioRecording, start_audio_recording
 from .rtsp import (
     RTSPAudioSourceFactory,
     RTSPCaptureUnavailableError,
+    RTSPSourceConfiguration,
     create_rtsp_audio_source_factory,
     create_rtsp_secret_source_factory,
+    normalize_rtsp_source,
 )
 from .process_topology import (
     ProcessFlowGroup,
@@ -88,6 +90,7 @@ __all__ = [
     "ProcessSession",
     "RTSPAudioSourceFactory",
     "RTSPCaptureUnavailableError",
+    "RTSPSourceConfiguration",
     "TranscriptionSession",
     "list_available_models",
     "normalize_decoding_options",
@@ -101,4 +104,5 @@ __all__ = [
     "convert_audio_to_wav",
     "create_rtsp_audio_source_factory",
     "create_rtsp_secret_source_factory",
+    "normalize_rtsp_source",
 ]

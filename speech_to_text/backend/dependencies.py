@@ -57,6 +57,8 @@ class RunRecord:
     source_type: str = "microphone"
     rtsp_url: str | None = None
     rtsp_url_secret_ref: str | None = None
+    rtsp_username: str | None = None
+    rtsp_has_password: bool = False
     audio_source_factory: object | None = field(default=None, repr=False)
     execution_mode: str | None = None
     silence_threshold: float | None = None
@@ -385,6 +387,8 @@ def run_snapshot(record):
             "source_type": record.source_type,
             "rtsp_url": record.rtsp_url,
             "rtsp_url_secret_ref": record.rtsp_url_secret_ref,
+            "rtsp_username": record.rtsp_username,
+            "rtsp_has_password": record.rtsp_has_password,
             "execution_mode": record.execution_mode,
             "silence_threshold": record.silence_threshold,
             "decoding_options": deepcopy(record.decoding_options),
