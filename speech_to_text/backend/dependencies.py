@@ -18,6 +18,7 @@ from speech_to_text.workflows.transcribe_match_forward.destinations import (
     DestinationConfig,
     DestinationRegistry,
 )
+from speech_to_text.workflows.audio_recording import RecordingService
 
 
 class RunRegistryFullError(RuntimeError):
@@ -100,6 +101,7 @@ class BackendRuntime:
         profile_store=None,
         stress_workflow=None,
         destination_registry=None,
+        recording_service=None,
     ):
         if event_limit < 1 or max_runs < 1 or max_microphone_runs < 1:
             raise ValueError("event_limit and run limits must be positive integers")
@@ -134,6 +136,9 @@ class BackendRuntime:
             SQLiteProfileStore() if profile_store is None else profile_store
         )
         self.destination_registry = destination_registry or self._load_destination_registry()
+        self.recording_service = (
+            RecordingService() if recording_service is None else recording_service
+        )
         self.stress_workflow = (
             run_file_replay_stress if stress_workflow is None else stress_workflow
         )
@@ -341,9 +346,12 @@ class BackendRuntime:
         try:
             self.workflow_service.close()
         finally:
-            close = getattr(self.profile_store, "close", None)
-            if callable(close):
-                close()
+            try:
+                self.recording_service.close()
+            finally:
+                close = getattr(self.profile_store, "close", None)
+                if callable(close):
+                    close()
 
     def list_runs(self):
         with self.registry_lock:

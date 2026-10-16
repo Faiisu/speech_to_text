@@ -135,6 +135,16 @@ export type WorkflowEvent = {
   [key: string]: unknown
 }
 
+export type Recording = {
+  recording_id: string
+  status: 'recording' | 'completed' | 'failed' | string
+  duration_seconds: number
+  device: string | null
+  error: string | null
+  created_at: string
+  warnings?: string[]
+}
+
 export type StressChunk = {
   source_id?: string
   sequence?: number

@@ -64,6 +64,7 @@ class FakeTranscriptionService:
         self.transcription_gate = None
         self.microphone_workflow = None
         self.microphone_start_options = []
+        self.clip_calls = []
 
     def validate_keywords(self, keywords):
         if not keywords or any(
@@ -77,7 +78,12 @@ class FakeTranscriptionService:
             raise WorkflowConfigurationError("keywords must be unique")
         return tuple(word.strip() for word in keywords)
 
-    def transcribe_clip(self, clip, keywords, flow_config=None):
+    def transcribe_clip(
+        self, clip, keywords, flow_config=None, *, model=None, runtime=None
+    ):
+        self.clip_calls.append(
+            (dict(flow_config or {}), model, runtime)
+        )
         self.transcription_started.set()
         if self.transcription_gate is not None:
             self.transcription_gate.wait(timeout=10)
@@ -237,6 +243,72 @@ def test_repeated_multipart_keywords_create_async_run_with_events_and_status(api
         "completed",
     ]
     assert events.json()["workflow_id"] == workflow_id
+
+
+def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
+    client, service = api
+    form = [
+        ("keywords", (None, "alpha")),
+        ("model", (None, "tiny")),
+        ("runtime", (None, "ctranslate2")),
+        ("silence_threshold", (None, "0.2")),
+        ("decoding_options", (None, '{"beam_size": 3}')),
+        ("file", ("sample.wav", b"alpha alpha", "audio/wav")),
+    ]
+
+    created = client.post("/api/v1/transcriptions/clips", files=form)
+
+    assert created.status_code == 202
+    workflow_id = created.json()["workflow_id"]
+    assert created.json()["model"] == "tiny"
+    assert created.json()["runtime"] == "ctranslate2"
+    assert created.json()["silence_threshold"] == 0.2
+    assert created.json()["decoding_options"]["beam_size"] == 3
+    status = wait_for_status(client, workflow_id, "completed")
+    assert status["model"] == "tiny"
+    assert status["runtime"] == "ctranslate2"
+    assert status["silence_threshold"] == 0.2
+    assert status["decoding_options"]["beam_size"] == 3
+    assert service.clip_calls == [
+        (
+            {
+                "language": "th",
+                "source_id": workflow_id,
+                "silence_threshold": 0.2,
+                "decoding_options": {
+                    "beam_size": 3,
+                    "temperature": 0.0,
+                    "condition_on_previous_text": False,
+                    "no_repeat_ngram_size": 3,
+                    "repetition_penalty": 1.0,
+                },
+            },
+            "tiny",
+            "ctranslate2",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"silence_threshold": "1"},
+        {"silence_threshold": "nan"},
+        {"decoding_options": "[]"},
+        {"decoding_options": '{"beam_size": true}'},
+    ],
+)
+def test_invalid_clip_settings_fail_before_run_is_queued(api, settings):
+    client, service = api
+    form = [("keywords", (None, "alpha"))]
+    form.extend((name, (None, value)) for name, value in settings.items())
+    form.append(("file", ("sample.wav", b"alpha", "audio/wav")))
+
+    response = client.post("/api/v1/transcriptions/clips", files=form)
+
+    assert response.status_code == 422
+    assert client.get("/api/v1/transcriptions").json()["transcriptions"] == []
+    assert service.clip_calls == []
 
 
 @pytest.mark.parametrize(

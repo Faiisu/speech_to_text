@@ -27,6 +27,7 @@ The frontend Profile editor also saves those decoding options for microphone run
 | `SPEECH_TO_TEXT_RUNTIME` | Feature 01 runtime default | Backend workflow service runtime, fixed when its lazy model handle is loaded. |
 | `SPEECH_TO_TEXT_PRECISION` | Feature 01 precision default | Backend workflow service precision, fixed when its lazy model handle is loaded. |
 | `SPEECH_TO_TEXT_PROFILE_DB` | `~/.local/share/speech_to_text/profiles.sqlite3` | SQLite file for saved microphone workflow profiles. Its parent directory is created when the backend loads its profile/destination store. |
+| `SPEECH_TO_TEXT_RECORDINGS_DIR` | `data/tuning-recordings` under the current working directory; `/data/tuning-recordings` in the application image | Persistent WAV recordings and metadata for the [model tuning workflow](../.scratch/model-tuning/spec.md). |
 
 No credentials or database server are required to call Feature 01 locally. The backend initializes the SQLite profile/destination store while loading saved destinations; mount its parent directory as persistent storage when running in a container. The previous Control Center and its Mac host microphone bridge are not included in the current application.
 

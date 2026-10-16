@@ -598,6 +598,68 @@ def test_service_defaults_to_shared_microphone_mode(monkeypatch):
     assert service_instance._model_handles == {}
 
 
+def test_service_clip_uses_requested_model_runtime_and_flow_snapshot(monkeypatch):
+    from speech_to_text.workflows.transcribe_match_forward import service
+
+    loaded = []
+    forwarded = []
+
+    class Handle:
+        def close(self):
+            pass
+
+    handle = Handle()
+
+    def load(config):
+        loaded.append(dict(config))
+        return handle
+
+    def transcribe(clip, model_handle, forwarder, matching, flow_config, **kwargs):
+        forwarded.append((clip, model_handle, flow_config, kwargs))
+        return workflow.PipelineResult("alpha", matching.keywords, "clip-1", None)
+
+    monkeypatch.setattr(service, "load_model", load)
+    monkeypatch.setattr(service, "transcribe_clip_and_forward", transcribe)
+    instance = service.TranscriptionService()
+
+    result = instance.transcribe_clip(
+        "clip.wav",
+        ["alpha"],
+        {
+            "language": "th",
+            "source_id": "clip-1",
+            "silence_threshold": 0.2,
+            "decoding_options": {"beam_size": 3},
+        },
+        model="tiny",
+        runtime="ctranslate2",
+    )
+
+    assert result.transcript == "alpha"
+    assert loaded == [
+        {
+            "model": "tiny",
+            "runtime": "ctranslate2",
+            "precision": "int8",
+            "queue_capacity": 6,
+            "enqueue_timeout_seconds": 30.0,
+        }
+    ]
+    assert forwarded == [
+        (
+            "clip.wav",
+            handle,
+            {
+                "language": "th",
+                "source_id": "clip-1",
+                "silence_threshold": 0.2,
+                "decoding_options": {"beam_size": 3},
+            },
+            {"measurement_callback": None},
+        )
+    ]
+
+
 @pytest.mark.parametrize("execution_mode", ["processes", []])
 def test_service_rejects_unknown_microphone_execution_mode(execution_mode):
     from speech_to_text.workflows.transcribe_match_forward import service

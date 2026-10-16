@@ -60,6 +60,8 @@ Open the Vite URL printed in the terminal (normally `http://localhost:5173`). Th
 
 To build frontend assets, run `npm run build` from `speech_to_text/frontend/`. The Vite development server is the local preview path. For production hosting on the UBX-330M, follow the [deployment guide](deployment.md).
 
+Use **Model tuning** at `/model-tuning` to record a sample from the backend host's microphone, download or play its WAV, and compare transcription runs on the same audio with different decoder settings. See the [model tuning contract](../.scratch/model-tuning/spec.md) for recording limits, saved files, and result lifetime.
+
 ### Start both services on macOS
 
 Install `uv`, Node.js, and npm, then run this from the repository root:

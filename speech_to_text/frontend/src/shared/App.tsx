@@ -5,6 +5,7 @@ import ProfileEditor from '../features/profiles/ProfileEditor'
 import RunDetail from '../features/runs/RunDetail'
 import StressTests from '../features/stress-tests/StressTests'
 import Destinations from '../features/destinations/Destinations'
+import ModelTuning from '../features/model-tuning/ModelTuning'
 
 function Shell() {
   return <div className="app-shell">
@@ -15,6 +16,7 @@ function Shell() {
         <NavLink to="/" end><span className="nav-icon">◫</span>Overview</NavLink>
         <NavLink to="/profiles"><span className="nav-icon">◉</span>Microphones & profiles</NavLink>
         <NavLink to="/destinations"><span className="nav-icon">↗</span>Destinations</NavLink>
+        <NavLink to="/model-tuning"><span className="nav-icon">♫</span>Model tuning</NavLink>
         <NavLink to="/stress-tests"><span className="nav-icon">⌁</span>Stress test</NavLink>
       </nav>
       <div className="sidebar-bottom"><div className="sidebar-note"><span className="tiny-signal" />API v1 <span>LOCAL</span></div><p>Every word<br />starts here</p></div>
@@ -27,6 +29,7 @@ function Shell() {
         <Route path="/profiles/new" element={<ProfileEditor />} />
         <Route path="/profiles/:profileId" element={<ProfileEditor />} />
         <Route path="/destinations" element={<Destinations />} />
+        <Route path="/model-tuning" element={<ModelTuning />} />
         <Route path="/runs/:workflowId" element={<RunDetail />} />
         <Route path="/stress-tests" element={<StressTests />} />
         <Route path="*" element={<NotFound />} />

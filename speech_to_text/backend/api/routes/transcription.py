@@ -1,5 +1,7 @@
 """Transcription workflow routes and buffered monitoring endpoints."""
 
+import json
+import math
 import tempfile
 import threading
 import uuid
@@ -26,6 +28,11 @@ from speech_to_text.workflows.transcribe_match_forward.destinations import (
     DestinationConfigurationError,
     DestinationUnavailableError,
 )
+from speech_to_text.workflows.transcribe_match_forward import (
+    WorkflowConfigurationError,
+    WorkflowUnavailableError,
+    normalize_profile_decoding_options,
+)
 
 router = APIRouter(prefix="/transcriptions")
 
@@ -46,7 +53,9 @@ def _accepts_keyword_argument(callable_, name):
     )
 
 
-def _clip_worker(runtime, record, clip, forwarder=None):
+def _clip_worker(
+    runtime, record, clip, flow_config, model, selected_runtime, forwarder=None
+):
     with record.lock:
         record.status = "running"
     runtime.append_event(record, {"type": "started", "workflow_id": record.workflow_id})
@@ -62,10 +71,14 @@ def _clip_worker(runtime, record, clip, forwarder=None):
             transcription_options["measurement_callback"] = record_measurement
         if _accepts_keyword_argument(transcribe_clip, "forwarder"):
             transcription_options["forwarder"] = forwarder
+        if _accepts_keyword_argument(transcribe_clip, "model"):
+            transcription_options["model"] = model
+        if _accepts_keyword_argument(transcribe_clip, "runtime"):
+            transcription_options["runtime"] = selected_runtime
         result = transcribe_clip(
             clip,
             record.keywords,
-            {"language": "th", "source_id": record.workflow_id},
+            flow_config,
             **transcription_options,
         )
         matches = [
@@ -184,6 +197,10 @@ async def transcribe_clip(
     file: UploadFile = File(...),
     keywords: list[str] = Form(...),
     destination_id: str | None = Form(default=None),
+    model: str | None = Form(default=None),
+    runtime_name: str | None = Form(default=None, alias="runtime"),
+    silence_threshold: float | None = Form(default=None),
+    decoding_options: str | None = Form(default=None),
 ):
     clip_path = None
     runtime = request.app.state.backend_runtime
@@ -192,6 +209,62 @@ async def transcribe_clip(
         if not file.filename or not file.filename.lower().endswith(".wav"):
             raise HTTPException(status_code=422, detail="file must be a WAV file")
         validated_keywords = validate_keywords(runtime.workflow_service, keywords)
+        service = runtime.workflow_service
+        try:
+            effective_model = (
+                getattr(service, "default_model", "turbo")
+                if model is None
+                else model
+            )
+            effective_runtime = (
+                getattr(service, "default_runtime", "openvino-gpu")
+                if runtime_name is None
+                else runtime_name
+            )
+            resolve_model_config = getattr(service, "resolve_model_config", None)
+            if callable(resolve_model_config):
+                resolved = resolve_model_config(effective_model, effective_runtime)
+                effective_model = resolved["model"]
+                effective_runtime = resolved["runtime"]
+            validate_model_runtime = getattr(service, "validate_model_runtime", None)
+            if callable(validate_model_runtime):
+                validate_model_runtime(effective_model, effective_runtime)
+            if decoding_options is None:
+                submitted_decoding_options = None
+            else:
+                try:
+                    submitted_decoding_options = json.loads(decoding_options)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    raise WorkflowConfigurationError(
+                        "decoding_options must be a JSON object"
+                    ) from exc
+                if not isinstance(submitted_decoding_options, dict):
+                    raise WorkflowConfigurationError(
+                        "decoding_options must be a JSON object"
+                    )
+            validate_decoding_options = getattr(
+                service, "validate_decoding_options", None
+            )
+            effective_decoding_options = (
+                validate_decoding_options(submitted_decoding_options)
+                if callable(validate_decoding_options)
+                else normalize_profile_decoding_options(submitted_decoding_options)
+            )
+            effective_silence_threshold = (
+                0.05 if silence_threshold is None else silence_threshold
+            )
+            if (
+                isinstance(effective_silence_threshold, bool)
+                or not math.isfinite(effective_silence_threshold)
+                or not 0 <= effective_silence_threshold < 1
+            ):
+                raise WorkflowConfigurationError(
+                    "silence_threshold must be finite and in [0, 1)"
+                )
+        except WorkflowConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except WorkflowUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as clip_file:
             clip_path = clip_file.name
             has_content = False
@@ -213,6 +286,10 @@ async def transcribe_clip(
         "clip",
         "queued",
         validated_keywords,
+        silence_threshold=effective_silence_threshold,
+        decoding_options=dict(effective_decoding_options),
+        model=effective_model,
+        runtime=effective_runtime,
         destination_id=destination_id,
         delivery={
             "status": "pending" if forwarder is not None else "disabled",
@@ -235,7 +312,22 @@ async def transcribe_clip(
     runtime.append_event(record, {"type": "queued", "workflow_id": workflow_id})
     try:
         with record.lock:
-            runtime.executor.submit(_clip_worker, runtime, record, clip_path, forwarder)
+            flow_config = {
+                "language": "th",
+                "source_id": workflow_id,
+                "silence_threshold": effective_silence_threshold,
+                "decoding_options": dict(effective_decoding_options),
+            }
+            runtime.executor.submit(
+                _clip_worker,
+                runtime,
+                record,
+                clip_path,
+                flow_config,
+                effective_model,
+                effective_runtime,
+                forwarder,
+            )
             record.first_queued_at = _utc_now()
     except Exception:
         runtime.remove_run(workflow_id)
@@ -246,6 +338,10 @@ async def transcribe_clip(
         "status": "queued",
         "first_queued_at": record.first_queued_at,
         "last_response_at": record.last_response_at,
+        "model": effective_model,
+        "runtime": effective_runtime,
+        "silence_threshold": effective_silence_threshold,
+        "decoding_options": dict(effective_decoding_options),
     }
 
 

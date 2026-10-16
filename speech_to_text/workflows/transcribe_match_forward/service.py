@@ -345,13 +345,17 @@ class TranscriptionService:
         keywords,
         flow_config=None,
         *,
+        model=None,
+        runtime=None,
         measurement_callback=None,
         forwarder=None,
     ):
         """Transcribe and match one clip, with optional configured output."""
         matching = self._matching_config(keywords)
         try:
-            lease = self._acquire_model_config(self._effective_model_config())
+            lease = self._acquire_model_config(
+                self._effective_model_config(model, runtime)
+            )
             return transcribe_clip_and_forward(
                 clip,
                 lease.handle,

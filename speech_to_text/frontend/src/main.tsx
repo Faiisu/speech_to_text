@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './shared/App'
 import './shared/styles.css'
+import './features/model-tuning/model-tuning.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

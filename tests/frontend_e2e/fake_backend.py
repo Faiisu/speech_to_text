@@ -10,9 +10,28 @@ import threading
 import time
 from pathlib import Path
 
+import numpy as np
+
 from speech_to_text.backend.app import create_app
 from speech_to_text.backend.dependencies import BackendRuntime
 from speech_to_text.backend.profile_store import SQLiteProfileStore
+from speech_to_text.workflows.audio_recording import RecordingService
+from speech_to_text.features.model_deployment import load_model
+from speech_to_text.workflows.transcribe_match_forward import TranscriptionService
+from speech_to_text.workflows.transcribe_match_forward import service as transcription_service_module
+
+
+class FakeDecoderRuntime:
+    def transcribe(self, audio, *, language, decoding_options):
+        return "สวัสดีครับ"
+
+    def close(self):
+        pass
+
+
+transcription_service_module.load_model = lambda config: load_model(
+    config, runtime_factory=lambda _config: FakeDecoderRuntime()
+)
 
 
 _database_directory = Path(tempfile.mkdtemp(prefix="speech-to-text-e2e-"))
@@ -60,20 +79,22 @@ class FakeMicrophoneWorkflow:
             raise TimeoutError
 
 
-class FakeWorkflowService:
-    default_model = "turbo"
-    default_runtime = "openvino-gpu"
+class FakeWorkflowService(TranscriptionService):
 
     @staticmethod
     def runtime_options():
         return [
-            {"key": key, "compatible": True, "ready": key == "openvino-gpu", "precision_options": ["int8"], "reason": None if key == "openvino-gpu" else "Runtime dependencies are unavailable"}
+            {"key": key, "compatible": True, "ready": key in {"openvino-gpu", "openvino-cpu"}, "precision_options": ["int8"], "reason": None if key in {"openvino-gpu", "openvino-cpu"} else "Runtime dependencies are unavailable"}
             for key in ("openvino-gpu", "openvino-cpu", "ctranslate2")
         ]
+
+    def __init__(self):
+        super().__init__()
 
     def list_models(self):
         return {
             "default_model": self.default_model,
+            "default_runtime": self.default_runtime,
             "models": [
                 {"key": key, "display_name": key.title(), "installed": True, "ready": True}
                 | {"runtimes": self.runtime_options()}
@@ -109,12 +130,31 @@ class FakeWorkflowService:
     def start_microphone(self, device, keywords, flow_config, *, execution_mode, model=None, runtime=None):
         return FakeMicrophoneWorkflow(flow_config["source_id"])
 
-    def close(self):
+class FakeRecordingAudioSource:
+    sample_rate = 16000
+    channels = 1
+    device_name = "E2E Studio Mic"
+
+    def __init__(self, *, on_audio, **_):
+        self.on_audio = on_audio
+
+    def start(self):
+        self.on_audio(np.full(16000, 0.5, dtype=np.float32))
+
+    def stop(self):
         pass
+
+
+recordings_directory = _database_directory / "recordings"
+recording_service = RecordingService(
+    output_directory=recordings_directory,
+    audio_source_factory=FakeRecordingAudioSource,
+)
 
 
 runtime = BackendRuntime(
     workflow_service=FakeWorkflowService(),
     profile_store=SQLiteProfileStore(_database_directory / "profiles.sqlite3"),
+    recording_service=recording_service,
 )
 app = create_app(runtime=runtime)

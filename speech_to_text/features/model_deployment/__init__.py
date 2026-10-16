@@ -18,6 +18,7 @@ from .errors import (
 )
 from .model import ModelHandle, load_model, transcribe_clip
 from .replay_source import PacedWavSource
+from .recording import AudioRecording, start_audio_recording
 from .process_topology import (
     ProcessFlowGroup,
     ProcessSession,
@@ -67,6 +68,7 @@ def normalize_decoding_options(value=None):
 
 __all__ = [
     "AudioInputError",
+    "AudioRecording",
     "ChunkInferenceWarning",
     "ConfigurationError",
     "ModelClosedError",
@@ -81,6 +83,7 @@ __all__ = [
     "list_microphone_devices",
     "load_model",
     "start_microphone_flow",
+    "start_audio_recording",
     "start_multiprocess_microphone_flows",
     "transcribe_clip",
 ]

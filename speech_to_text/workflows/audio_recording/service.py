@@ -1,0 +1,213 @@
+"""Persist and manage bounded host microphone recordings."""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+from speech_to_text.features.model_deployment import AudioInputError, start_audio_recording
+
+
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class RecordingConflictError(RuntimeError):
+    """A requested operation conflicts with the active recording."""
+
+
+class RecordingUnavailableError(RuntimeError):
+    """Microphone capture or recording storage is unavailable."""
+
+
+class RecordingService:
+    def __init__(self, *, output_directory=None, audio_source_factory=None, max_seconds=120):
+        self.output_directory = Path(
+            output_directory
+            or os.environ.get("SPEECH_TO_TEXT_RECORDINGS_DIR", "data/tuning-recordings")
+        ).expanduser().resolve()
+        self.audio_source_factory = audio_source_factory
+        self.max_seconds = max_seconds
+        self._lock = threading.RLock()
+        self._records = {}
+        self._active_id = None
+        self._load_saved()
+
+    def _paths(self, recording_id):
+        key = uuid.UUID(recording_id).hex
+        if key != recording_id:
+            raise ValueError("Invalid recording ID")
+        return self.output_directory / f"{key}.wav", self.output_directory / f"{key}.json"
+
+    def _load_saved(self):
+        if not self.output_directory.is_dir():
+            return
+        for manifest_path in self.output_directory.glob("*.json"):
+            try:
+                recording_id = manifest_path.stem
+                wav_path, safe_manifest = self._paths(recording_id)
+                if safe_manifest != manifest_path:
+                    continue
+                record = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if not isinstance(record, dict):
+                    continue
+                if not isinstance(record.get("created_at"), str):
+                    continue
+                if not isinstance(record.get("duration_seconds"), (int, float)):
+                    continue
+                if not isinstance(record.get("warnings", []), list):
+                    continue
+                if record.get("recording_id") != recording_id or record.get("status") not in {"completed", "failed"}:
+                    continue
+                if not wav_path.is_file():
+                    continue
+                record["_session"] = None
+                self._records[recording_id] = record
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+
+    def _save_manifest(self, record):
+        _, manifest_path = self._paths(record["recording_id"])
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {key: value for key, value in record.items() if not key.startswith("_")}
+        temp_path = manifest_path.with_suffix(".json.tmp")
+        temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        temp_path.replace(manifest_path)
+
+    def start(self, device=None):
+        with self._lock:
+            if self._active_id is not None:
+                raise RecordingConflictError("A recording is already active")
+            recording_id = uuid.uuid4().hex
+            audio_path, _ = self._paths(recording_id)
+            record = {
+                "recording_id": recording_id,
+                "status": "recording",
+                "duration_seconds": 0.0,
+                "device": device,
+                "error": None,
+                "warnings": [],
+                "created_at": _utc_now(),
+            }
+            # Ensure storage errors fail the request before opening a host device.
+            try:
+                self.output_directory.mkdir(parents=True, exist_ok=True)
+                session = start_audio_recording(
+                    device,
+                    audio_path,
+                    max_seconds=self.max_seconds,
+                    audio_source_factory=self.audio_source_factory,
+                )
+            except (AudioInputError, OSError) as exc:
+                raise RecordingUnavailableError("Unable to start microphone recording") from exc
+            record["_session"] = session
+            self._records[recording_id] = record
+            self._active_id = recording_id
+            try:
+                self._save_manifest(record)
+            except Exception:
+                self._records.pop(recording_id, None)
+                self._active_id = None
+                session.stop()
+                raise RecordingUnavailableError("Unable to save recording metadata") from None
+            threading.Thread(target=self._watch, args=(recording_id,), daemon=True).start()
+            return self.snapshot(recording_id)
+
+    def _refresh(self, recording_id):
+        record = self._records.get(recording_id)
+        if record is None:
+            return None
+        session = record.get("_session")
+        if session is None:
+            return record
+        was_recording = record["status"] == "recording"
+        record.update(session.snapshot())
+        if was_recording and record["status"] != "recording":
+            if self._active_id == recording_id:
+                self._active_id = None
+            record["_session"] = None
+            try:
+                self._save_manifest(record)
+            except OSError:
+                record["status"] = "failed"
+                record["error"] = "Unable to persist recording metadata"
+        return record
+
+    def _watch(self, recording_id):
+        with self._lock:
+            record = self._records.get(recording_id)
+            session = record.get("_session") if record else None
+        if session is not None:
+            session.wait()
+            with self._lock:
+                self._refresh(recording_id)
+
+    def snapshot(self, recording_id):
+        with self._lock:
+            record = self._refresh(recording_id)
+            if record is None:
+                return None
+            return {key: value for key, value in record.items() if not key.startswith("_")}
+
+    def get(self, recording_id):
+        with self._lock:
+            if recording_id not in self._records:
+                return None
+        return self.snapshot(recording_id)
+
+    def list(self):
+        with self._lock:
+            snapshots = [self.snapshot(item) for item in self._records]
+            return sorted(snapshots, key=lambda item: (item["created_at"], item["recording_id"]), reverse=True)
+
+    def stop(self, recording_id):
+        with self._lock:
+            if recording_id not in self._records:
+                return None
+            session = self._records[recording_id].get("_session")
+        if session is not None:
+            session.stop()
+        return self.snapshot(recording_id)
+
+    def audio_path(self, recording_id):
+        with self._lock:
+            record = self._records.get(recording_id)
+            if record is None:
+                return None
+            self._refresh(recording_id)
+            if record is None:
+                return None
+            if record["status"] == "recording":
+                raise RecordingConflictError("Recording is still active")
+            wav_path, _ = self._paths(recording_id)
+            try:
+                return wav_path if wav_path.is_file() else None
+            except OSError as exc:
+                raise RecordingUnavailableError("Unable to access recording audio") from exc
+
+    def delete(self, recording_id):
+        with self._lock:
+            record = self._records.get(recording_id)
+            if record is None:
+                return False
+            self._refresh(recording_id)
+            if record["status"] == "recording":
+                raise RecordingConflictError("Active recordings cannot be deleted")
+            wav_path, manifest_path = self._paths(recording_id)
+            try:
+                for path in (wav_path, manifest_path):
+                    path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise RecordingUnavailableError("Unable to delete recording") from exc
+            del self._records[recording_id]
+            return True
+
+    def close(self):
+        with self._lock:
+            active_id = self._active_id
+        if active_id is not None:
+            self.stop(active_id)

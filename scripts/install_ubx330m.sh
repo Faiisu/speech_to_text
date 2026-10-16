@@ -579,6 +579,7 @@ services:
       SPEECH_TO_TEXT_RUNTIME: openvino-gpu
       SPEECH_TO_TEXT_PRECISION: source
       SPEECH_TO_TEXT_PROFILE_DB: /data/profiles.sqlite3
+      SPEECH_TO_TEXT_RECORDINGS_DIR: /data/tuning-recordings
       SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS: "0.0.0.0/0,::/0"
     restart: unless-stopped
 networks:
