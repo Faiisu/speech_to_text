@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import threading
 
-from .errors import AudioInputError
+from .errors import AudioInputDeviceError, AudioInputError
 
 
 class AudioInputOverflow(AudioInputError):
     """Recoverable PortAudio input overflow; the current callback remains usable."""
+
+    recoverable = True
 
 
 def list_input_devices():
@@ -65,6 +67,7 @@ class SoundDeviceSource:
             if device is None:
                 info = sd.query_devices(kind="input")
                 self._device = None
+                self.device_name = info.get("name")
             elif isinstance(device, str) and device.strip():
                 matches = [
                     (index, info)
@@ -73,16 +76,17 @@ class SoundDeviceSource:
                     and info.get("name") == device
                 ]
                 if not matches:
-                    raise AudioInputError(
+                    raise AudioInputDeviceError(
                         f"No input microphone has the exact device name {device!r}"
                     )
                 if len(matches) > 1:
-                    raise AudioInputError(
+                    raise AudioInputDeviceError(
                         f"Microphone device name {device!r} is ambiguous; device names must uniquely identify the input"
                     )
                 self._device, info = matches[0]
+                self.device_name = info.get("name")
             else:
-                raise AudioInputError(
+                raise AudioInputDeviceError(
                     "device must be omitted or a stable microphone device name"
                 )
             self.sample_rate = round(info["default_samplerate"])
@@ -148,6 +152,18 @@ class SoundDeviceSource:
                 stream.stop()
             finally:
                 stream.close()
+
+
+def create_microphone_source(device=None, *, on_audio, on_error):
+    """Create a host microphone source without loading a model.
+
+    The caller owns ``start()`` and ``stop()``. ``device`` is null for the OS
+    default input or an exact stable input name. The source forwards transient
+    float32 frames only to ``on_audio`` and never stores them.
+    """
+    if not callable(on_audio) or not callable(on_error):
+        raise TypeError("on_audio and on_error must be callable")
+    return SoundDeviceSource(device=device, on_audio=on_audio, on_error=on_error)
 
 
 def _input_overflow_only(status):

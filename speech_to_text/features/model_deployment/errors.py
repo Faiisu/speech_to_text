@@ -17,6 +17,10 @@ class AudioInputError(ValueError):
     """An audio input cannot be decoded or normalized."""
 
 
+class AudioInputDeviceError(AudioInputError):
+    """A requested microphone device is missing, ambiguous, or invalid."""
+
+
 class AudioCodecUnavailableError(RuntimeError):
     """Optional compressed-audio decoding support is unavailable."""
 

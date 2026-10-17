@@ -9,9 +9,10 @@ process and reuse that handle for clips or microphone flows.
 from .audio import convert_audio_to_wav, validate_wav
 from .catalog import list_models
 from .config import flow_config
-from .capture import list_input_devices
+from .capture import create_microphone_source, list_input_devices
 from .errors import (
     AudioCodecUnavailableError,
+    AudioInputDeviceError,
     AudioInputError,
     ChunkInferenceWarning,
     ConfigurationError,
@@ -86,6 +87,7 @@ def normalize_decoding_options(value=None):
 
 __all__ = [
     "AudioInputError",
+    "AudioInputDeviceError",
     "AudioCodecUnavailableError",
     "AudioRecording",
     "ChunkInferenceWarning",
@@ -109,6 +111,7 @@ __all__ = [
     "normalize_decoding_options",
     "prepare_huggingface_model",
     "list_microphone_devices",
+    "create_microphone_source",
     "load_model",
     "start_microphone_flow",
     "start_audio_recording",

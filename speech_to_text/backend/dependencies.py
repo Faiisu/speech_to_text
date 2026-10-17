@@ -19,6 +19,7 @@ from speech_to_text.workflows.transcribe_match_forward.destinations import (
     DestinationRegistry,
 )
 from speech_to_text.workflows.audio_recording import RecordingService
+from speech_to_text.workflows.audio_input_test import AudioInputTestService
 
 
 class RunRegistryFullError(RuntimeError):
@@ -109,6 +110,7 @@ class BackendRuntime:
         stress_workflow=None,
         destination_registry=None,
         recording_service=None,
+        audio_input_test_service=None,
         model_management_service=None,
     ):
         if event_limit < 1 or max_runs < 1 or max_microphone_runs < 1:
@@ -146,6 +148,11 @@ class BackendRuntime:
         self.destination_registry = destination_registry or self._load_destination_registry()
         self.recording_service = (
             RecordingService() if recording_service is None else recording_service
+        )
+        self.audio_input_test_service = (
+            AudioInputTestService()
+            if audio_input_test_service is None
+            else audio_input_test_service
         )
         self.stress_workflow = (
             run_file_replay_stress if stress_workflow is None else stress_workflow
@@ -311,6 +318,7 @@ class BackendRuntime:
             return item
 
     def shutdown(self):
+        self.audio_input_test_service.close()
         with self.registry_lock:
             records = [record for record in self.runs.values() if record.kind == "microphone"]
             self.shutdown_event.set()

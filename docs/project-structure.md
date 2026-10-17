@@ -28,6 +28,7 @@ This document is the source of truth for where project files belong. Follow it w
 │   │   └── word_matching/
 │   └── workflows/              # Use cases and their output behavior
 │       ├── audio_recording/
+│       ├── audio_input_test/      # Bounded no-model microphone signal diagnostics
 │       ├── transcribe_match_forward/
 │       ├── file_replay_stress/
 │       └── model_management/     # Bounded download/conversion jobs and preparation lifecycle
@@ -90,7 +91,7 @@ speech_to_text/backend/
 
 Frontend code calls the backend API. Backend routes validate requests and call workflow functions. A workflow calls features, receives their results, and owns the use case's output choices: it returns results to the backend and can send them to another backend or system. The backend maps returned results to frontend responses or streams. Feature logic stays under `features/`; use-case orchestration and delivery behavior stay under `workflows/`.
 
-The model-deployment feature owns Hugging Face inspection, source downloads, runtime conversion, staged validation, and artifact publication in `model_deployment/model_management.py`. The model-management workflow owns bounded background jobs under `workflows/model_management/`; `backend/api/routes/models.py` and `schemas/models.py` own HTTP transport. The frontend model page lives under `src/features/models/`. Sources live under ignored `models/sources/<model_key>/`, converted weights use the existing precision-specific runtime directories, and `models/models.local.json` records repository aliases. Tests follow the existing feature/workflow/backend/frontend boundaries. The [model-management contract](../.scratch/model-management/spec.md) owns configuration, job state, credentials, and verification behavior.
+The model-deployment feature owns Hugging Face inspection, source downloads, runtime conversion, staged validation, and artifact publication in `model_deployment/model_management.py`. The model-management workflow owns bounded background jobs under `workflows/model_management/`; `backend/api/routes/models.py` and `schemas/models.py` own HTTP transport. The frontend model page lives under `src/features/models/`; the live audio operator page lives under `src/features/live-audio/` and uses the no-model microphone diagnostic API. Sources live under ignored `models/sources/<model_key>/`, converted weights use the existing precision-specific runtime directories, and `models/models.local.json` records repository aliases. Tests follow the existing feature/workflow/backend/frontend boundaries. The [model-management contract](../.scratch/model-management/spec.md) owns configuration, job state, credentials, and verification behavior.
 
 The audio-recording workflow owns generated IDs, retained WAV metadata, and the storage lifecycle around host capture and audio uploads. The model-deployment feature owns host capture, WAV validation, and compressed-audio conversion. Recordings live under ignored `data/` storage. Its contract is maintained in the [model-tuning specification](../.scratch/model-tuning/spec.md).
 
@@ -99,6 +100,8 @@ The model-deployment feature also owns IP camera audio capture in `model_deploym
 `backend/profile_credentials.py` owns saved camera password encryption and the private `<profile database filename>.key` file beside the configured SQLite database. `profile_store.py` persists encrypted passwords and exposes sanitized profile responses plus a private workflow-start credential boundary. That key is runtime deployment state in the existing persistent profile directory, not application source. The [credential contract](../.scratch/ipcam-rtsp/spec.md#saved-profiles) owns key lifecycle and response/edit behavior.
 
 The transcribe-match-forward workflow owns destination configuration and validation in `destinations.py`, and outbound JSON/HTTP transport in `http_output.py` and MQTT publication in `mqtt_output.py`. The backend's destination routes manage stored definitions through the existing profile store and call the workflow's public sender for synthetic tests. Destination credentials remain deployment-managed references, not database secret values. The [workflow output specification](../.scratch/transcript-matching-forwarding/spec.md) owns their configuration contract.
+
+The audio-input-test workflow owns one bounded, process-local microphone signal diagnostic session and its transient RMS/peak/frame measurements. It opens a source through Feature 01's model-free microphone-source boundary, retains only the latest status, and never stores audio. The microphone routes expose its start/status/stop API. The [live audio specification](../.scratch/live-audio/spec.md) owns the duration and lifecycle contract; the [backend API specification](../.scratch/backend-transcription-api/spec.md#microphone-input-test-endpoints) owns the HTTP response shape.
 
 The canonical outgoing payload schema is packaged as `workflows/transcribe_match_forward/match_results_v1.schema.json`. Browser-only receiver fixtures belong under `tests/frontend_e2e/`, including `fake_receiver.py`; browser assertions remain in `frontend/e2e/`.
 

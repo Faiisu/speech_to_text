@@ -1,4 +1,4 @@
-import type { Destination, DestinationDefinition, DestinationSummary, Microphone, ModelChoice, ModelDeletionPlan, ModelDeletionResult, ModelInspection, ModelJob, Profile, ProfileDefinition, Recording, Transcription, WorkflowEvent } from './types'
+import type { Destination, DestinationDefinition, DestinationSummary, Microphone, MicrophoneTest, ModelChoice, ModelDeletionPlan, ModelDeletionResult, ModelInspection, ModelJob, Profile, ProfileDefinition, Recording, Transcription, WorkflowEvent } from './types'
 
 const API_ROOT = '/api/v1'
 
@@ -34,6 +34,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   microphones: async () => (await request<{ devices: Microphone[] }>('/microphones')).devices,
+  startMicrophoneTest: (device: string | null) => request<MicrophoneTest>('/microphones/test', { method: 'POST', body: JSON.stringify({ device }) }),
+  microphoneTest: (id: string) => request<MicrophoneTest>(`/microphones/test/${encodeURIComponent(id)}`),
+  stopMicrophoneTest: (id: string) => request<MicrophoneTest>(`/microphones/test/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
   models: () => request<{ default_model: string; default_runtime: string; models: ModelChoice[] }>('/models'),
   inspectModel: (input: { repository: string; revision?: string; token?: string }) => request<ModelInspection>('/models/inspect', { method: 'POST', body: JSON.stringify(input) }),
   modelJobs: () => request<{ jobs: ModelJob[] }>('/models/jobs'),

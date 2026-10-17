@@ -1,28 +1,21 @@
-# FIFO Matcher Output
-
-The Function node emits one Node-RED message for each matched pair of batches. The output topic is `merged/v1/report`.
-
 ## Data structure
 
 ```text
-Output message
-├── topic: "merged/v1/report"
-└── payload
-    ├── vision_analytics              # Complete Nara payload
-    │   └── data: array               # Required by the matcher
-    └── speech_analytics              # Complete EchoDesk payload
-        ├── transcript: array        # Required by the matcher
-        └── matches: array           # Required by the matcher
+JSON message
+├── vision_analytics            
+│   └── data: array             
+└── speech_analytics            
+    ├── transcript: array       
+    └── matches: array          
 ```
 
 | Path | Type | Meaning |
 | --- | --- | --- |
-| `msg.topic` | string | Always `merged/v1/report`. |
-| `msg.payload.vision_analytics` | object | Complete Nara input payload, passed through unchanged. It contains `data` as an array. |
-| `msg.payload.vision_analytics.data` | array | Nara report data. The matcher does not validate the array items. |
-| `msg.payload.speech_analytics` | object | Complete EchoDesk input payload, passed through unchanged. It contains `transcript` and `matches` as arrays. |
-| `msg.payload.speech_analytics.transcript` | array | EchoDesk transcript data. |
-| `msg.payload.speech_analytics.matches` | array | EchoDesk match data. |
+| `vision_analytics` | object | vision payload, passed through unchanged. It contains `data` as an array. |
+| `vision_analytics.data` | array | vision report data. The matcher does not validate the array items. |
+| `speech_analytics` | object | speech to text input payload, passed through unchanged. It contains `transcript` and `matches` as arrays. |
+| `speech_analytics.transcript` | array | speech to text transcript data. |
+| `speech_analytics.matches` | array | speech to text match data. |
 
 ## JSON example
 
@@ -32,13 +25,26 @@ Output message
   "payload": {
     "vision_analytics": {
       "data": [
-        {"camera_id": "cam-01", "objects": [{"label": "person", "count": 1}]}
+        {
+          "camera_id": "cam-01", 
+          "objects": [
+            {"label": "person", "count": 1}
+          ]
+        }
       ],
       "reported_at": "2026-10-16T09:30:00Z"
     },
     "speech_analytics": {
-      "transcript": ["พบคนเดินเข้าประตู"],
-      "matches": [{"keyword": "ประตู", "count": 1}],
+      "transcript": [
+        "ซับเวย์สวัสดีค่ะ รับอะไรดีคะ",
+        "จ่ายเงินด้านนี้ค่ะ",
+        "รับคุ้กกี้เพิ่มนะคะ"
+      ],
+      "matches": [
+          {"keyword": "สวัสดี", "count": 1},
+          {"keyword": "ซับเวย์", "count": 1},
+          {"keyword": "คุ้กกี้", "count": 1}
+        ],
       "reported_at": "2026-10-16T09:30:02Z"
     }
   }

@@ -6,6 +6,19 @@ export type Microphone = {
   is_default: boolean
 }
 
+export type MicrophoneTest = {
+  test_id: string
+  status: string
+  device: string | null
+  sample_rate: number | null
+  channels: number | null
+  frames_received: number
+  rms: number | null
+  peak: number | null
+  elapsed_seconds: number
+  error: string | null
+}
+
 export type ModelChoice = {
   key: string
   display_name: string

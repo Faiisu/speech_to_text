@@ -7,6 +7,7 @@ import StressTests from '../features/stress-tests/StressTests'
 import Destinations from '../features/destinations/Destinations'
 import ModelTuning from '../features/model-tuning/ModelTuning'
 import ModelManagement from '../features/models/ModelManagement'
+import LiveAudio from '../features/live-audio/LiveAudio'
 
 function Shell() {
   return <div className="app-shell">
@@ -14,12 +15,13 @@ function Shell() {
       <NavLink to="/" className="brand"><span className="brand-mark"><i /><i /><i /><i /><i /></span><span>Echo<span className="brand-light">Desk</span><small>AUDIO TRANSCRIPTION</small></span></NavLink>
       <div className="nav-label">WORKSPACE</div>
       <nav className="main-nav">
-        <NavLink to="/" end><span className="nav-icon">◫</span>Overview</NavLink>
-        <NavLink to="/profiles"><span className="nav-icon">◉</span>Audio inputs & profiles</NavLink>
-        <NavLink to="/destinations"><span className="nav-icon">↗</span>Destinations</NavLink>
-        <NavLink to="/model-tuning"><span className="nav-icon">♫</span>Model tuning</NavLink>
-        <NavLink to="/models"><span className="nav-icon">▧</span>Models</NavLink>
-        <NavLink to="/stress-tests"><span className="nav-icon">⌁</span>Stress test</NavLink>
+        <NavLink to="/" end><span className="nav-icon">◫</span><span className="nav-text">Overview</span></NavLink>
+        <NavLink to="/profiles"><span className="nav-icon">◉</span><span className="nav-text">Audio inputs & profiles</span></NavLink>
+        <NavLink to="/live-audio"><span className="nav-icon">♫</span><span className="nav-text">Microphone test</span></NavLink>
+        <NavLink to="/destinations"><span className="nav-icon">↗</span><span className="nav-text">Destinations</span></NavLink>
+        <NavLink to="/model-tuning"><span className="nav-icon">♫</span><span className="nav-text">Model tuning</span></NavLink>
+        <NavLink to="/models"><span className="nav-icon">▧</span><span className="nav-text">Models</span></NavLink>
+        <NavLink to="/stress-tests"><span className="nav-icon">⌁</span><span className="nav-text">Stress test</span></NavLink>
       </nav>
       <div className="sidebar-bottom"><div className="sidebar-note"><span className="tiny-signal" />API v1 <span>LOCAL</span></div><p>Every word<br />starts here</p></div>
     </aside>
@@ -30,6 +32,7 @@ function Shell() {
         <Route path="/profiles" element={<ProfileList />} />
         <Route path="/profiles/new" element={<ProfileEditor />} />
         <Route path="/profiles/:profileId" element={<ProfileEditor />} />
+        <Route path="/live-audio" element={<LiveAudio />} />
         <Route path="/destinations" element={<Destinations />} />
         <Route path="/model-tuning" element={<ModelTuning />} />
         <Route path="/models" element={<ModelManagement />} />
