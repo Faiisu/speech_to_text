@@ -229,7 +229,7 @@ test('destination form validates locally and reports API errors', async ({ page 
   expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false)
 })
 
-test('run detail reports absent transcript clearly and reads attempts from the delivery receipt', async ({ page }) => {
+test('run detail reports delivery failure and reads attempts from the delivery receipt', async ({ page }) => {
   await page.route('**/api/v1/transcriptions/fixture-failed', route => route.fulfill({ json: {
     workflow_id: 'fixture-failed', kind: 'microphone', status: 'failed', keywords: [], profile_id: null,
     profile_name: null, device: null, execution_mode: null, silence_threshold: null, model: null, runtime: null,
@@ -239,7 +239,7 @@ test('run detail reports absent transcript clearly and reads attempts from the d
   } }))
   await page.route('**/api/v1/transcriptions/fixture-failed/events?after=*', route => route.fulfill({ json: { events: [], next_cursor: 0 } }))
   await page.goto('/runs/fixture-failed')
-  await expect(page.getByRole('region', { name: 'Output delivery status' })).toContainText('The workflow failed before a transcript could be sent.')
+  await expect(page.getByRole('region', { name: 'Output delivery status' })).toContainText('The workflow failed before a result could be sent.')
 
   await page.route('**/api/v1/transcriptions/fixture-delivered', route => route.fulfill({ json: {
     workflow_id: 'fixture-delivered', kind: 'microphone', status: 'completed', keywords: [], profile_id: null,

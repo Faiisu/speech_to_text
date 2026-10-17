@@ -10,6 +10,10 @@ Pass model selection and shared-model queue settings to `load_model()`. See the 
 
 Model, runtime, and precision are fixed for the lifetime of a loaded handle. Load a new handle to change them.
 
+## Model downloads and conversion
+
+Open **Models** at `/models` to inspect a Hugging Face Whisper repository, download source weights, or download and convert to OpenVINO/CTranslate2. Optional tokens are request-scoped; `HF_TOKEN` can provide a server-side default. Install the `model-management` extra together with the target runtime extra. The [model-management contract](../.scratch/model-management/spec.md) owns supported formats, defaults, storage, token handling, and the distinction between format compatibility and verified runtime inference. Select **Prepare another runtime** from a local model entry to reuse its repository, local key, and recorded revision before choosing a new runtime or precision; see the [installed-model selection contract](../.scratch/model-management/spec.md#selecting-an-installed-model). The models directory must be writable by the backend user. Use **Delete local model** in the catalog to preview and remove an unused model's local source/runtime files; the [deletion contract](../.scratch/model-management/spec.md#deleting-local-models) defines usage/profile blockers and the cache/legacy boundaries.
+
 ## Flow configuration
 
 Pass flow settings to a clip or microphone flow; each input can have independent settings. See the [Feature 01 configuration contract](../.scratch/new-speech-to-text/spec.md#config-scope-and-defaults) for the complete option list and validation rules.
@@ -24,7 +28,7 @@ The Profile editor and Model tuning page also offer **Thai**, **English**, and *
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory; falls back to `legacies-poc/models/` when it contains installed weights | Local model files used by catalog discovery and runtime loading. |
+| `SPEECH_TO_TEXT_MODELS_DIR` | `models/` under the current working directory, followed by `legacies-poc/models/` as a read-only fallback | Local model files used by catalog discovery and runtime loading. Model management writes to this explicit directory or `models/` under the current working directory; it does not write into the legacy fallback. |
 | `SPEECH_TO_TEXT_MODEL` | Feature 01 model default | Backend workflow service model key, fixed when its lazy model handle is loaded. |
 | `SPEECH_TO_TEXT_RUNTIME` | Feature 01 runtime default | Backend workflow service runtime, fixed when its lazy model handle is loaded. |
 | `SPEECH_TO_TEXT_PRECISION` | Feature 01 precision default | Backend workflow service precision, fixed when its lazy model handle is loaded. |
@@ -57,7 +61,7 @@ RTSP capture uses PyAV, already included in the backend extra and application im
 
 ## Transcript matching and forwarding
 
-Configure target keywords with `WordMatchingConfig` and workflow output delivery with `HttpForwarderConfig` or `MqttForwarderConfig`. Matching uses normalized literal substring searches and requires no optional tokenizer dependency. The workflow owns whether and where results are sent. Keep bearer tokens in the caller's secret configuration. The backend selects an optional saved destination through `destination_id`; callers manage destination definitions and test delivery through the [destination API](../.scratch/backend-transcription-api/spec.md#destination-endpoints). Profiles retain their selection, and each run uses a start-time sender snapshot. Matching defaults, retry behavior, and the forwarded JSON contract are maintained in the [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md).
+Configure target keywords with `WordMatchingConfig` and workflow output delivery with `HttpForwarderConfig` or `MqttForwarderConfig`. Matching uses normalized literal substring searches and requires no optional tokenizer dependency. The workflow owns whether and where results are sent. Keep bearer tokens in the caller's secret configuration. The backend selects an optional saved destination through `destination_id`; callers manage destination definitions and test delivery through the [destination API](../.scratch/backend-transcription-api/spec.md#destination-endpoints). Profiles retain their selection, and each run uses a start-time sender snapshot. Live HTTP and MQTT destinations send results per chunk; finite HTTP clip results are sent once. Matching defaults, retry behavior, and the forwarded JSON contract are maintained in the [transcript matching and forwarding specification](../.scratch/transcript-matching-forwarding/spec.md).
 
 ### Output deployment settings
 

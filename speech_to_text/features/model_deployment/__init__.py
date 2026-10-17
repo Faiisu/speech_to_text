@@ -19,6 +19,14 @@ from .errors import (
     ModelLoadError,
 )
 from .model import ModelHandle, load_model, transcribe_clip
+from .model_management import (
+    ModelPreparationError,
+    ModelPreparationUnavailableError,
+    delete_local_model,
+    inspect_huggingface_model,
+    plan_local_model_deletion,
+    prepare_huggingface_model,
+)
 from .replay_source import PacedWavSource
 from .recording import AudioRecording, start_audio_recording
 from .rtsp import (
@@ -85,6 +93,9 @@ __all__ = [
     "ModelClosedError",
     "ModelHandle",
     "ModelLoadError",
+    "ModelPreparationError",
+    "ModelPreparationUnavailableError",
+    "delete_local_model",
     "PacedWavSource",
     "ProcessFlowGroup",
     "ProcessSession",
@@ -93,7 +104,10 @@ __all__ = [
     "RTSPSourceConfiguration",
     "TranscriptionSession",
     "list_available_models",
+    "inspect_huggingface_model",
+    "plan_local_model_deletion",
     "normalize_decoding_options",
+    "prepare_huggingface_model",
     "list_microphone_devices",
     "load_model",
     "start_microphone_flow",

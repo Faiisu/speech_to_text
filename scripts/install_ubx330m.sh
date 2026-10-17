@@ -537,6 +537,10 @@ docker run --rm --platform linux/amd64 --user "$CHECKOUT_UID:$CHECKOUT_GID" \
   --destination /models/openvino-turbo-source \
   || fail "Could not prepare the pinned OpenVINO model. The running service and existing model directory were left intact."
 
+# The application joins the checkout group to publish managed model artifacts.
+chmod -R g+rwX "$MODEL_DIR"
+chmod g+s "$MODEL_DIR"
+
 stage "Build application image"
 say "Building $IMAGE locally from the current checkout for linux/amd64."
 docker build --platform linux/amd64 --tag "$IMAGE" \
@@ -570,7 +574,7 @@ services:
     volumes:
       - /dev/snd:/dev/snd
       - $INSTALL_DIR/data:/data
-      - $MODEL_DIR:/opt/models:ro
+      - $MODEL_DIR:/opt/models
     networks:
       - shared
     environment:
@@ -602,6 +606,6 @@ printf '\n%s%s  Installation verified%s\n' "$BOLD" "$GREEN" "$RESET"
 printf '  LAN URL: http://%s:8000\n' "$LAN_IP"
 printf '  Local image: %s\n' "$IMAGE"
 printf '  Data: %s/data (writable by container UID 10001 through GID %s)\n' "$INSTALL_DIR" "$CHECKOUT_GID"
-printf '  Model: %s (mounted read-only at /opt/models)\n' "$MODEL_DIR"
+printf '  Model: %s (mounted writable at /opt/models for model management)\n' "$MODEL_DIR"
 printf '  LAN subnet detected: %s on %s\n' "$LAN_SUBNET" "$LAN_IF"
 printf '  Normal go-live is still gated on completing and verifying outbound HTTP forwarding.\n\n'

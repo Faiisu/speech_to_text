@@ -1,0 +1,73 @@
+# Model Management
+
+## Goal
+
+Install Hugging Face Transformers Whisper checkpoints from the frontend, optionally using a request-scoped access token, convert them into the existing OpenVINO or CTranslate2 formats, and report whether they can run in the current transcription workflow. Keep the existing offline catalog and profile/model-tuning selection interfaces.
+
+## Scope and interfaces
+
+The `/models` page accepts a Hugging Face repository ID, revision (default `main`), safe local model key, optional token, target runtime, and precision. Start with Transformers Whisper checkpoints; other architectures and arbitrary remote Python code are unsupported. Source-format validation is distinct from successful runtime inference; neither establishes speech recognition accuracy.
+
+- `POST /api/v1/models/inspect`: `{repository, revision?, token?}` returns `{repository, revision, compatible, reasons, model_type, runtimes}`. `revision` is resolved to the remote commit SHA. Each runtime entry contains `{key, available, precision_options, reason}`. Inspection fetches repository metadata and small configuration files, not model weights. Unsupported model formats return a successful inspection with `compatible: false`; inaccessible repositories return a sanitized actionable error.
+- `POST /api/v1/models/jobs`: `{repository, model_key, revision?, token?, operation, runtime?, precision?}` starts a background job. `operation` is `download` (source only) or `convert` (download/reuse source and convert). Runtime defaults to `ctranslate2`; precision defaults to `int8` for CTranslate2 and `source` for OpenVINO. Returns HTTP 202 with the job snapshot.
+- `GET /api/v1/models/jobs`: `{jobs: [...]}` newest first.
+- `GET /api/v1/models/jobs/{job_id}`: one job snapshot or HTTP 404.
+- Job snapshot: `{job_id, status, phase, repository, model_key, revision, operation, runtime, precision, created_at, updated_at, error, result}`. Status is `queued|running|completed|failed`; phase is an honest descriptive stage, without invented conversion percentages. Result contains `{model_key, repository, revision, downloaded, converted, verified, runtime, precision, reason}`. Download-only results have `verified: false`. Conversion completes only after a short local inference smoke test passes on the requested runtime/device. Verification failure does not publish the candidate model.
+- HTTP 422: invalid request; HTTP 409: active preparation job/conflicting target; HTTP 503: unavailable dependency/storage; remote failures must not echo tokens or raw authenticated request URLs. One active preparation job per process, 32 retained terminal jobs by default (configurable service constructor), no unbounded queue/history. Job state is process-local and is lost on restart; published model assets persist.
+
+The frontend shows inspection results, conversion dependency/device availability, stages/errors, runtime verification, and existing catalog readiness. Catalog runtime rows expose `installed_precisions` and the workflow's effective `default_precision`. The frontend warns when a converted precision differs from profile/clip defaults; preparation does not silently change configured precision or running workflows. A completed conversion refreshes the model catalog, making the new key available to Profile and Model tuning. The optional password-style token field is cleared after submission, never placed in a URL or browser persistent storage, never returned by APIs, and never saved through Hugging Face login or process-global environment mutation. Error validation also omits secret input. Server-side configured `HF_TOKEN` may be used when no request token is provided.
+
+## Selecting an installed model
+
+The local catalog exposes nullable `repository` and `revision` fields through `GET /api/v1/models`. Repository aliases remain canonical. Revision comes from persisted source/conversion metadata, including the installer export marker, rather than temporary job history. Prefer managed source metadata when present. Unknown provenance stays null; do not invent a repository or claim a moving branch matches installed weights.
+
+Each catalog model offers a preparation action when its repository is known. Selecting it fills the existing preparation form with the same local key, repository, and pinned revision (or `main` when no revision is recorded), clears request tokens and stale inspection results, and inspects compatibility. The user can then choose another runtime or precision and explicitly start conversion. Models without a known repository explain why preparation is unavailable. Source-only downloads with recorded provenance can also be selected.
+
+Preparing another precision reuses the retained source when its repository/revision matches; otherwise source download is still required. Existing runtime variants and running workflows remain unchanged. This action does not change the backend workflow default precision.
+
+## Deleting local models
+
+The Models catalog offers **Delete local model** for models with locally stored sources, runtime artifacts, or a local registry entry. Preview and deletion use only the configured writable models root (or primary `cwd/models`), never the implicit legacy read fallback or shared Hugging Face cache. Deleting one model removes its source directory, every exact recognized runtime/precision directory for that key, and only its local registry alias. Built-in and cache-discovered catalog entries can remain visible as not prepared afterward. Profiles and workflow history are not deleted.
+
+- `GET /api/v1/models/{model_key}/deletion`: `{model_key, files: [{path, kind, bytes}], total_bytes, registered, deletable, reason}`. Paths are relative to the writable model root. `kind` is `source|runtime`. This is read-only and does not load weights or contact Hugging Face.
+- `DELETE /api/v1/models/{model_key}`: HTTP 200 returns the same deletion plan plus `deleted: true`. The server recomputes the plan and checks guards immediately before removing files. Invalid keys return HTTP 422, models with no local files/registration return HTTP 404, blocked deletion returns HTTP 409, and filesystem failure returns a sanitized HTTP 503. Do not claim success for a failed or partial cleanup.
+- Block deletion while any model-preparation job is queued/running, while the selected model is used by a queued/active/stopping/recovering clip/microphone/RTSP/stress run in the current backend process, or while a saved profile references it. Explain the blocker so the user can stop the run, change/remove the profile, or wait for preparation. Serialize deletion with preparation starts and backend run admission to avoid races. Existing process-local lifecycle limits apply; separate API worker processes do not share usage state.
+- The frontend fetches the preview before showing an inline confirmation with the model key, the relative file paths and total size to remove, and **Cancel**/**Delete local model** actions. The request is sent only after explicit confirmation. Show disabled/blocked reasons, pending deletion, and API failures; refresh the catalog after success and clear a selected preparation form for the deleted key. Keep other models intact and usable.
+
+Feature 01 exports `plan_local_model_deletion(model_key, *, models_root=None)` and `delete_local_model(model_key, *, models_root=None)`. The model-management workflow owns serialization and maps feature errors; backend lifecycle owns active run/profile guards. Validate safe catalog keys, exact target ownership, root containment, and symlink traversal before mutation. Preflight all targets before deleting any of them. Preserve unrelated registry entries and model files. Never remove files only because their names share a prefix. No bulk deletion, per-variant deletion, shared Hub cache purge, automatic stopping, or profile deletion.
+
+## Ownership and lifecycle
+
+Feature 01 owns remote metadata/download, model validation, conversion, safe local artifact publication, and inference verification in `features/model_deployment/`. Public callables are `inspect_huggingface_model(repository, revision="main", token=None)` and `prepare_huggingface_model(repository, model_key, revision="main", token=None, operation="convert", runtime="ctranslate2", precision=None, progress=None, models_root=None)`. Progress receives a stage string. Typed errors distinguish invalid/unsupported input from unavailable resources. The model-management workflow owns bounded asynchronous jobs; backend routes validate/map HTTP, and the frontend owns controls/polling.
+
+Write sources below `<models_root>/sources/<model_key>/` and converted artifacts in the existing precision-specific runtime paths. Default write root is `SPEECH_TO_TEXT_MODELS_DIR` or the current checkout's `models/`; never write into the legacy fallback. Without an explicit models directory, catalog/runtime reads search primary `models/` first and then `legacies-poc/models/`, so existing archived artifacts remain readable. Explicit environment directories and explicit catalog paths stay isolated. Pin downloads to the inspected SHA; reuse only sources with matching repository/revision metadata. Use temporary sibling directories, verify before atomic publication, clean failed staging, and preserve existing sources/artifacts and registry entries on failure. Do not replace an existing model key with a different repository or mutate built-in aliases. Register successful downloads/conversions in `models.local.json` without losing unrelated entries. Keep source-only artifacts out of converted readiness. Reject traversal, symlink targets, and unknown options. Load local conversions with remote code disabled and local files only. No arbitrary script execution, background package installation, or automatic workflow restart.
+
+Runtime conversion uses TransformersConverter for CTranslate2 (`int8|float32`) and OVModelForSpeechSeq2Seq for OpenVINO (`source|bf16|int8|int4`) following existing adapter settings. Missing packages/devices are explicit unavailable results. Safetensors source weights and required tokenizer/processor files are downloaded; do not require unsafe pickle checkpoints. A one-second 16 kHz inference smoke test uses the requested runtime, English transcription (also valid for multilingual Whisper), and the existing decoding defaults, then releases the verification model. Running transcription workflows keep their current handles/configuration.
+
+## Acceptance and validation
+
+1. Inspect a Whisper repository; reject a non-Whisper architecture before downloading weights.
+2. Download sources with optional token and pinned revision; safely retry, sanitize errors, and retain no credentials.
+3. Convert to each supported runtime behind injected dependency boundaries; reject missing libraries/device and report a failed smoke test without publishing.
+4. Successful artifacts appear in the existing model catalog; source-only downloads do not claim runtime readiness.
+5. Jobs remain bounded, reject concurrent starts, report failures, and do not block status/profile APIs.
+6. Frontend inspection, download, conversion, refresh, token clearing, failed job, and narrow viewport behavior have browser coverage. Unit/API tests inject remote/converter/runtime boundaries; distinguish them from a real model download/conversion proof.
+
+## References
+
+- [Feature 01](../new-speech-to-text/spec.md)
+- [Backend API](../backend-transcription-api/spec.md)
+- [Hugging Face downloads](https://huggingface.co/docs/huggingface_hub/guides/download)
+- [CTranslate2 Transformers conversion](https://opennmt.net/CTranslate2/guides/transformers.html)
+- [Optimum OpenVINO models](https://huggingface.co/docs/optimum-intel/openvino/reference)
+
+## Verification record (2026-10-17)
+
+- Relevant Python integration suite: 351 passed, 9 skipped. After adding legacy read fallback, the focused model-management/catalog/runtime suite passed 52 tests, including the two new fallback regressions.
+- Production frontend build passed. The complete existing browser suite plus initial Models scenarios passed 34 tests with one MQTT broker-dependent test skipped. The separate source-only download regression was then exercised after being added.
+- Real public Hugging Face proof used `openai/whisper-tiny`, SHA `169d4a4341b33bc18d8881c4b69c2e104e1cc0af`. Both the feature callable and backend job completed source download, CTranslate2 int8 conversion, and local inference verification. The API catalog exposed the new model and the clip workflow completed inference with it. Temporary published model directories were removed after the proof; standard Hub cache files remain.
+- The clip proof used one second of silent PCM with silence filtering disabled. It proves the installation/inference path, not recognition accuracy. Real OpenVINO hardware conversion, gated/private repositories with a real token, Docker image builds, and UBX deployment were not exercised here. Installer shell syntax and locked dependency metadata checks passed.
+
+Installed-model selection follow-up: production frontend build, nine Models browser tests, and focused Python checks passed. Parent integration validation passed 60 model/catalog/API/workflow tests. The selection tests use persisted marker fixtures and mocked remote inspection; no real conversion was repeated for this addition.
+
+Local deletion follow-up: the Python feature/workflow/backend/matcher regression suite passed 378 tests with 9 environment-dependent skips. After the final same-repository ownership guard, the focused deletion/workflow/API suite passed all 30 tests. The production frontend build and all 13 Models browser scenarios passed. Browser tests mock API responses; a separate API integration proof used real temporary source/runtime files and verified deletion, preservation of another model and registry entry, and a repeated-delete 404. No user model assets were deleted. Failure regressions cover unsafe paths, unreadable walks, ambiguous precision aliases, and preservation of staged recovery data when rollback fails.

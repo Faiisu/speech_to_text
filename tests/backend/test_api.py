@@ -477,6 +477,7 @@ def test_microphone_api_exposes_cumulative_matches_before_stop(api, monkeypatch)
     assert first["matches"] == [
         {"keyword": "alpha", "count": 1}, {"keyword": "beta", "count": 0}
     ]
+    assert first["transcript"] is None
 
     session.result_queue.put(
         {"type": "transcript", "source_id": workflow_id, "sequence": 1, "text": " alpha"}
@@ -489,6 +490,14 @@ def test_microphone_api_exposes_cumulative_matches_before_stop(api, monkeypatch)
     assert current["matches"] == [
         {"keyword": "alpha", "count": 2}, {"keyword": "beta", "count": 0}
     ]
+    assert current["transcript"] is None
+    transcript_events = [
+        event for event in client.get(
+            f"/api/v1/transcriptions/{workflow_id}/events"
+        ).json()["events"] if event["type"] == "transcript"
+    ]
+    assert len(transcript_events) == 2
+    assert all("text" not in event for event in transcript_events)
 
     stopped = client.post(f"/api/v1/transcriptions/{workflow_id}/stop")
     assert stopped.status_code == 202
@@ -586,9 +595,7 @@ def test_two_per_workflow_process_microphones_infer_concurrently(monkeypatch):
                 wait_for_event_type(client, workflow_id, "transcript")[0]
                 for workflow_id in workflow_ids
             ]
-            assert [event["text"] for event in observed] == [
-                f"worker-{event['pid']}" for event in observed
-            ]
+            assert all("text" not in event for event in observed)
             assert len({event["pid"] for event in observed}) == 2
             assert all(event["pid"] != os.getpid() for event in observed)
         finally:

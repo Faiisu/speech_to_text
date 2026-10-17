@@ -29,7 +29,8 @@ This document is the source of truth for where project files belong. Follow it w
 │   └── workflows/              # Use cases and their output behavior
 │       ├── audio_recording/
 │       ├── transcribe_match_forward/
-│       └── file_replay_stress/
+│       ├── file_replay_stress/
+│       └── model_management/     # Bounded download/conversion jobs and preparation lifecycle
 ├── tests/                      # Automated tests organized by owner and boundary
 │   ├── feature_01/
 │   ├── word_matching/
@@ -57,6 +58,7 @@ speech_to_text/frontend/src/
     ├── profiles/
     ├── destinations/             # Saved HTTP/HTTPS and MQTT receiver settings and synthetic delivery tests
     ├── runs/
+    ├── models/                   # Hugging Face downloads, runtime conversion, and compatibility
     ├── stress-tests/             # Capacity matrix controls, polling, and reports
     └── model-tuning/             # Host recording, audio uploads, and model comparisons
 ```
@@ -82,10 +84,13 @@ speech_to_text/backend/
     │   └── transcription.py
     └── schemas/                 # API request and response models
         ├── stress_tests.py
+        ├── models.py             # Model inspection and preparation requests
         └── transcription.py
 ```
 
 Frontend code calls the backend API. Backend routes validate requests and call workflow functions. A workflow calls features, receives their results, and owns the use case's output choices: it returns results to the backend and can send them to another backend or system. The backend maps returned results to frontend responses or streams. Feature logic stays under `features/`; use-case orchestration and delivery behavior stay under `workflows/`.
+
+The model-deployment feature owns Hugging Face inspection, source downloads, runtime conversion, staged validation, and artifact publication in `model_deployment/model_management.py`. The model-management workflow owns bounded background jobs under `workflows/model_management/`; `backend/api/routes/models.py` and `schemas/models.py` own HTTP transport. The frontend model page lives under `src/features/models/`. Sources live under ignored `models/sources/<model_key>/`, converted weights use the existing precision-specific runtime directories, and `models/models.local.json` records repository aliases. Tests follow the existing feature/workflow/backend/frontend boundaries. The [model-management contract](../.scratch/model-management/spec.md) owns configuration, job state, credentials, and verification behavior.
 
 The audio-recording workflow owns generated IDs, retained WAV metadata, and the storage lifecycle around host capture and audio uploads. The model-deployment feature owns host capture, WAV validation, and compressed-audio conversion. Recordings live under ignored `data/` storage. Its contract is maintained in the [model-tuning specification](../.scratch/model-tuning/spec.md).
 

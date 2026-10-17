@@ -1,4 +1,4 @@
-import type { Destination, DestinationDefinition, DestinationSummary, Microphone, ModelChoice, Profile, ProfileDefinition, Recording, Transcription, WorkflowEvent } from './types'
+import type { Destination, DestinationDefinition, DestinationSummary, Microphone, ModelChoice, ModelDeletionPlan, ModelDeletionResult, ModelInspection, ModelJob, Profile, ProfileDefinition, Recording, Transcription, WorkflowEvent } from './types'
 
 const API_ROOT = '/api/v1'
 
@@ -35,6 +35,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   microphones: async () => (await request<{ devices: Microphone[] }>('/microphones')).devices,
   models: () => request<{ default_model: string; default_runtime: string; models: ModelChoice[] }>('/models'),
+  inspectModel: (input: { repository: string; revision?: string; token?: string }) => request<ModelInspection>('/models/inspect', { method: 'POST', body: JSON.stringify(input) }),
+  modelJobs: () => request<{ jobs: ModelJob[] }>('/models/jobs'),
+  modelDeletionPlan: (key: string) => request<ModelDeletionPlan>(`/models/${encodeURIComponent(key)}/deletion`),
+  deleteLocalModel: (key: string) => request<ModelDeletionResult>(`/models/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+  startModelJob: (input: { repository: string; model_key: string; revision?: string; token?: string; operation: 'download' | 'convert'; runtime?: string; precision?: string }) => request<ModelJob>('/models/jobs', { method: 'POST', body: JSON.stringify(input) }),
   profiles: async () => (await request<{ profiles: Profile[] }>('/profiles')).profiles,
   profile: (id: string) => request<Profile>(`/profiles/${encodeURIComponent(id)}`),
   createProfile: (definition: ProfileDefinition) => request<Profile>('/profiles', { method: 'POST', body: JSON.stringify(definition) }),

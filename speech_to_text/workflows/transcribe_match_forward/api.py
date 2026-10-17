@@ -13,9 +13,10 @@ from speech_to_text.features.model_deployment import (
     transcribe_clip,
 )
 from speech_to_text.features.word_matching import (
+    StreamingWordMatcher,
+    WordMatchResult,
     WordMatchingConfig,
     WordMatchingError,
-    WordMatchResult,
     match_keywords,
 )
 
@@ -41,15 +42,6 @@ def _send(forwarder, record):
 
 def _match_rows(result: WordMatchResult):
     return [{"keyword": item.keyword, "count": item.count} for item in result.matches]
-
-
-def _assemble_transcript(events):
-    events.sort(key=lambda event: event.get("sequence", 0))
-    return " ".join(
-        event.get("text", "")
-        for event in events
-        if isinstance(event.get("text", ""), str)
-    )
 
 
 def _record(source_id, result, transcript, status, *, event_id=None, rtf=None, include_rtf=False):
@@ -166,7 +158,9 @@ class SessionWorkflow:
         self._thread.start()
 
     def _consume(self):
-        transcript_events = []
+        matcher = StreamingWordMatcher(self.matching_config)
+        latest_match = match_keywords("", self.matching_config)
+        chunk_ordinal = 0
         measurement_rtfs = {}
         completed_event = None
         try:
@@ -175,11 +169,11 @@ class SessionWorkflow:
                 if not isinstance(event, dict):
                     continue
                 if event.get("type") == "transcript":
-                    transcript_events.append(event)
+                    chunk_ordinal += 1
                     self.output_queue.put(event)
-                    transcript = _assemble_transcript(transcript_events)
                     try:
-                        matched = match_keywords(transcript, self.matching_config)
+                        chunk_transcript = event.get("text", "")
+                        latest_match = matcher.add_chunk(chunk_transcript)
                     except Exception as exc:
                         self.output_queue.put(
                             {
@@ -193,13 +187,12 @@ class SessionWorkflow:
                         {
                             "type": "match_results",
                             "source_id": self.source_id,
-                            "language": matched.language,
-                            "matches": _match_rows(matched),
+                            "language": latest_match.language,
+                            "matches": _match_rows(latest_match),
                         }
                     )
-                    if getattr(self.forwarder, "transport", None) == "mqtt":
+                    if self.forwarder is not None:
                         try:
-                            chunk_transcript = event.get("text", "")
                             chunk_matched = match_keywords(
                                 chunk_transcript, self.matching_config
                             )
@@ -210,8 +203,8 @@ class SessionWorkflow:
                                     chunk_matched,
                                     chunk_transcript,
                                     "completed",
-                                    event_id=f"{self.source_id}:chunk:{len(transcript_events)}",
-                                    rtf=measurement_rtfs.get(event.get("sequence")),
+                                    event_id=f"{self.source_id}:chunk:{chunk_ordinal}",
+                                    rtf=measurement_rtfs.pop(event.get("sequence"), None),
                                     include_rtf=True,
                                 ),
                             )
@@ -227,6 +220,7 @@ class SessionWorkflow:
                                 {
                                     "type": "forwarding_error",
                                     "source_id": self.source_id,
+                                    "event_id": f"{self.source_id}:chunk:{chunk_ordinal}",
                                     "error": str(exc),
                                     "status_code": getattr(exc, "status_code", None),
                                     "attempts": getattr(exc, "attempts", None),
@@ -237,52 +231,22 @@ class SessionWorkflow:
                     sequence = event.get("sequence")
                     if isinstance(sequence, int) and not isinstance(sequence, bool):
                         measurement_rtfs[sequence] = event.get("rtf")
+                        while len(measurement_rtfs) > 128:
+                            del measurement_rtfs[min(measurement_rtfs)]
                 if event.get("type") == "completed":
                     completed_event = event
                 else:
                     self.output_queue.put(event)
 
-            transcript = _assemble_transcript(transcript_events)
             try:
-                matched = match_keywords(transcript, self.matching_config)
                 self.output_queue.put(
                     {
                         "type": "match_results",
                         "source_id": self.source_id,
-                        "language": matched.language,
-                        "matches": _match_rows(matched),
+                        "language": latest_match.language,
+                        "matches": _match_rows(latest_match),
                     }
                 )
-                if self.forwarder is not None and getattr(
-                    self.forwarder, "transport", None
-                ) != "mqtt":
-                    try:
-                        receipt = _send(
-                            self.forwarder,
-                            _record(
-                                self.source_id,
-                                matched,
-                                transcript,
-                                completed_event.get("status", "completed"),
-                            ),
-                        )
-                        self.output_queue.put(
-                            {
-                                "type": "forwarded",
-                                "source_id": self.source_id,
-                                "receipt": receipt,
-                            }
-                        )
-                    except Exception as exc:
-                        self.output_queue.put(
-                            {
-                                "type": "forwarding_error",
-                                "source_id": self.source_id,
-                                "error": str(exc),
-                                "status_code": getattr(exc, "status_code", None),
-                                "attempts": getattr(exc, "attempts", None),
-                            }
-                        )
             except Exception as exc:
                 self.output_queue.put(
                     {

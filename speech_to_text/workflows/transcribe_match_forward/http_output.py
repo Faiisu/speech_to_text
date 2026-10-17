@@ -289,12 +289,15 @@ class HttpForwarder:
         source_id = record.get("source_id")
         if not isinstance(source_id, str) or not source_id:
             raise ValueError("record.source_id must be a non-empty string")
+        event_id = record.get("event_id", source_id)
+        if not isinstance(event_id, str) or not event_id:
+            raise ValueError("record.event_id must be a non-empty string")
         body = json.dumps(record, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         headers.update(dict(self.config.headers))
         if self.config.idempotency_header:
-            _validate_header(self.config.idempotency_header, source_id)
-            headers[self.config.idempotency_header] = source_id
+            _validate_header(self.config.idempotency_header, event_id)
+            headers[self.config.idempotency_header] = event_id
         auth_header = self.config.auth_header
         if self.config.bearer_token:
             auth_header = f"Bearer {self.config.bearer_token}"
@@ -318,7 +321,7 @@ class HttpForwarder:
                         status = response.getcode()
                         response_headers = {key.lower(): value for key, value in response.headers.items()}
                 if 200 <= status < 300:
-                    return ForwardingReceipt(source_id, status, attempt)
+                    return ForwardingReceipt(event_id, status, attempt)
                 if 300 <= status < 400:
                     error = ForwardingError(
                         f"Forwarding endpoint returned HTTP {status} (redirects disabled)",

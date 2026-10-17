@@ -554,16 +554,28 @@ class TranscriptionService:
     def list_models(self):
         """Return model choices and local readiness through the workflow boundary."""
         try:
+            default_config = self._effective_model_config()
             return {
-                "default_model": self._effective_model_config()["model"],
-                "default_runtime": self._effective_model_config()["runtime"],
+                "default_model": default_config["model"],
+                "default_runtime": default_config["runtime"],
+                "default_precision": default_config["precision"],
                 "models": [
                 {
                     "key": item["key"],
                     "display_name": item["display_name"],
+                    "repository": item.get("repository"),
+                    "revision": item.get("revision"),
                     "installed": item["installed"],
                     "ready": any(runtime["ready"] for runtime in item["runtimes"]),
-                    "runtimes": item["runtimes"],
+                    "runtimes": [
+                        {
+                            **runtime,
+                            "default_precision": self._effective_model_config(
+                                runtime=runtime["key"]
+                            )["precision"],
+                        }
+                        for runtime in item["runtimes"]
+                    ],
                 }
                 for item in list_available_models()
                 ],

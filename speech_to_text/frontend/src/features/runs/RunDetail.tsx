@@ -7,6 +7,7 @@ import { statusLabel } from '../dashboard/Dashboard'
 
 const terminal = (s: string) => ['completed', 'failed', 'stopped', 'not-found'].includes(s)
 const active = (s: string) => ['queued', 'running', 'recording', 'stopping'].includes(s)
+const EVENT_LIMIT = 100
 const fallbackTimeZones = [
   'Africa/Cairo', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/New_York',
   'America/Sao_Paulo', 'Asia/Bangkok', 'Asia/Dubai', 'Asia/Hong_Kong', 'Asia/Kolkata',
@@ -32,6 +33,7 @@ export default function RunDetail() {
   const [events, setEvents] = useState<WorkflowEvent[]>([])
   const [error, setError] = useState('')
   const [workflowMissing, setWorkflowMissing] = useState(false)
+  const [eventGap, setEventGap] = useState(false)
   const [loading, setLoading] = useState(true)
   const [stopping, setStopping] = useState(false)
   const [timeZone, setTimeZone] = useState(localTimeZone)
@@ -53,22 +55,38 @@ export default function RunDetail() {
       try {
         const status = await api.transcription(id)
         if (!isCurrent()) return
-        setRun(status)
+        setRun({ ...status, transcript: null })
         statusRef.current = status.status
         setError('')
         setWorkflowMissing(false)
 
-        const page = await api.events(id, cursorRef.current)
+        let page
+        try {
+          page = await api.events(id, cursorRef.current)
+        } catch (e) {
+          const detail = e instanceof ApiRequestError ? e.detail : null
+          const oldestCursor = detail && typeof detail === 'object' && 'oldest_cursor' in detail
+            ? Number(detail.oldest_cursor)
+            : NaN
+          if (!isCurrent()) return
+          if (!(e instanceof ApiRequestError) || e.status !== 410 || !Number.isInteger(oldestCursor) || oldestCursor < 1) throw e
+          setEventGap(true)
+          cursorRef.current = oldestCursor - 1
+          page = await api.events(id, cursorRef.current)
+        }
         if (!isCurrent()) return
         cursorRef.current = Math.max(cursorRef.current, page.next_cursor)
         if (page.events.length) {
           setEvents(current => {
             if (!isCurrent()) return current
             const byCursor = new Map(current.map(event => [event.cursor, event]))
-            for (const event of page.events) {
+            for (const rawEvent of page.events) {
+              const event = rawEvent.type === 'transcript'
+                ? { cursor: rawEvent.cursor, type: rawEvent.type, timestamp: rawEvent.timestamp, created_at: rawEvent.created_at, source_id: rawEvent.source_id, sequence: rawEvent.sequence }
+                : rawEvent
               if (!byCursor.has(event.cursor)) byCursor.set(event.cursor, event)
             }
-            return [...byCursor.values()].sort((left, right) => left.cursor - right.cursor)
+            return [...byCursor.values()].sort((left, right) => left.cursor - right.cursor).slice(-EVENT_LIMIT)
           })
         }
       } catch (e) {
@@ -93,6 +111,7 @@ export default function RunDetail() {
   useEffect(() => {
     setRun(null)
     setEvents([])
+    setEventGap(false)
     setError('')
     setWorkflowMissing(false)
     setLoading(true)
@@ -111,7 +130,7 @@ export default function RunDetail() {
     <Link className="back-link" to="/">← Back to overview</Link>
     {run ? <><div className="page-heading run-heading"><div><div className="eyebrow">WORKFLOW / {run.kind === 'microphone' ? run.source_type === 'rtsp' ? 'IPCAM (RTSP)' : 'MICROPHONE' : 'CLIP'}</div><h1>{run.profile_name || (run.source_type === 'rtsp' ? 'IPCAM (RTSP)' : run.kind === 'microphone' ? 'Live microphone' : 'Audio clip')}</h1><p>Started {new Date(run.created_at).toLocaleString('en-US')} · {inputIdentity}</p></div><div className="run-heading-actions"><span className={`status-pill status-${run.status}`}>{active(run.status) && <i />} {statusLabel(run.status)}</span>{run.kind === 'microphone' && active(run.status) && <button className="button button-outline danger-button" disabled={stopping || !!error} onClick={() => void stop()}>{stopping ? 'Stopping…' : 'Stop listening'}</button>}</div></div>
       <div className="run-kpis"><div><small>WORKFLOW ID</small><b>{run.workflow_id}</b></div><div><small>MODEL</small><b>{run.model || 'Default'}</b></div><div><small>RUNTIME</small><b>{run.runtime || '—'}</b></div><div><small>LANGUAGE</small><b>{run.language ? LANGUAGE_LABELS[run.language as Language] : '—'}</b></div><div><small>MODEL MODE</small><b>{run.execution_mode === 'per_workflow_process' ? 'Separate process' : run.execution_mode ? 'Shared model' : '—'}</b></div><div><small>KEYWORDS</small><b>{run.keywords.length} total</b></div></div>
-      {run.delivery && run.delivery.status !== 'disabled' && <section className={`run-delivery run-delivery-${run.delivery.status}`} aria-label="Output delivery status"><div><div className="eyebrow">OUTBOUND JSON</div><h2>Destination delivery</h2><p>{run.delivery.status === 'delivered' ? run.delivery.transport === 'mqtt' ? 'Published to the MQTT broker.' : 'The receiver accepted this result.' : run.delivery.status === 'failed' ? run.transcript ? 'Transcription is available; delivery failed.' : run.status === 'failed' ? 'The workflow failed before a transcript could be sent.' : 'No transcript was available to send.' : 'This result is waiting to be sent.'}</p></div><div className="run-delivery-detail"><span className={`status-pill status-${run.delivery.status}`}>{run.delivery.status}</span><small>{run.delivery.attempts ?? 0} attempts{run.delivery.http_status ? ` · HTTP ${run.delivery.http_status}` : ''}</small>{run.delivery.destination_id && <small>Destination · {run.delivery.destination_id.slice(0, 8)}</small>}{run.delivery.transport === 'mqtt' && <small>MQTT · QoS {run.delivery.mqtt_qos} · {run.delivery.mqtt_topic}</small>}{run.delivery.error_code && <small>Error · {run.delivery.error_code}</small>}</div></section>}
+      {run.delivery && run.delivery.status !== 'disabled' && <section className={`run-delivery run-delivery-${run.delivery.status}`} aria-label="Output delivery status"><div><div className="eyebrow">OUTBOUND JSON</div><h2>Destination delivery</h2><p>{run.delivery.status === 'delivered' ? run.delivery.transport === 'mqtt' ? 'Published to the MQTT broker.' : 'The receiver accepted this result.' : run.delivery.status === 'failed' ? run.status === 'failed' ? 'The workflow failed before a result could be sent.' : 'The workflow result is available; delivery failed.' : 'This result is waiting to be sent.'}</p></div><div className="run-delivery-detail"><span className={`status-pill status-${run.delivery.status}`}>{run.delivery.status}</span><small>{run.delivery.attempts ?? 0} attempts{run.delivery.http_status ? ` · HTTP ${run.delivery.http_status}` : ''}</small>{run.delivery.destination_id && <small>Destination · {run.delivery.destination_id.slice(0, 8)}</small>}{run.delivery.transport === 'mqtt' && <small>MQTT · QoS {run.delivery.mqtt_qos} · {run.delivery.mqtt_topic}</small>}{run.delivery.error_code && <small>Error · {run.delivery.error_code}</small>}</div></section>}
       {active(run.status) && <section className="run-rtf" aria-labelledby="run-rtf-heading" aria-live="polite">
         <div>
           <h2 id="run-rtf-heading">Realtime factor (RTF)</h2>
@@ -122,12 +141,12 @@ export default function RunDetail() {
         <small>RTF ≤ 1.0 is within real time; RTF &gt; 1.0 is slower than real time.</small>
       </section>}
       {run.error && <div className="run-error"><b>This workflow encountered an error</b><p>{run.error}</p></div>}
-      <div className="run-content-grid"><section className="panel transcript-panel"><div className="section-heading compact"><div><div className="eyebrow">RECOGNIZED TEXT</div><h2>Transcript</h2></div><span className="transcript-language">{run.language ? `TRANSCRIPT · ${LANGUAGE_LABELS[run.language as Language].toUpperCase()}` : 'TRANSCRIPT'}</span></div>{run.transcript ? <p className="transcript-text">{run.transcript}</p> : <div className="transcript-placeholder"><span className="placeholder-wave">〰</span><span>{active(run.status) ? 'Waiting for recognized speech…' : run.status === 'failed' ? 'This workflow failed before producing a transcript.' : 'No transcript is available for this workflow.'}</span></div>}<div className="match-heading"><div><div className="eyebrow">KEYWORD TRACKING</div><h3>Matched keywords</h3></div></div>{run.matches?.length ? <div className="match-list">{run.matches.map(m => <div key={m.keyword}><span>{m.keyword}</span><b>{m.count}<small> matches</small></b></div>)}</div> : <p className="muted-copy">Keyword results will appear here when available.</p>}</section><section className="panel event-panel"><div className="section-heading compact event-heading"><div><div className="eyebrow">EVENT STREAM</div><h2>Events</h2></div><div className="event-heading-controls"><label className="event-timezone-label" htmlFor="event-timezone">Time zone</label><select id="event-timezone" className="event-timezone-select" value={timeZone} onChange={event => setTimeZone(event.target.value)}>{timeZones.map(zone => <option key={zone} value={zone}>{zone}</option>)}</select><span className="event-count" aria-label={`${events.length} events`}>{events.length}</span></div></div><div className="timeline">{events.length ? events.map((event, i) => <div className="timeline-item" key={`${event.cursor}-${i}`}><span className={`timeline-dot ${event.type === 'workflow_error' || event.type === 'forwarding_error' ? 'dot-error' : ''}`} /><div><strong>{eventLabel(event.type)}</strong><small>#{event.cursor} · {eventTime(event, timeZone)}</small>{event.type === 'transcript' && typeof event.text === 'string' && <p>{event.text}</p>}{event.type === 'workflow_error' && typeof event.error === 'string' && <p>{event.error}</p>}{event.type === 'forwarding_error' && typeof event.error_code === 'string' && <p>Delivery failed · {event.error_code}</p>}{event.type === 'forwarded' && <p>Receiver accepted in {eventAttempts(event)} attempt(s).</p>}</div></div>) : <div className="muted-copy">Waiting for the first event…</div>}</div></section></div>
+      <div className="run-content-grid"><section className="panel keyword-panel" aria-labelledby="keyword-tracking-heading"><div className="section-heading compact"><div><div className="eyebrow">KEYWORD TRACKING</div><h2 id="keyword-tracking-heading">Matched keywords</h2></div></div>{run.matches?.length ? <div className="match-list">{run.matches.map(m => <div key={m.keyword}><span>{m.keyword}</span><b>{m.count}<small> matches</small></b></div>)}</div> : <p className="muted-copy">Keyword results will appear here when available.</p>}</section><section className="panel event-panel"><div className="section-heading compact event-heading"><div><div className="eyebrow">EVENT STREAM</div><h2>Events</h2></div><div className="event-heading-controls"><label className="event-timezone-label" htmlFor="event-timezone">Time zone</label><select id="event-timezone" className="event-timezone-select" value={timeZone} onChange={event => setTimeZone(event.target.value)}>{timeZones.map(zone => <option key={zone} value={zone}>{zone}</option>)}</select><span className="event-count" aria-label={`${events.length} events`}>{events.length}</span></div></div>{eventGap && <p className="muted-copy" role="status">Earlier events expired; showing the latest retained events.</p>}<p className="muted-copy">Showing the latest {EVENT_LIMIT} events.</p><div className="timeline">{events.length ? events.map((event, i) => <div className="timeline-item" key={`${event.cursor}-${i}`}><span className={`timeline-dot ${event.type === 'workflow_error' || event.type === 'forwarding_error' ? 'dot-error' : ''}`} /><div><strong>{eventLabel(event.type)}</strong><small>#{event.cursor} · {eventTime(event, timeZone)}</small>{event.type === 'workflow_error' && typeof event.error === 'string' && <p>{event.error}</p>}{event.type === 'forwarding_error' && typeof event.error_code === 'string' && <p>Delivery failed · {event.error_code}</p>}{event.type === 'forwarded' && <p>Receiver accepted in {eventAttempts(event)} attempt(s).</p>}</div></div>) : <div className="muted-copy">Waiting for the first event…</div>}</div></section></div>
     </> : <div className="empty-state"><div className="empty-icon">⌁</div><strong>Workflow not found</strong>{workflowMissing ? <p role="status">This workflow is not in the current backend history. Run status and events are kept in backend process memory, so a backend restart or another backend instance can make this run unavailable.</p> : <p>The backend may have removed this workflow from its temporary history.</p>}<Link className="button button-dark" to="/">Back to overview</Link></div>}
   </div>
 }
 
-function eventLabel(type: string) { const names: Record<string, string> = { queued: 'Queued', started: 'Started', recording: 'Listening', audio_queued: 'Audio queued', measurement: 'Measurement', transcript: 'Transcript received', match_results: 'Keywords matched', forwarded: 'Output delivered', forwarding_error: 'Output delivery failed', stopping: 'Stopping', stopped: 'Stopped', completed: 'Workflow completed', workflow_error: 'Workflow error' }; return names[type] || type }
+function eventLabel(type: string) { const names: Record<string, string> = { queued: 'Queued', started: 'Started', recording: 'Listening', audio_queued: 'Audio queued', measurement: 'Measurement', transcript: 'Speech processed', match_results: 'Keywords matched', forwarded: 'Output delivered', forwarding_error: 'Output delivery failed', stopping: 'Stopping', stopped: 'Stopped', completed: 'Workflow completed', workflow_error: 'Workflow error' }; return names[type] || type }
 function eventAttempts(event: WorkflowEvent) {
   if (typeof event.attempts === 'number') return event.attempts
   if (event.receipt && typeof event.receipt === 'object' && 'attempts' in event.receipt && typeof event.receipt.attempts === 'number') return event.receipt.attempts

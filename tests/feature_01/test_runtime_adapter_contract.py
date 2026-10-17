@@ -105,7 +105,12 @@ def test_openvino_precision_selects_requested_quantization(tmp_path, monkeypatch
 
     OpenVINOAdapter({"model": "turbo", "runtime": "openvino-gpu", "precision": "int8"})
 
-    assert observed == {"device": "GPU", "quantization_config": ("quant", {"bits": 8})}
+    assert observed == {
+        "device": "GPU",
+        "local_files_only": True,
+        "trust_remote_code": False,
+        "quantization_config": ("quant", {"bits": 8}),
+    }
 
 
 def test_openvino_generation_budget_includes_whisper_decoder_prompt():
@@ -412,8 +417,8 @@ def test_ctranslate2_adapter_loads_precision_suffixed_converted_cache(tmp_path, 
     observed = {}
 
     class WhisperModel:
-        def __init__(self, path, *, device, compute_type):
-            observed.update(path=path, device=device, compute_type=compute_type)
+        def __init__(self, path, *, device, compute_type, local_files_only):
+            observed.update(path=path, device=device, compute_type=compute_type, local_files_only=local_files_only)
 
     faster = ModuleType("faster_whisper")
     faster.WhisperModel = WhisperModel
@@ -422,4 +427,4 @@ def test_ctranslate2_adapter_loads_precision_suffixed_converted_cache(tmp_path, 
     adapter = CTranslate2Adapter({"model": "custom", "runtime": "ctranslate2", "precision": "int8"})
 
     assert adapter.model is not None
-    assert observed == {"path": str(converted), "device": "cpu", "compute_type": "int8"}
+    assert observed == {"path": str(converted), "device": "cpu", "compute_type": "int8", "local_files_only": True}

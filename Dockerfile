@@ -11,7 +11,7 @@ RUN apt-get update \
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,id=speech-to-text-uv-cache,target=/root/.cache/uv \
     uv sync --python /usr/bin/python3.12 --locked --no-dev --no-install-project \
-    --extra backend --extra microphone --extra openvino --extra mqtt
+    --extra backend --extra microphone --extra openvino --extra ctranslate2 --extra model-management --extra mqtt
 
 FROM node:22.14.0-bookworm-slim AS frontend-build
 WORKDIR /build/frontend
@@ -30,7 +30,8 @@ ENV PYTHONUNBUFFERED=1 \
     SPEECH_TO_TEXT_PRECISION=source \
     SPEECH_TO_TEXT_PROFILE_DB=/data/profiles.sqlite3 \
     SPEECH_TO_TEXT_RECORDINGS_DIR=/data/tuning-recordings \
-    SPEECH_TO_TEXT_FRONTEND_DIR=/app/frontend
+    SPEECH_TO_TEXT_FRONTEND_DIR=/app/frontend \
+    HF_HOME=/data/huggingface
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates intel-opencl-icd libasound2t64 libgomp1 \

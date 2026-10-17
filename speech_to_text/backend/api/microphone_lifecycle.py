@@ -273,8 +273,6 @@ def _start_microphone_workflow(
 
 
 def _pump_microphone(runtime, record, workflow):
-    transcript_parts = []
-    transcript_events = []
     restart_count = 0
     retry_delay = runtime.recovery_initial_delay
     recovery_reason = None
@@ -298,9 +296,6 @@ def _pump_microphone(runtime, record, workflow):
                 if not isinstance(event, dict):
                     continue
                 event_type = event.get("type")
-                if event_type == "transcript":
-                    transcript_events.append(event)
-                    _update_microphone_transcript(record, transcript_parts, transcript_events)
                 if event_type == "match_results":
                     with record.lock:
                         record.matches = event.get("matches", [])
@@ -324,6 +319,9 @@ def _pump_microphone(runtime, record, workflow):
                         record.delivery.update(
                             {
                                 "status": "delivered",
+                                "event_id": getattr(receipt, "event_id", None)
+                                or event.get("event_id")
+                                or record.workflow_id,
                                 "attempts": getattr(receipt, "attempts", 1),
                                 "http_status": getattr(receipt, "status_code", None),
                                 "last_attempt_at": _utc_now(),
@@ -335,6 +333,7 @@ def _pump_microphone(runtime, record, workflow):
                         record.delivery.update(
                             {
                                 "status": "failed",
+                                "event_id": event.get("event_id") or record.workflow_id,
                                 "attempts": event.get("attempts") or 1,
                                 "http_status": event.get("status_code"),
                                 "last_attempt_at": _utc_now(),
@@ -360,7 +359,10 @@ def _pump_microphone(runtime, record, workflow):
                     )
                     # A microphone completion is unexpected unless Stop cancelled this run.
                     break
-                runtime.append_event(record, event)
+                runtime.append_event(
+                    record,
+                    {key: value for key, value in event.items() if key != "text"},
+                )
         except Exception as exc:
             ended_reason = str(exc).strip() or type(exc).__name__
             runtime.append_event(
@@ -393,7 +395,6 @@ def _pump_microphone(runtime, record, workflow):
                 with record.lock:
                     record.error = cleanup_error
 
-        _update_microphone_transcript(record, transcript_parts, transcript_events)
         if record.recovery_cancel.is_set():
             record.stop_complete.wait()
             with record.lock:
@@ -417,8 +418,6 @@ def _pump_microphone(runtime, record, workflow):
         if cancelling:
             record.recovery_cancel.set()
             continue
-        transcript_parts.append(_transcript_text(transcript_events))
-        transcript_events = []
         replacement = None
         while True:
             restart_count += 1
@@ -532,19 +531,3 @@ def _pump_microphone(runtime, record, workflow):
                 },
             )
         workflow = replacement
-
-
-def _transcript_text(transcript_events):
-    transcript_events.sort(key=lambda event: event.get("sequence", 0))
-    return " ".join(
-        event.get("text", "")
-        for event in transcript_events
-        if isinstance(event.get("text", ""), str)
-    )
-
-
-def _update_microphone_transcript(record, transcript_parts, transcript_events):
-    with record.lock:
-        record.transcript = " ".join(
-            part for part in (*transcript_parts, _transcript_text(transcript_events)) if part
-        )

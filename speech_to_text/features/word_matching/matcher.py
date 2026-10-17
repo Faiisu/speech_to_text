@@ -58,6 +58,49 @@ class WordMatchResult:
     matches: tuple[KeywordMatch, ...]
 
 
+class StreamingWordMatcher:
+    """Count matches across ordered text chunks without retaining the transcript."""
+
+    def __init__(self, config):
+        if not isinstance(config, WordMatchingConfig):
+            raise TypeError("config must be a WordMatchingConfig")
+        self.config = config
+        self._targets = tuple(_normalize(keyword) for keyword in config.keywords)
+        self._tail_length = max(map(len, self._targets)) - 1
+        self._tail = ""
+        self._counts = [0] * len(self._targets)
+        self._has_chunk = False
+
+    def add_chunk(self, text):
+        """Add one transcript chunk, joined to the prior chunk by one space."""
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
+        chunk = _normalize(text)
+        separator = " " if self._has_chunk else ""
+        boundary = len(self._tail)
+        combined = self._tail + separator + chunk
+        for index, target in enumerate(self._targets):
+            start = max(0, boundary - len(target) + 1)
+            while True:
+                start = combined.find(target, start)
+                if start < 0:
+                    break
+                if start + len(target) > boundary:
+                    self._counts[index] += 1
+                start += 1
+        self._tail = (
+            combined[-self._tail_length :] if self._tail_length else ""
+        )
+        self._has_chunk = True
+        return WordMatchResult(
+            self.config.language,
+            tuple(
+                KeywordMatch(keyword, count)
+                for keyword, count in zip(self.config.keywords, self._counts)
+            ),
+        )
+
+
 def _count_occurrences(source, target):
     count = 0
     start = 0

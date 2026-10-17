@@ -27,7 +27,7 @@ done
 cd "$ROOT_DIR"
 
 printf 'Installing Python dependencies...\n'
-uv sync --locked --extra backend --extra microphone --extra ctranslate2 --extra mqtt
+uv sync --locked --extra backend --extra microphone --extra ctranslate2 --extra model-management --extra mqtt
 
 if [[ ! -x "$ROOT_DIR/speech_to_text/frontend/node_modules/.bin/vite" ]]; then
   printf 'Installing frontend dependencies...\n'

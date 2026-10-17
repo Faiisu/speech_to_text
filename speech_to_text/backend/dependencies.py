@@ -109,6 +109,7 @@ class BackendRuntime:
         stress_workflow=None,
         destination_registry=None,
         recording_service=None,
+        model_management_service=None,
     ):
         if event_limit < 1 or max_runs < 1 or max_microphone_runs < 1:
             raise ValueError("event_limit and run limits must be positive integers")
@@ -149,6 +150,11 @@ class BackendRuntime:
         self.stress_workflow = (
             run_file_replay_stress if stress_workflow is None else stress_workflow
         )
+        if model_management_service is None:
+            from speech_to_text.workflows.model_management import ModelManagementService
+
+            model_management_service = ModelManagementService()
+        self.model_management_service = model_management_service
         self.runs: dict[str, RunRecord] = {}
         self.stress_runs: dict[str, StressTestRecord] = {}
         self.executor = ThreadPoolExecutor(
@@ -351,14 +357,17 @@ class BackendRuntime:
                 thread.join()
         self.executor.shutdown(wait=True, cancel_futures=False)
         try:
-            self.workflow_service.close()
+            self.model_management_service.close()
         finally:
             try:
-                self.recording_service.close()
+                self.workflow_service.close()
             finally:
-                close = getattr(self.profile_store, "close", None)
-                if callable(close):
-                    close()
+                try:
+                    self.recording_service.close()
+                finally:
+                    close = getattr(self.profile_store, "close", None)
+                    if callable(close):
+                        close()
 
     def list_runs(self):
         with self.registry_lock:

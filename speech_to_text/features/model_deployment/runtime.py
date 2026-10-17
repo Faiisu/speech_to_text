@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 
-from .catalog import default_models_root, resolve_repository
+from .catalog import default_models_root, model_read_roots, resolve_repository
 from .errors import ModelLoadError
 
 
@@ -14,8 +15,12 @@ def _root():
     return default_models_root()
 
 
+def _roots():
+    return model_read_roots()
+
+
 class OpenVINOAdapter:
-    def __init__(self, config):
+    def __init__(self, config, *, artifact_path=None):
         try:
             from optimum.intel import (
                 OVModelForSpeechSeq2Seq,
@@ -33,24 +38,30 @@ class OpenVINOAdapter:
             repository = None
             if not config["model"]:
                 raise ModelLoadError(str(exc)) from exc
-        root = _root()
         family = "openvino"
         requested_precision = config["precision"]
+        roots = _roots()
+        root = roots[0]
         candidates = []
-        candidates.extend(
-            (
-                root / f"{family}-{config['model']}-{requested_precision}",
-                root / family / f"{config['model']}-{requested_precision}",
-            )
-        )
-        if requested_precision != "source":
+        for candidate_root in roots:
             candidates.extend(
-                (root / f"{family}-{config['model']}", root / family / config["model"])
+                (
+                    candidate_root / f"{family}-{config['model']}-{requested_precision}",
+                    candidate_root / family / f"{config['model']}-{requested_precision}",
+                )
             )
-        path = next((candidate for candidate in candidates if candidate.exists()), None)
+            if requested_precision != "source":
+                candidates.extend(
+                    (candidate_root / f"{family}-{config['model']}", candidate_root / family / config["model"])
+                )
+        path = (
+            Path(artifact_path)
+            if artifact_path is not None
+            else next((candidate for candidate in candidates if candidate.exists()), None)
+        )
         try:
             device = "GPU" if config["runtime"] == "openvino-gpu" else "CPU"
-            kwargs = {"device": device}
+            kwargs = {"device": device, "local_files_only": True, "trust_remote_code": False}
             if requested_precision == "int8":
                 kwargs["quantization_config"] = OVWeightQuantizationConfig(bits=8)
             elif requested_precision == "int4":
@@ -69,7 +80,7 @@ class OpenVINOAdapter:
                 )
             if path is not None:
                 self.processor = AutoProcessor.from_pretrained(
-                    path, local_files_only=True
+                    path, local_files_only=True, trust_remote_code=False
                 )
                 self.model = OVModelForSpeechSeq2Seq.from_pretrained(path, **kwargs)
             else:
@@ -80,7 +91,7 @@ class OpenVINOAdapter:
                 # Explicit model loading may install source weights; catalog scans remain offline.
                 source_path = snapshot_download(repository)
                 self.processor = AutoProcessor.from_pretrained(
-                    source_path, local_files_only=True
+                    source_path, local_files_only=True, trust_remote_code=False
                 )
                 self.model = OVModelForSpeechSeq2Seq.from_pretrained(
                     source_path, export=True, **kwargs
@@ -165,30 +176,42 @@ class OpenVINOAdapter:
 
 
 class CTranslate2Adapter:
-    def __init__(self, config):
+    def __init__(self, config, *, artifact_path=None):
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:
             raise ModelLoadError(
                 "CTranslate2 runtime requires faster-whisper; install the speech-to-text[ctranslate2] extra"
             ) from exc
-        root = _root()
         model = config["model"]
         precision = config["precision"]
-        candidates = (
-            root / f"ctranslate2-{model}-{precision}",
-            root / "ctranslate2" / f"{model}-{precision}",
-            root / f"ctranslate2-{model}",
-            root / "ctranslate2" / model,
+        roots = _roots()
+        root = roots[0]
+        candidates = []
+        for candidate_root in roots:
+            candidates.extend(
+                (
+                    candidate_root / f"ctranslate2-{model}-{precision}",
+                    candidate_root / "ctranslate2" / f"{model}-{precision}",
+                    candidate_root / f"ctranslate2-{model}",
+                    candidate_root / "ctranslate2" / model,
+                )
+            )
+        path = (
+            Path(artifact_path)
+            if artifact_path is not None
+            else next((candidate for candidate in candidates if candidate.is_dir()), None)
         )
-        path = next((candidate for candidate in candidates if candidate.is_dir()), None)
         if path is None:
             raise ModelLoadError(
                 f"No CTranslate2 weights for {config['model']} at {precision} precision under {root}; convert/install the model first"
             )
         try:
             self.model = WhisperModel(
-                str(path), device="cpu", compute_type=config["precision"]
+                str(path),
+                device="cpu",
+                compute_type=config["precision"],
+                local_files_only=True,
             )
         except Exception as exc:
             raise ModelLoadError(
@@ -211,12 +234,12 @@ class CTranslate2Adapter:
         self.model = None
 
 
-def create_runtime(config):
+def create_runtime(config, *, artifact_path=None):
     try:
         if config["runtime"].startswith("openvino"):
-            return OpenVINOAdapter(config)
+            return OpenVINOAdapter(config, artifact_path=artifact_path)
         if config["runtime"] == "ctranslate2":
-            return CTranslate2Adapter(config)
+            return CTranslate2Adapter(config, artifact_path=artifact_path)
     except ModelLoadError:
         raise
     except Exception as exc:

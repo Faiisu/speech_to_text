@@ -57,7 +57,7 @@ test('IPCAM profiles stay usable when microphone discovery is unavailable', asyn
   expect(run).toMatchObject({ source_type: 'rtsp', kind: 'microphone', device: null, profile_name: 'E2E IPCAM duplicate' })
   await expect(page.getByRole('heading', { name: 'E2E IPCAM duplicate' })).toBeVisible()
   await expect(page.locator('.run-heading')).toContainText('IPCAM (RTSP)')
-  await expect(page.locator('.transcript-text')).toHaveText('สวัสดีครับ (IPCAM test source)', { timeout: 10_000 })
+  await expect(page.getByRole('heading', { name: 'Matched keywords' })).toBeVisible({ timeout: 10_000 })
   await page.getByRole('button', { name: 'Stop listening' }).click()
   await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${workflowId}`).then(async response => (await response.json()).status)).toBe('stopped')
   await page.request.delete(`/api/v1/profiles/${profile.profile_id}`)
@@ -142,7 +142,7 @@ test('user can create a profile, monitor its output, and stop the workflow', asy
   await expect(page.locator('.run-kpis')).toContainText('tiny')
   await expect(page.locator('.run-kpis')).toContainText('openvino-cpu')
 
-  await expect(page.locator('.transcript-text')).toHaveText('สวัสดีครับ', { timeout: 10_000 })
+  await expect(page.locator('.match-list')).toContainText('สวัสดี', { timeout: 10_000 })
   await expect(page.locator('.match-list')).toContainText('สวัสดี')
   await expect(page.locator('.match-list')).toContainText('1 matches')
 
@@ -468,7 +468,6 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await expect(page).toHaveURL(/\/runs\/[a-f0-9]+$/)
   const copiedWorkflowId = page.url().split('/').at(-1)!
   await expect(page.locator('.run-kpis')).toContainText('English')
-  await expect(page.locator('.transcript-language')).toContainText('ENGLISH')
   await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${copiedWorkflowId}`).then(response => response.json())).toMatchObject({ language: 'en', decoding_options: copy.decoding_options })
   const updateResponse = await page.request.put(`/api/v1/profiles/${copy.profile_id}`, { data: {
     name: copy.name,
@@ -590,6 +589,48 @@ test('stale workflow IDs explain that run history is process-local', async ({ pa
 
   await expect(page.getByRole('status')).toContainText('This workflow is not in the current backend history.')
   await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('singular run route keeps keyword tracking and only the latest 100 events after cursor expiry', async ({ page }) => {
+  await page.route('**/api/v1/transcriptions/workspace-e2e', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      workflow_id: 'workspace-e2e', kind: 'microphone', status: 'running', keywords: ['alpha'],
+      profile_id: null, profile_name: 'Workspace e2e', source_type: 'microphone', device: 'Test mic',
+      execution_mode: 'shared', silence_threshold: 0, decoding_options: null, model: 'small', runtime: 'ctranslate2',
+      language: 'en', transcript: 'This response contains transcript content which must not render.', matches: [{ keyword: 'alpha', count: 7 }],
+      latest_rtf: 0.5, error: null, delivery: null, created_at: '2026-10-17T00:00:00Z',
+    }),
+  }))
+  let eventRequest = 0
+  await page.route('**/api/v1/transcriptions/workspace-e2e/events?after=*', async route => {
+    const after = new URL(route.request().url()).searchParams.get('after')
+    if (eventRequest++ === 0) {
+      const events = Array.from({ length: 80 }, (_, index) => ({ cursor: index + 1, type: index === 1 ? 'transcript' : 'recording', text: 'Event transcript content must not render.', timestamp: '2026-10-17T00:00:00Z' }))
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ workflow_id: 'workspace-e2e', events, next_cursor: 80 }) })
+    } else if (after === '80') {
+      const events = Array.from({ length: 50 }, (_, index) => ({ cursor: index + 81, type: 'recording', timestamp: '2026-10-17T00:00:00Z' }))
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ workflow_id: 'workspace-e2e', events, next_cursor: 130 }) })
+    } else if (after === '130') {
+      await route.fulfill({ status: 410, contentType: 'application/json', body: JSON.stringify({ detail: { message: 'event cursor expired', oldest_cursor: 201 } }) })
+    } else {
+      expect(after).toBe('200')
+      const events = Array.from({ length: 30 }, (_, index) => ({ cursor: index + 201, type: 'recording', timestamp: '2026-10-17T00:00:00Z' }))
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ workflow_id: 'workspace-e2e', events, next_cursor: 230 }) })
+    }
+  })
+
+  await page.goto('/run/workspace-e2e')
+  await expect(page.getByRole('heading', { name: 'Matched keywords' })).toBeVisible()
+  await expect(page.locator('.match-list')).toContainText('alpha')
+  await expect(page.locator('.match-list')).toContainText('7 matches')
+  await expect(page.getByRole('heading', { name: 'Events' })).toBeVisible()
+  await expect(page.getByRole('status')).toContainText('Earlier events expired', { timeout: 8_000 })
+  await expect(page.locator('.event-count')).toHaveText('100')
+  await expect(page.locator('.timeline')).toContainText('#230')
+  await expect(page.locator('.timeline')).toContainText('#61')
+  await expect(page.locator('.timeline')).not.toContainText('#31')
+  await expect(page.locator('body')).not.toContainText('transcript content')
 })
 
 test('authenticated RTSP profiles keep passwords write-only and require duplicate re-entry', async ({ page }) => {

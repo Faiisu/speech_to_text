@@ -250,9 +250,16 @@ def test_mqtt_destination_test_and_terminal_workflows(tmp_path, monkeypatch, bro
             while snapshot["status"] not in {"completed", "stopped", "failed"} and time.monotonic() < deadline:
                 time.sleep(.01)
                 snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
-            assert snapshot["transcript"] == "สวัสดี สวัสดี ลาก่อน"
+            assert snapshot["transcript"] is None
             assert snapshot["matches"] == [{"keyword": "สวัสดี", "count": 2}]
             assert received.empty(), "microphone stop must not publish an aggregate record"
+            transcript_events = [
+                event for event in client.get(
+                    f"/api/v1/transcriptions/{workflow_id}/events?after=0"
+                ).json()["events"] if event["type"] == "transcript"
+            ]
+            assert len(transcript_events) == 2
+            assert all("text" not in event for event in transcript_events)
         cleanup_marker = "group" if kind == "per_workflow_process" else "model"
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:

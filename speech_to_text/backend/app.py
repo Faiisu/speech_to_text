@@ -28,7 +28,7 @@ def create_app(*, runtime=None):
 
     @app.exception_handler(RequestValidationError)
     async def safe_validation_error(request: Request, exc: RequestValidationError):
-        if request.url.path == "/api/v1/profiles" or request.url.path.startswith("/api/v1/profiles/") or request.url.path in {
+        if request.url.path == "/api/v1/models" or request.url.path.startswith("/api/v1/models/") or request.url.path == "/api/v1/profiles" or request.url.path.startswith("/api/v1/profiles/") or request.url.path in {
             "/api/v1/transcriptions/rtsp",
             "/api/v1/recordings",
         }:

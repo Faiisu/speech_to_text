@@ -39,12 +39,20 @@ def _has_weights(path, family):
     )
 
 
-def _languages(root, key, repo, *, allow_cache=True):
+def _languages(root, key, repo, *, allow_cache=True, roots=None):
+    roots = roots or [root]
     configs = [
-        path / "config.json"
+        path / filename
+        for model_root in roots
         for family in ("openvino", "ctranslate2")
-        for path in _asset_paths(root, family, key)
+        for path in _asset_paths(model_root, family, key)
+        for filename in ("config.json", "generation_config.json", "tokenizer.json")
     ]
+    configs.extend(
+        model_root / "sources" / key / filename
+        for model_root in roots
+        for filename in ("config.json", "generation_config.json", "tokenizer.json")
+    )
     if repo and allow_cache:
         try:
             from huggingface_hub.constants import HF_HUB_CACHE
@@ -56,7 +64,7 @@ def _languages(root, key, repo, *, allow_cache=True):
                 configs.extend(cached.glob("*/config.json"))
         except ImportError:
             pass
-    multilingual = key == "turbo"
+    multilingual = key == "turbo" or bool(repo and not repo.casefold().endswith(".en"))
     explicitly_english = bool(repo and repo.casefold().endswith(".en"))
     for path in configs:
         try:
@@ -67,6 +75,37 @@ def _languages(root, key, repo, *, allow_cache=True):
             multilingual = bool(config["is_multilingual"])
             explicitly_english = not multilingual
             break
+        language_ids = config.get("lang_to_id")
+        if isinstance(language_ids, dict):
+            languages = {
+                code
+                for code in WHISPER_LANGUAGE_CODES
+                if any(token in (code, f"<|{code}|>") for token in language_ids)
+            }
+            if languages:
+                multilingual = len(languages) > 1
+                explicitly_english = languages == {"en"}
+                break
+        if path.name == "tokenizer.json":
+            tokens = set()
+            added_tokens = config.get("added_tokens", [])
+            for item in added_tokens if isinstance(added_tokens, list) else []:
+                content = item.get("content") if isinstance(item, dict) else None
+                if isinstance(content, str):
+                    tokens.add(content)
+            model_config = config.get("model")
+            vocab = model_config.get("vocab", {}) if isinstance(model_config, dict) else {}
+            if isinstance(vocab, dict):
+                tokens.update(key for key in vocab if isinstance(key, str))
+            languages = {
+                code
+                for code in WHISPER_LANGUAGE_CODES
+                if f"<|{code}|>" in tokens
+            }
+            if languages:
+                multilingual = len(languages) > 1
+                explicitly_english = languages == {"en"}
+                break
     return (
         ["en"]
         if explicitly_english or not multilingual
@@ -81,32 +120,38 @@ def _module_ready(name):
         return False
 
 
-def default_models_root():
+def model_read_roots(*, catalog_path=None):
+    """Return model roots in lookup order; explicit roots stay hermetic."""
+    if catalog_path is not None:
+        return [Path(catalog_path).parent]
     env = os.environ.get("SPEECH_TO_TEXT_MODELS_DIR")
     if env:
-        return Path(env)
-    root = Path.cwd() / "models"
+        return [Path(env)]
+    primary = Path.cwd() / "models"
     legacy = Path.cwd() / "legacies-poc" / "models"
-    if root.is_dir() and any(
-        _has_weights(p, "ctranslate2") or _has_weights(p, "openvino")
-        for p in root.iterdir()
-    ):
-        return root
-    if legacy.is_dir() and any(
-        _has_weights(p, "ctranslate2") or _has_weights(p, "openvino")
-        for p in legacy.iterdir()
-    ):
-        return legacy
-    return root
+    return [primary] if primary == legacy else [primary, legacy]
+
+
+def default_models_root():
+    """Return the primary root used for writes and runtime-local preferences."""
+    return model_read_roots()[0]
 
 
 def _registry(path):
     if path is None:
-        root = default_models_root()
-        registry = root / "models.local.json"
+        roots = model_read_roots()
+        root = roots[0]
+        data = {}
+        for model_root in reversed(roots):
+            data.update(_read_registry_file(model_root / "models.local.json"))
+        return root, data
     else:
         registry = Path(path)
         root = registry.parent
+    return root, _read_registry_file(registry)
+
+
+def _read_registry_file(registry):
     try:
         data = json.loads(registry.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -119,16 +164,36 @@ def _registry(path):
         raise ValueError(
             f"Model registry {registry} must contain a JSON object of model keys to repository strings"
         )
-    return root, data
+    return data
 
 
-def _runtime_metadata(key, root, model_key, repo):
+def _runtime_metadata(key, root, model_key, repo, *, roots=None):
+    roots = roots or [root]
     ov = key.startswith("openvino")
     module = "openvino" if ov else "ctranslate2"
     family = "openvino" if ov else "ctranslate2"
     converted = any(
-        _has_weights(path, family) for path in _asset_paths(root, family, model_key)
+        _has_weights(path, family)
+        for model_root in roots
+        for path in _asset_paths(model_root, family, model_key)
     )
+    has_generic_artifact = any(
+        _has_weights(path, family)
+        for model_root in roots
+        for path in (model_root / f"{family}-{model_key}", model_root / family / model_key)
+    )
+    installed_precisions = [
+        precision
+        for precision in ("source", "bf16", "int8", "int4", "float32")
+        if any(
+            _has_weights(path, family)
+            for model_root in roots
+            for path in (
+                model_root / f"{family}-{model_key}-{precision}",
+                model_root / family / f"{model_key}-{precision}",
+            )
+        )
+    ]
     ready_lib = _module_ready(module)
     device_ready = True
     if ov and ready_lib:
@@ -155,7 +220,7 @@ def _runtime_metadata(key, root, model_key, repo):
         reason = f"No converted {family} weights found under {root}"
     else:
         reason = None
-    precisions = ["source", "bf16", "int8", "int4"] if ov else ["int8", "float32"]
+    precision_options = _precision_options(key)
     # CTranslate2's published model conversion is int8; only expose options
     # the selected adapter can honor with the converted asset.
     compatible = (bool(repo) or converted) and (ov or key == "ctranslate2")
@@ -163,13 +228,71 @@ def _runtime_metadata(key, root, model_key, repo):
         "key": key,
         "compatible": compatible,
         "ready": bool(ready),
-        "precision_options": precisions,
+        "precision_options": precision_options,
+        "has_generic_artifact": has_generic_artifact,
+        "installed_precisions": [
+            precision
+            for precision in installed_precisions
+            if precision in precision_options
+        ],
         "reason": reason if compatible else "Runtime/model combination is unsupported",
     }
 
 
+def _precision_options(runtime):
+    return ["int8", "float32"] if runtime == "ctranslate2" else ["source", "bf16", "int8", "int4"]
+
+
+def _read_provenance(path):
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    repository = data.get("repository")
+    revision = data.get("revision")
+    return {
+        "repository": repository if isinstance(repository, str) and repository else None,
+        "revision": revision if isinstance(revision, str) and revision else None,
+    }
+
+
+def _model_provenance(model, roots):
+    """Read source identity from managed and legacy markers without following symlinks."""
+    key = model["key"]
+    markers = []
+    for root in roots:
+        source = root / "sources" / key
+        if source.is_dir() and not source.is_symlink():
+            markers.append(source / ".model-deployment.json")
+    for family in ("openvino", "ctranslate2"):
+        for root in roots:
+            for artifact in _asset_paths(root, family, key):
+                if artifact.is_dir() and not artifact.is_symlink():
+                    markers.extend((artifact / ".model-deployment.json", artifact / ".speech_to_text_export.json"))
+
+    records = [record for marker in markers if (record := _read_provenance(marker))]
+    repository = model.get("repository")
+    if not repository:
+        repository = next((record["repository"] for record in records if record["repository"]), None)
+    revision = next(
+        (
+            record["revision"]
+            for record in records
+            if record["revision"] and (not repository or record["repository"] == repository)
+        ),
+        None,
+    )
+    model["repository"] = repository
+    model["revision"] = revision
+
+
 def list_models(*, catalog_path=None):
     root, local = _registry(catalog_path)
+    roots = model_read_roots(catalog_path=catalog_path)
     entries = {}
     # An explicit registry is intentionally hermetic apart from builtin candidates.
     sources = [BUILTINS, local]
@@ -221,13 +344,15 @@ def list_models(*, catalog_path=None):
                     "installed": False,
                     "downloadable": True,
                     "languages": _languages(
-                        root, target, repo, allow_cache=catalog_path is None
+                        root, target, repo, allow_cache=catalog_path is None, roots=roots
                     ),
                     "runtimes": [],
                 }
     converted_keys = set()
-    if root.is_dir():
-        for item in root.iterdir():
+    for model_root in roots:
+        if not model_root.is_dir():
+            continue
+        for item in model_root.iterdir():
             if item.is_dir():
                 for prefix in ("openvino-", "ctranslate2-"):
                     if item.name.startswith(prefix):
@@ -240,7 +365,7 @@ def list_models(*, catalog_path=None):
                         if _has_weights(item, family):
                             converted_keys.add(model_key)
         for family in ("openvino", "ctranslate2"):
-            folder = root / family
+            folder = model_root / family
             if folder.is_dir():
                 for item in folder.iterdir():
                     if not item.is_dir():
@@ -254,7 +379,7 @@ def list_models(*, catalog_path=None):
                         converted_keys.add(model_key)
     for model in entries.values():
         model["runtimes"] = [
-            _runtime_metadata(runtime, root, model["key"], model["repository"])
+            _runtime_metadata(runtime, root, model["key"], model["repository"], roots=roots)
             for runtime in RUNTIMES
         ]
         model["installed"] = model["key"] in converted_keys or any(
@@ -270,11 +395,13 @@ def list_models(*, catalog_path=None):
             "repository": None,
             "installed": True,
             "downloadable": False,
-            "languages": _languages(root, key, None, allow_cache=catalog_path is None),
+            "languages": _languages(root, key, None, allow_cache=catalog_path is None, roots=roots),
             "runtimes": [],
         }
-        model["runtimes"] = [_runtime_metadata(r, root, key, None) for r in RUNTIMES]
+        model["runtimes"] = [_runtime_metadata(r, root, key, None, roots=roots) for r in RUNTIMES]
         entries[key] = model
+    for model in entries.values():
+        _model_provenance(model, roots)
     return sorted(entries.values(), key=lambda item: item["key"])
 
 

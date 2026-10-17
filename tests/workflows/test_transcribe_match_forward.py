@@ -159,20 +159,20 @@ def test_clip_workflow_requires_public_matching_configuration():
         workflow.transcribe_clip_and_forward("clip.wav", object(), None, ("hello",))
 
 
-def test_session_preserves_source_events_then_matches_and_forwards_partial_failure():
+def test_session_forwards_each_chunk_and_matches_partial_failure_incrementally():
     source_events = [
-        {
-            "type": "transcript",
-            "source_id": "source-17",
-            "sequence": 1,
-            "text": "ลาก่อน",
-        },
-        {"type": "error", "source_id": "source-17", "code": "CHUNK_INFERENCE_FAILED"},
         {
             "type": "transcript",
             "source_id": "source-17",
             "sequence": 0,
             "text": "สวัสดี",
+        },
+        {"type": "error", "source_id": "source-17", "code": "CHUNK_INFERENCE_FAILED"},
+        {
+            "type": "transcript",
+            "source_id": "source-17",
+            "sequence": 1,
+            "text": "ลาก่อน",
         },
         {"type": "completed", "source_id": "source-17", "status": "failed"},
     ]
@@ -189,21 +189,22 @@ def test_session_preserves_source_events_then_matches_and_forwards_partial_failu
     assert [event["type"] for event in events] == [
         "transcript",
         "match_results",
+        "forwarded",
         "error",
         "transcript",
         "match_results",
-        "match_results",
         "forwarded",
+        "match_results",
         "completed",
     ]
     assert events[0] == source_events[0]
     assert events[1]["matches"] == [
-        {"keyword": "สวัสดี", "count": 0},
-        {"keyword": "ลาก่อน", "count": 1},
+        {"keyword": "สวัสดี", "count": 1},
+        {"keyword": "ลาก่อน", "count": 0},
         {"keyword": "ขอบคุณ", "count": 0},
     ]
-    assert events[2] == source_events[1]
-    assert events[3] == source_events[2]
+    assert events[3] == source_events[1]
+    assert events[4] == source_events[2]
     expected_matches = {
         "type": "match_results",
         "source_id": "source-17",
@@ -214,11 +215,15 @@ def test_session_preserves_source_events_then_matches_and_forwards_partial_failu
             {"keyword": "ขอบคุณ", "count": 0},
         ],
     }
-    assert events[4] == expected_matches
     assert events[5] == expected_matches
+    assert events[7] == expected_matches
     assert events[-1] == source_events[-1]
-    assert received[0]["transcript"] == "สวัสดี ลาก่อน"
-    assert received[0]["status"] == "failed"
+    assert [record["transcript"] for record in received] == ["สวัสดี", "ลาก่อน"]
+    assert [record["event_id"] for record in received] == [
+        "source-17:chunk:1", "source-17:chunk:2"
+    ]
+    assert received[0]["status"] == "completed"
+    assert events[2]["receipt"] == {"delivered": True}
     assert events[6]["receipt"] == {"delivered": True}
 
 
@@ -247,7 +252,7 @@ def test_session_without_forwarder_emits_matches_and_completion_only():
     ]
 
 
-def test_session_emits_cumulative_snapshots_and_forwards_only_once_after_completion():
+def test_session_emits_cumulative_snapshots_and_forwards_each_chunk():
     source_events = [
         {"type": "transcript", "source_id": "source-17", "sequence": 0, "text": "สวัสดี"},
         {"type": "transcript", "source_id": "source-17", "sequence": 1, "text": " สวัสดี"},
@@ -270,14 +275,16 @@ def test_session_emits_cumulative_snapshots_and_forwards_only_once_after_complet
         [{"keyword": "สวัสดี", "count": 2}, {"keyword": "ลาก่อน", "count": 0}],
     ]
     assert [event["type"] for event in events] == [
-        "transcript", "match_results", "transcript", "match_results",
-        "match_results", "forwarded", "completed",
+        "transcript", "match_results", "forwarded", "transcript",
+        "match_results", "forwarded", "match_results", "completed",
     ]
-    assert len(received) == 1
-    assert received[0]["transcript"] == "สวัสดี  สวัสดี"
+    assert [record["transcript"] for record in received] == ["สวัสดี", " สวัสดี"]
+    assert [record["event_id"] for record in received] == [
+        "source-17:chunk:1", "source-17:chunk:2"
+    ]
 
 
-def test_mqtt_session_publishes_chunk_local_payloads_and_cumulative_ui_snapshots():
+def test_session_publishes_chunk_local_payloads_for_live_forwarders():
     class FakeMqttForwarder:
         transport = "mqtt"
 
@@ -351,7 +358,46 @@ def test_mqtt_session_publishes_chunk_local_payloads_and_cumulative_ui_snapshots
     ]
 
 
-def test_mqtt_chunk_delivery_error_does_not_stop_matching_later_chunks():
+def test_long_live_session_keeps_cumulative_counts_and_chunk_ids_bounded_by_chunk():
+    class Forwarder:
+        transport = "mqtt"
+
+        def __init__(self):
+            self.records = []
+
+        def forward(self, record):
+            self.records.append(record)
+
+    chunks = 1000
+    forwarder = Forwarder()
+    source_events = [
+        {"type": "transcript", "source_id": "source-17", "sequence": index, "text": "a"}
+        for index in range(chunks)
+    ]
+    source_events.append(
+        {"type": "completed", "source_id": "source-17", "status": "stopped"}
+    )
+    wrapped = workflow.forward_session(
+        FakeSession(source_events),
+        forwarder,
+        WordMatchingConfig(keywords=("a a",)),
+    )
+
+    wrapped.wait(timeout=3)
+    events = drain_events(wrapped)
+
+    assert len(forwarder.records) == chunks
+    assert [record["event_id"] for record in forwarder.records] == [
+        f"source-17:chunk:{index}" for index in range(1, chunks + 1)
+    ]
+    assert [record["transcript"] for record in forwarder.records[:2]] == ["a", "a"]
+    assert all(record["matches"] == [{"keyword": "a a", "count": 0}]
+               for record in forwarder.records)
+    final_snapshot = [event for event in events if event["type"] == "match_results"][-1]
+    assert final_snapshot["matches"] == [{"keyword": "a a", "count": chunks - 1}]
+
+
+def test_chunk_delivery_error_does_not_stop_matching_later_chunks():
     class FailingFirstMqttForwarder:
         transport = "mqtt"
 
@@ -386,7 +432,7 @@ def test_mqtt_chunk_delivery_error_does_not_stop_matching_later_chunks():
     assert events[-1]["type"] == "completed"
 
 
-def test_mqtt_records_use_null_rtf_when_measurements_are_unavailable():
+def test_live_records_use_null_rtf_when_measurements_are_unavailable():
     class FakeMqttForwarder:
         transport = "mqtt"
 
@@ -413,7 +459,7 @@ def test_mqtt_records_use_null_rtf_when_measurements_are_unavailable():
     assert [record["rtf"] for record in forwarder.records] == [None]
 
 
-def test_mqtt_session_without_transcript_does_not_publish_an_aggregate():
+def test_session_without_transcript_does_not_publish_an_aggregate():
     class FakeMqttForwarder:
         transport = "mqtt"
 
@@ -464,7 +510,7 @@ def test_mqtt_clip_keeps_latest_inference_rtf_without_publishing(monkeypatch):
     assert forwarder.records == []
 
 
-def test_session_reports_forwarding_failure_without_losing_matches():
+def test_session_reports_chunk_forwarding_failure_without_losing_matches():
     source_events = [
         {
             "type": "transcript",
@@ -490,12 +536,12 @@ def test_session_reports_forwarding_failure_without_losing_matches():
     assert [event["type"] for event in events] == [
         "transcript",
         "match_results",
-        "match_results",
         "forwarding_error",
+        "match_results",
         "completed",
     ]
-    assert events[2]["matches"] == [{"keyword": "สวัสดี", "count": 1}]
-    assert events[3]["error"] == "receiver unavailable"
+    assert events[1]["matches"] == [{"keyword": "สวัสดี", "count": 1}]
+    assert events[2]["error"] == "receiver unavailable"
     assert events[-1] == source_events[-1]
 
 
@@ -822,6 +868,64 @@ def test_validate_model_runtime_rejects_incompatible_pair_but_allows_unready(mon
     assert instance.validate_model_runtime("tiny", "openvino-gpu") == "openvino-gpu"
     with pytest.raises(service.WorkflowConfigurationError, match="not supported"):
         instance.validate_model_runtime("tiny", "ctranslate2")
+
+
+def test_model_catalog_reports_runtime_default_and_installed_precisions(monkeypatch):
+    from speech_to_text.workflows.transcribe_match_forward import service
+
+    monkeypatch.delenv("SPEECH_TO_TEXT_PRECISION", raising=False)
+    monkeypatch.setenv("SPEECH_TO_TEXT_RUNTIME", "ctranslate2")
+    monkeypatch.setattr(
+        service,
+        "list_available_models",
+        lambda: [{
+            "key": "tiny",
+            "display_name": "Tiny",
+            "repository": "org/whisper-tiny",
+            "revision": "abc123def",
+            "installed": True,
+            "runtimes": [{
+                "key": "ctranslate2",
+                "ready": True,
+                "precision_options": ["int8", "float32"],
+                "installed_precisions": ["float32"],
+            }],
+        }],
+    )
+
+    catalog = service.TranscriptionService().list_models()
+    runtime = catalog["models"][0]["runtimes"][0]
+    assert catalog["default_precision"] == "int8"
+    assert catalog["models"][0]["repository"] == "org/whisper-tiny"
+    assert catalog["models"][0]["revision"] == "abc123def"
+    assert runtime["default_precision"] == "int8"
+    assert runtime["installed_precisions"] == ["float32"]
+
+
+def test_catalog_preserves_explicit_precision_in_environment(monkeypatch):
+    from speech_to_text.workflows.transcribe_match_forward import service
+
+    monkeypatch.setenv("SPEECH_TO_TEXT_RUNTIME", "ctranslate2")
+    monkeypatch.setenv("SPEECH_TO_TEXT_PRECISION", "float32")
+    monkeypatch.setattr(
+        service,
+        "list_available_models",
+        lambda: [{
+            "key": "tiny",
+            "display_name": "Tiny",
+            "installed": True,
+            "runtimes": [{
+                "key": "ctranslate2",
+                "ready": True,
+                "precision_options": ["int8", "float32"],
+                "installed_precisions": ["float32"],
+            }],
+        }],
+    )
+
+    catalog = service.TranscriptionService().list_models()
+    assert catalog["default_precision"] == "float32"
+    assert catalog["models"][0]["runtimes"][0]["default_precision"] == "float32"
 
 
 def test_shared_service_reuses_handle_per_effective_model_config_and_closes_all(monkeypatch):

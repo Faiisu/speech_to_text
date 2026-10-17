@@ -2617,6 +2617,12 @@ ctranslate2 = [
 microphone = [
     { name = "sounddevice" },
 ]
+model-management = [
+    { name = "huggingface-hub" },
+    { name = "safetensors" },
+    { name = "torch" },
+    { name = "transformers" },
+]
 mqtt = [
     { name = "paho-mqtt" },
 ]
@@ -2648,6 +2654,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'test'", specifier = ">=0.115,<1" },
     { name = "faster-whisper", marker = "extra == 'ctranslate2'", specifier = ">=1.0" },
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27,<1" },
+    { name = "huggingface-hub", marker = "extra == 'model-management'", specifier = ">=0.24" },
     { name = "huggingface-hub", marker = "extra == 'openvino'", specifier = ">=0.24" },
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "openvino", marker = "extra == 'openvino'", specifier = ">=2024.4" },
@@ -2658,11 +2665,14 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8,<10" },
     { name = "python-multipart", marker = "extra == 'backend'", specifier = ">=0.0.9" },
     { name = "python-multipart", marker = "extra == 'test'", specifier = ">=0.0.9" },
+    { name = "safetensors", marker = "extra == 'model-management'", specifier = ">=0.4" },
     { name = "sounddevice", marker = "extra == 'microphone'", specifier = ">=0.5" },
+    { name = "torch", marker = "extra == 'model-management'", specifier = ">=2.2" },
+    { name = "transformers", marker = "extra == 'model-management'", specifier = ">=4.40" },
     { name = "transformers", marker = "extra == 'openvino'", specifier = ">=4.40" },
     { name = "uvicorn", marker = "extra == 'backend'", specifier = ">=0.30,<1" },
 ]
-provides-extras = ["microphone", "mqtt", "openvino", "ctranslate2", "benchmark", "backend", "test"]
+provides-extras = ["microphone", "mqtt", "openvino", "ctranslate2", "model-management", "benchmark", "backend", "test"]
 
 [[package]]
 name = "starlette"

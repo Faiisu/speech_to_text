@@ -8,6 +8,8 @@ Plan the new speech-to-text system from the archived proof of concept (PoC). Thi
 
 ### 01. Select and deploy speech-to-text models with an OpenVINO default
 
+The [model-management contract](../model-management/spec.md) extends deployment with frontend-triggered Hugging Face Whisper inspection, downloads, conversion, and local inference verification.
+
 **Goal:** Let a host system start speech-to-text for a microphone connected to the PC, choose an available model, and configure its supported settings through callable feature functions. Separate model loading from input processing so the host can choose one model instance for multiple inputs or one model instance per input process. Keep finite audio clips available for deterministic verification. Start with the PoC's default model, `turbo` (`typhoon-ai/typhoon-whisper-turbo`), and OpenVINO GPU as the default setup.
 
 #### Callable interface

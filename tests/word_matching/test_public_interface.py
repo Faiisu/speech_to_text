@@ -7,6 +7,7 @@ from speech_to_text.features.word_matching import (
     WordMatchingConfig,
     WordMatchingError,
     WordMatchResult,
+    StreamingWordMatcher,
     match_keywords,
 )
 
@@ -112,3 +113,44 @@ def test_rejects_non_string_source_text(text):
 def test_rejects_non_config_argument():
     with pytest.raises(TypeError):
         match_keywords("สวัสดี", ("สวัสดี",))
+
+
+def test_streaming_matcher_counts_overlaps_and_phrases_across_chunks_with_bounded_tail():
+    config = WordMatchingConfig(keywords=("aa", "a a", "café"))
+    matcher = StreamingWordMatcher(config)
+
+    matcher.add_chunk("a")
+    result = matcher.add_chunk("aa Cafe\u0301")
+
+    assert result.matches == (
+        KeywordMatch("aa", 1),
+        KeywordMatch("a a", 1),
+        KeywordMatch("café", 1),
+    )
+    for _ in range(1000):
+        result = matcher.add_chunk("x")
+    assert result.matches == (
+        KeywordMatch("aa", 1),
+        KeywordMatch("a a", 1),
+        KeywordMatch("café", 1),
+    )
+    assert len(matcher._tail) <= 4
+
+
+@pytest.mark.parametrize(
+    "chunks,keywords",
+    [
+        (["a", "b"], ("a ",)),
+        (["a", "b"], (" b",)),
+        (["a", "", "b"], ("a  b", "a ", " b")),
+        (["", "a"], (" a",)),
+    ],
+)
+def test_streaming_matcher_matches_joined_text_including_inserted_spaces(chunks, keywords):
+    config = WordMatchingConfig(keywords=keywords)
+    matcher = StreamingWordMatcher(config)
+
+    for chunk in chunks:
+        result = matcher.add_chunk(chunk)
+
+    assert result == match_keywords(" ".join(chunks), config)

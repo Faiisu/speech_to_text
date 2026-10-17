@@ -60,6 +60,8 @@ Open the Vite URL printed in the terminal (normally `http://localhost:5173`). Th
 
 To build frontend assets, run `npm run build` from `speech_to_text/frontend/`. The Vite development server is the local preview path. For production hosting on the UBX-330M, follow the [deployment guide](deployment.md).
 
+Use **Models** at `/models` to download and convert Whisper models from Hugging Face. Install preparation dependencies with `uv sync --locked --extra backend --extra model-management --extra ctranslate2` (or use the `openvino` runtime extra). See [model downloads and conversion](configuration.md#model-downloads-and-conversion) for tokens and storage.
+
 Use **Model tuning** at `/model-tuning` to record a sample from the backend host's microphone or an IP camera, or upload a WAV, MP3, or M4A from the computer running the browser. To capture a camera, choose **Input source → IPCAM (RTSP)**, enter its URL and optional **Username**/**Password**, and click **Start recording**, then **Stop recording** when the sample is ready. Pasted credential URLs and existing environment secret references are also supported. See [RTSP configuration](configuration.md#ipcam-audio-through-rtsp) for credentials and network access. To upload audio, select **Audio file**, choose the file, and click **Upload audio**. The saved clip appears in the same list as captured recordings, ready for playback, WAV download, and repeated trials with different language and decoder settings. MP3/M4A uploads are converted to WAV by the backend. See the [model tuning contract](../.scratch/model-tuning/spec.md) for capture/upload limits, saved files, and result lifetime.
 
 ### Start both services on macOS

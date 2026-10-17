@@ -9,9 +9,66 @@ export type Microphone = {
 export type ModelChoice = {
   key: string
   display_name: string
+  repository: string | null
+  revision: string | null
   installed: boolean
   ready: boolean
   runtimes: RuntimeChoice[]
+}
+
+export type ModelDeletionPlan = {
+  model_key: string
+  files: { path: string; kind: 'source' | 'runtime'; bytes: number }[]
+  total_bytes: number
+  registered: boolean
+  deletable: boolean
+  reason: string | null
+}
+
+export type ModelDeletionResult = ModelDeletionPlan & { deleted: true }
+
+export type ModelRuntime = {
+  key: string
+  available: boolean
+  precision_options: string[]
+  reason: string | null
+}
+
+export type ModelInspection = {
+  repository: string
+  revision: string
+  compatible: boolean
+  reasons: string[]
+  model_type: string | null
+  runtimes: ModelRuntime[]
+}
+
+export type ModelJobResult = {
+  model_key: string
+  repository: string
+  revision: string
+  downloaded: boolean
+  converted: boolean
+  verified: boolean
+  runtime: string | null
+  precision: string | null
+  reason: string | null
+}
+
+export type ModelJob = {
+  job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  phase: string
+  repository: string
+  model_key: string
+  revision: string
+  operation: 'download' | 'convert'
+  runtime: string | null
+  precision: string | null
+  created_at: string
+  updated_at: string
+  error: string | null
+  result: ModelJobResult | null
 }
 
 export type RuntimeChoice = {
@@ -20,6 +77,9 @@ export type RuntimeChoice = {
   ready: boolean
   precision_options: string[]
   reason: string | null
+  default_precision?: string
+  installed_precisions?: string[]
+  has_generic_artifact?: boolean
 }
 
 export type Language = 'th' | 'en' | 'auto'

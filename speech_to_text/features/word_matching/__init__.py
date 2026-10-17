@@ -2,6 +2,7 @@
 
 from .matcher import (
     KeywordMatch,
+    StreamingWordMatcher,
     WordMatchResult,
     WordMatchingConfig,
     WordMatchingError,
@@ -10,6 +11,7 @@ from .matcher import (
 
 __all__ = [
     "KeywordMatch",
+    "StreamingWordMatcher",
     "WordMatchResult",
     "WordMatchingConfig",
     "WordMatchingError",

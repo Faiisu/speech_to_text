@@ -355,7 +355,6 @@ def test_profile_microphone_uses_start_time_forwarder_snapshot(
                 },
             )
             assert replaced.status_code == 200, replaced.text
-            completion_gate.set()
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 snapshot = client.get(
@@ -367,6 +366,14 @@ def test_profile_microphone_uses_start_time_forwarder_snapshot(
             assert snapshot["status"] == "recording"
             assert snapshot["destination_id"] == destination_id
             assert snapshot["delivery"]["status"] == "delivered"
+            assert snapshot["delivery"]["event_id"] == "profile-run:chunk:1"
+            assert snapshot["transcript"] is None
+            assert len(_Receiver.records) == 1
+            path, event_id, record = _Receiver.records[0]
+            assert path == "/old"
+            assert event_id == record["event_id"] == "profile-run:chunk:1"
+            assert record["transcript"] == "สวัสดี"
+            completion_gate.set()
             stop = client.post(f"/api/v1/transcriptions/{workflow_id}/stop")
             assert stop.status_code == 202
             deadline = time.monotonic() + 5
@@ -378,7 +385,7 @@ def test_profile_microphone_uses_start_time_forwarder_snapshot(
                     break
                 time.sleep(0.02)
             assert snapshot["status"] == "stopped"
-            assert any(path == "/old" for path, _key, _record in _Receiver.records)
+            assert len(_Receiver.records) == 1
             assert not any(path == "/new" for path, _key, _record in _Receiver.records)
     finally:
         completion_gate.set()

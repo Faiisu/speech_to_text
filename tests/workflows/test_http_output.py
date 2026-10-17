@@ -162,6 +162,30 @@ def test_retry_uses_identical_body_and_honors_bounded_retry_after(receiver):
     assert delays == [0]
 
 
+def test_live_chunk_idempotency_keys_are_distinct_and_stable_across_retries(receiver):
+    Receiver.statuses = [503, 204, 204]
+    forwarder = HttpForwarder(HttpForwarderConfig(
+        receiver, max_attempts=2, egress_policy=local_policy(receiver),
+    ), sleeper=lambda _delay: None)
+
+    first = {
+        "event_type": "transcription.match_results",
+        "source_id": "live-run",
+        "event_id": "live-run:chunk:1",
+        "transcript": "one",
+    }
+    second = {**first, "event_id": "live-run:chunk:2", "transcript": "two"}
+    first_receipt = forwarder.forward(first)
+    second_receipt = forwarder.forward(second)
+
+    assert [entry[1]["Idempotency-Key"] for entry in Receiver.records] == [
+        "live-run:chunk:1", "live-run:chunk:1", "live-run:chunk:2",
+    ]
+    assert Receiver.records[0][2] == Receiver.records[1][2]
+    assert first_receipt.event_id == "live-run:chunk:1"
+    assert second_receipt.event_id == "live-run:chunk:2"
+
+
 def test_redirect_is_not_followed(receiver):
     Receiver.statuses = [302, 204]
     Receiver.redirect_location = receiver
