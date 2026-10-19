@@ -161,6 +161,7 @@ class SessionWorkflow:
         matcher = StreamingWordMatcher(self.matching_config)
         latest_match = match_keywords("", self.matching_config)
         chunk_ordinal = 0
+        cumulative_transcript = None
         measurement_rtfs = {}
         completed_event = None
         try:
@@ -173,7 +174,11 @@ class SessionWorkflow:
                     self.output_queue.put(event)
                     try:
                         chunk_transcript = event.get("text", "")
-                        latest_match = matcher.add_chunk(chunk_transcript)
+                        if event.get("cumulative"):
+                            cumulative_transcript = chunk_transcript
+                            latest_match = match_keywords(chunk_transcript, self.matching_config)
+                        else:
+                            latest_match = matcher.add_chunk(chunk_transcript)
                     except Exception as exc:
                         self.output_queue.put(
                             {
@@ -191,7 +196,7 @@ class SessionWorkflow:
                             "matches": _match_rows(latest_match),
                         }
                     )
-                    if self.forwarder is not None:
+                    if self.forwarder is not None and not event.get("cumulative"):
                         try:
                             chunk_matched = match_keywords(
                                 chunk_transcript, self.matching_config
@@ -239,6 +244,17 @@ class SessionWorkflow:
                     self.output_queue.put(event)
 
             try:
+                if self.forwarder is not None and cumulative_transcript:
+                    receipt = _send(
+                        self.forwarder,
+                        _record(
+                            self.source_id, latest_match, cumulative_transcript,
+                            "completed", event_id=f"{self.source_id}:final", include_rtf=True,
+                        ),
+                    )
+                    self.output_queue.put(
+                        {"type": "forwarded", "source_id": self.source_id, "receipt": receipt}
+                    )
                 self.output_queue.put(
                     {
                         "type": "match_results",

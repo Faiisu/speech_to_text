@@ -65,6 +65,7 @@ class FakeTranscriptionService:
         self.microphone_workflow = None
         self.microphone_start_options = []
         self.clip_calls = []
+        self.clip_measurements = []
 
     def validate_keywords(self, keywords):
         if not keywords or any(
@@ -79,7 +80,8 @@ class FakeTranscriptionService:
         return tuple(word.strip() for word in keywords)
 
     def transcribe_clip(
-        self, clip, keywords, flow_config=None, *, model=None, runtime=None
+        self, clip, keywords, flow_config=None, *, model=None, runtime=None,
+        measurement_callback=None,
     ):
         self.clip_calls.append(
             (dict(flow_config or {}), model, runtime)
@@ -87,6 +89,9 @@ class FakeTranscriptionService:
         self.transcription_started.set()
         if self.transcription_gate is not None:
             self.transcription_gate.wait(timeout=10)
+        if measurement_callback is not None:
+            for measurement in self.clip_measurements:
+                measurement_callback(measurement)
         with open(clip, "rb") as audio_file:
             transcript = audio_file.read().decode("ascii")
         return FakeTranscriptionResult(
@@ -294,6 +299,33 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
         if event["type"] == "match_results"
     )
     assert match_event["language"] == "en"
+
+
+def test_clip_measurements_are_retained_as_ordered_events_and_isolated_per_run(api):
+    client, service = api
+    service.clip_measurements = [
+        {"sequence": 0, "audio_seconds": 30.0, "queue_wait_seconds": 0.01, "inference_seconds": 3.0, "rtf": 0.1003, "status": "completed", "error": None},
+        {"sequence": 1, "audio_seconds": 30.0, "queue_wait_seconds": 0.02, "inference_seconds": 4.0, "rtf": None, "status": "failed", "error": "decode error"},
+        {"sequence": 2, "audio_seconds": 1.0, "queue_wait_seconds": 0.03, "inference_seconds": 0.4, "rtf": 0.43, "status": "completed", "error": None},
+    ]
+    first_id = upload_clip(client).json()["workflow_id"]
+    snapshot = wait_for_status(client, first_id, "completed")
+    first_events = client.get(f"/api/v1/transcriptions/{first_id}/events?after=0").json()
+    measurements = [event for event in first_events["events"] if event["type"] == "measurement"]
+
+    assert [event["sequence"] for event in measurements] == [0, 1, 2]
+    assert [event["rtf"] for event in measurements] == [0.1003, None, 0.43]
+    assert [event["audio_seconds"] for event in measurements] == [30.0, 30.0, 1.0]
+    assert measurements[1]["error"] == "decode error"
+    assert snapshot["latest_rtf"] == 0.43
+    assert client.get(f"/api/v1/transcriptions/{first_id}/events?after=0").json() == first_events
+
+    service.clip_measurements = []
+    second_id = upload_clip(client, b"second run").json()["workflow_id"]
+    second_snapshot = wait_for_status(client, second_id, "completed")
+    second_events = client.get(f"/api/v1/transcriptions/{second_id}/events?after=0").json()
+    assert second_snapshot["latest_rtf"] is None
+    assert not any(event["type"] == "measurement" for event in second_events["events"])
 
 
 @pytest.mark.parametrize("kind", ["clip", "microphone"])

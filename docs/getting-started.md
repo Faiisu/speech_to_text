@@ -97,7 +97,7 @@ Install the test extra if it is not already present, then run the feature contra
 
 ```bash
 uv sync --locked --extra test
-.venv/bin/pytest -q
+uv run --no-sync python -m pytest -q
 ```
 
 Real microphone and model tests are opt-in and skip by default. Read [Contributing](contributing.md#tests-and-validation) before running hardware proofs.

@@ -6,11 +6,10 @@ Develop each feature against its documented callable contract, with implementati
 
 ## Development setup
 
-Create a local environment and install the test dependencies:
+Create the locked local environment with the test dependencies:
 
 ```bash
-uv venv .venv
-uv pip install --python .venv/bin/python -e '.[test]'
+uv sync --locked --extra test
 ```
 
 Install optional model or microphone packages only when needed for the work. See [Getting Started](getting-started.md#install-optional-runtimes-and-microphone-support).
@@ -36,7 +35,7 @@ Playwright's system dependency installation may require sudo on Linux. `FULL_TES
 Run all default suites from the repository root:
 
 ```bash
-.venv/bin/pytest -q
+uv run --no-sync python -m pytest -q
 ```
 
 The suites are organized by boundary:

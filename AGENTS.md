@@ -4,6 +4,10 @@
 
 Write code, comments, file names, and documentation in English. Respond to the user in Thai. Preserve Thai text when it is application data, such as transcripts, keywords, or test fixtures.
 
+### Python tooling: uv only
+
+Use `uv` for project Python environments, dependencies, and commands. Install the locked project environment with `uv sync --locked` (including the needed extras), add or remove dependencies with `uv add` or `uv remove`, and run Python modules and tools with `uv run --no-sync`. Use `uv pip` with an explicit `--python` only for a dedicated environment outside the project's locked dependency set. Keep `pyproject.toml` and `uv.lock` in sync after dependency changes. Do not manage project environments with Python's `venv` module or invoke project `python`, `pip`, `pytest`, or `.venv/bin/*` directly. Follow a third-party container's documented entrypoint when a tool runs inside that container.
+
 ### Documentation: single source of truth (SSOT)
 
 Follow these steps in order whenever writing or updating documentation:

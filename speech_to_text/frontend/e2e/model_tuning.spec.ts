@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer'
 
 function pcm16Wav(seconds = 1) {
   const sampleRate = 16_000
-  const data = new Uint8Array(sampleRate * seconds * 2)
+  const data = new Uint8Array(sampleRate * seconds * 2).fill(0x20)
   const wav = new Uint8Array(44 + data.length)
   const view = new DataView(wav.buffer)
   const text = (offset: number, value: string) => [...value].forEach((char, index) => { wav[offset + index] = char.charCodeAt(0) })
@@ -74,6 +74,88 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   expect(clipRuns).toHaveLength(2)
   expect(clipRuns[1]).toMatchObject({ model: 'turbo', runtime: 'openvino-gpu', language: 'th', silence_threshold: 0.12, keywords: ['สวัสดี'], decoding_options: { beam_size: 4, temperature: 0.2, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.3 } })
   expect(clipRuns[0]).toMatchObject({ model: 'turbo', runtime: 'openvino-cpu', language: 'en', silence_threshold: 0.07, decoding_options: { beam_size: 2 } })
+})
+
+test('shows every inferred chunk RTF including a short final chunk and explicit silence state', async ({ page }) => {
+  await page.goto('/model-tuning')
+  await expect(page.getByRole('heading', { name: 'Model tuning' })).toBeVisible()
+  const audioInput = page.getByLabel('Audio file')
+  const recordingOptions = page.getByLabel('Choose a clip').locator('option')
+  const initialOptions = await recordingOptions.count()
+  await audioInput.setInputFiles({ name: 'sixty-one-seconds.wav', mimeType: 'audio/wav', buffer: pcm16Wav(61) })
+  await page.getByRole('button', { name: 'Upload audio' }).click()
+  await expect(recordingOptions).toHaveCount(initialOptions + 1)
+  await page.getByLabel('Noise floor (RMS silence threshold)').fill('0')
+  await page.getByRole('button', { name: /Run tuning trial/ }).click()
+  const longTrial = page.locator('.tuning-trial-card').first()
+  await expect(longTrial).toContainText('completed', { timeout: 15_000 })
+  const rows = longTrial.locator('.trial-measurements tbody tr')
+  await expect(rows).toHaveCount(3)
+  await expect(rows.nth(0)).toContainText('1')
+  await expect(rows.nth(1)).toContainText('2')
+  await expect(rows.nth(2)).toContainText('3')
+  await expect(rows.nth(2)).toContainText('1.00 s')
+  await expect(rows.nth(0).locator('td').nth(3)).not.toHaveText('—')
+  await expect(rows.nth(1).locator('td').nth(3)).not.toHaveText('—')
+  await expect(rows.nth(2).locator('td').nth(3)).not.toHaveText('—')
+
+  const beforeSilence = await recordingOptions.count()
+  await audioInput.setInputFiles({ name: 'silence.wav', mimeType: 'audio/wav', buffer: pcm16Wav(1).fill(0, 44) })
+  await page.getByRole('button', { name: 'Upload audio' }).click()
+  await expect(recordingOptions).toHaveCount(beforeSilence + 1)
+  await page.getByLabel('Noise floor (RMS silence threshold)').fill('0.01')
+  await page.getByRole('button', { name: /Run tuning trial/ }).click()
+  const silenceTrial = page.locator('.tuning-trial-card').first()
+  await expect(silenceTrial).toContainText('completed', { timeout: 15_000 })
+  await expect(silenceTrial.locator('.trial-measurements')).toContainText('No chunks reached inference.')
+  await expect(page.locator('.tuning-trial-card').nth(1).locator('.trial-measurements tbody tr')).toHaveCount(3)
+})
+
+test('keeps incremental chunk measurements distinct and preserves failed null RTF', async ({ page }) => {
+  await page.goto('/model-tuning')
+  await expect(page.getByRole('heading', { name: 'Model tuning' })).toBeVisible()
+  const options = page.getByLabel('Choose a clip').locator('option')
+  const initialOptions = await options.count()
+  await page.getByLabel('Audio file').setInputFiles({ name: 'cursor-sample.wav', mimeType: 'audio/wav', buffer: pcm16Wav() })
+  await page.getByRole('button', { name: 'Upload audio' }).click()
+  await expect(options).toHaveCount(initialOptions + 1)
+
+  let statusReads = 0
+  let eventReads = 0
+  await page.route('**/api/v1/transcriptions/*', async route => {
+    if (route.request().method() !== 'GET') return route.continue()
+    statusReads += 1
+    const workflowId = new URL(route.request().url()).pathname.split('/').at(-1)!
+    return route.fulfill({ json: {
+      workflow_id: workflowId, kind: 'clip', status: statusReads === 1 ? 'running' : 'completed',
+      transcript: 'hello', matches: [], latest_rtf: 0.43, model: 'turbo', runtime: 'openvino-gpu',
+      language: 'th', silence_threshold: 0, keywords: ['สวัสดี'], decoding_options: {}, error: null,
+    } })
+  })
+  await page.route('**/api/v1/transcriptions/*/events*', async route => {
+    eventReads += 1
+    const after = Number(new URL(route.request().url()).searchParams.get('after'))
+    const common = { type: 'measurement', audio_seconds: 30, queue_wait_seconds: 0.02, inference_seconds: 3, timestamp: '2026-10-19T00:00:00Z' }
+    const events = after === 0
+      ? [{ ...common, cursor: 3, sequence: 0, rtf: 0.1, status: 'completed', error: null }]
+      : [
+          { ...common, cursor: 4, sequence: 1, rtf: null, status: 'failed', error: 'decoder unavailable' },
+          { ...common, cursor: 5, sequence: 2, audio_seconds: 1, rtf: 0.43, status: 'completed', error: null },
+        ]
+    return route.fulfill({ json: { workflow_id: 'mock-workflow', events, next_cursor: events.at(-1)?.cursor ?? after } })
+  })
+
+  await page.getByRole('button', { name: /Run tuning trial/ }).click()
+  const trial = page.locator('.tuning-trial-card').first()
+  await expect(trial).toContainText('completed', { timeout: 8_000 })
+  const rows = trial.locator('.trial-measurements tbody tr')
+  await expect(rows).toHaveCount(3)
+  await expect(rows.nth(0).locator('td').nth(3)).toHaveText('0.100')
+  await expect(rows.nth(1).locator('td').nth(3)).toHaveText('—')
+  await expect(rows.nth(1).locator('td').nth(4)).toContainText('failed · decoder unavailable')
+  await expect(rows.nth(2).locator('td').nth(3)).toHaveText('0.430')
+  expect(statusReads).toBeGreaterThanOrEqual(2)
+  expect(eventReads).toBeGreaterThanOrEqual(2)
 })
 
 test('imports WAV files into saved recordings, preserves bytes, and reuses them after reload', async ({ page }) => {

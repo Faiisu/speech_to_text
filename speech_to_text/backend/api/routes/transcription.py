@@ -67,6 +67,9 @@ def _clip_worker(
             with record.lock:
                 record.latest_rtf = measurement.get("rtf")
                 record.last_response_at = _as_utc_z(measurement.get("completed_at"))
+            runtime.append_event(
+                record, {"type": "measurement", **measurement}
+            )
 
         transcribe_clip = runtime.workflow_service.transcribe_clip
         transcription_options = {}

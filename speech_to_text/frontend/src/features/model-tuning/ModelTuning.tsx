@@ -18,7 +18,19 @@ type Trial = {
   settings: Settings
   status: string
   transcript: Transcription | null
+  measurements: ChunkMeasurement[]
+  eventCursor: number
   error: string
+}
+
+type ChunkMeasurement = {
+  sequence: number
+  audio_seconds: number
+  queue_wait_seconds: number
+  inference_seconds: number
+  rtf: number | null
+  status: string
+  error?: string | null
 }
 
 const isActive = (status: string) => ['queued', 'running', 'recording', 'stopping'].includes(status)
@@ -120,7 +132,16 @@ export default function ModelTuning() {
       void Promise.all(trials.filter(item => isActive(item.status)).map(async trial => {
         try {
           const snapshot = await api.transcription(trial.workflowId)
-          setTrials(current => current.map(item => item.workflowId === trial.workflowId ? { ...item, status: snapshot.status, transcript: snapshot, error: snapshot.error || '' } : item))
+          const page = await api.events(trial.workflowId, trial.eventCursor)
+          const measurements = page.events.filter(event => event.type === 'measurement') as unknown as ChunkMeasurement[]
+          setTrials(current => current.map(item => item.workflowId === trial.workflowId ? {
+            ...item,
+            status: snapshot.status,
+            transcript: snapshot,
+            measurements: [...item.measurements, ...measurements],
+            eventCursor: page.next_cursor,
+            error: snapshot.error || '',
+          } : item))
         } catch (reason) {
           const missing = reason instanceof ApiRequestError && reason.status === 404
           setTrials(current => current.map(item => item.workflowId === trial.workflowId ? { ...item, status: missing ? 'missing' : item.status, error: missing ? 'This trial is no longer available from the backend.' : reason instanceof Error ? reason.message : 'Could not refresh this trial.' } : item))
@@ -222,7 +243,7 @@ export default function ModelTuning() {
       const started = await api.transcribeClip(form)
       const sourceLabel = selectedRecording.source === 'rtsp' ? 'IPCAM (RTSP) · ' : ''
       const label = selectedRecording.filename || `${sourceLabel}${new Date(selectedRecording.created_at).toLocaleString()} · ${formatDuration(selectedRecording.duration_seconds)}`
-      setTrials(current => [{ workflowId: started.workflow_id, recordingId: selectedRecording.recording_id, recordingLabel: label, settings, status: started.status, transcript: null, error: '' }, ...current])
+      setTrials(current => [{ workflowId: started.workflow_id, recordingId: selectedRecording.recording_id, recordingLabel: label, settings, status: started.status, transcript: null, measurements: [], eventCursor: 0, error: '' }, ...current])
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not start a tuning trial.') }
     finally { setTuningBusy(false) }
   }
@@ -316,6 +337,10 @@ function TrialCard({ trial, index }: { trial: Trial; index: number }) {
     {snapshot?.error && snapshot.error !== trial.error && <p className="trial-error">{snapshot.error}</p>}
     {snapshot?.transcript && <div className="trial-transcript"><small>TRANSCRIPT · {LANGUAGE_LABELS[config.language].toUpperCase()}</small><p>{snapshot.transcript}</p></div>}
     {snapshot?.status === 'completed' && <div className="trial-result-grid"><div><small>KEYWORD COUNTS</small>{counts.length ? counts.map(match => <span key={match.keyword}>{match.keyword}<b>{match.count}</b></span>) : <span>No matches</span>}</div><div><small>LATEST CHUNK RTF</small><b>{snapshot.latest_rtf == null ? '—' : snapshot.latest_rtf.toFixed(3)}</b></div></div>}
+    <section className="trial-measurements" aria-label={`Chunk measurements for trial ${index}`}>
+      <h3>Chunk RTF</h3>
+      {trial.measurements.length === 0 ? <p>{trial.status === 'completed' ? 'No chunks reached inference.' : trial.status === 'failed' ? 'No chunk measurements were reported.' : 'Waiting for the first chunk measurement.'}</p> : <div className="trial-measurements-scroll"><table><thead><tr><th scope="col">Chunk</th><th scope="col">Audio</th><th scope="col">Queue wait</th><th scope="col">Inference</th><th scope="col">RTF</th><th scope="col">Status</th></tr></thead><tbody>{trial.measurements.map(measurement => <tr key={measurement.sequence}><th scope="row">{measurement.sequence + 1}</th><td>{measurement.audio_seconds.toFixed(2)} s</td><td>{measurement.queue_wait_seconds.toFixed(3)} s</td><td>{measurement.inference_seconds.toFixed(3)} s</td><td>{typeof measurement.rtf === 'number' && Number.isFinite(measurement.rtf) ? measurement.rtf.toFixed(3) : '—'}</td><td>{measurement.status}{measurement.error ? ` · ${measurement.error}` : ''}</td></tr>)}</tbody></table></div>}
+    </section>
     <details className="trial-settings"><summary>Settings snapshot</summary><div className="trial-setting-values"><span>Model <b>{config.model}</b></span><span>Runtime <b>{config.runtime}</b></span><span>Language <b>{LANGUAGE_LABELS[config.language]}</b></span><span>Silence threshold <b>{config.silence_threshold}</b></span><span>Keywords <b>{config.keywords.join(', ')}</b></span>{Object.entries(config.decoding_options).map(([key, value]) => <span key={key}>{key.replaceAll('_', ' ')} <b>{String(value)}</b></span>)}</div></details>
   </article>
 }
