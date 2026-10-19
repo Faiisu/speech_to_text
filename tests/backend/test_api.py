@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from speech_to_text.features.word_matching import WordMatchingConfig
 from speech_to_text.backend.app import create_app
-from speech_to_text.backend.dependencies import BackendRuntime
+from speech_to_text.backend.dependencies import BackendRuntime, RunRecord
 from speech_to_text.workflows.transcribe_match_forward.api import forward_session
 from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
@@ -94,11 +94,20 @@ class FakeTranscriptionService:
                 measurement_callback(measurement)
         with open(clip, "rb") as audio_file:
             transcript = audio_file.read().decode("ascii")
+        latest_rtf = next(
+            (
+                measurement.get("rtf")
+                for measurement in reversed(self.clip_measurements)
+                if measurement.get("rtf") is not None
+            ),
+            None,
+        )
         return FakeTranscriptionResult(
             transcript=transcript,
             matches=[
                 FakeMatch(keyword, transcript.count(keyword)) for keyword in keywords
             ],
+            latest_rtf=latest_rtf,
         )
 
     def list_microphones(self):
@@ -122,9 +131,10 @@ class FakeTranscriptionService:
 
 
 class FakeTranscriptionResult:
-    def __init__(self, transcript, matches):
+    def __init__(self, transcript, matches, latest_rtf=None):
         self.transcript = transcript
         self.matches = matches
+        self.latest_rtf = latest_rtf
 
 
 class FakeMatch:
@@ -318,6 +328,11 @@ def test_clip_measurements_are_retained_as_ordered_events_and_isolated_per_run(a
     assert [event["audio_seconds"] for event in measurements] == [30.0, 30.0, 1.0]
     assert measurements[1]["error"] == "decode error"
     assert snapshot["latest_rtf"] == 0.43
+    assert snapshot["rtf_min"] == 0.1003
+    assert snapshot["rtf_max"] == 0.43
+    assert snapshot["rtf_avg"] == pytest.approx((0.1003 + 0.43) / 2)
+    assert snapshot["rtf_count"] == 2
+    assert client.get("/api/v1/transcriptions").json()["transcriptions"][0]["rtf_count"] == 2
     assert client.get(f"/api/v1/transcriptions/{first_id}/events?after=0").json() == first_events
 
     service.clip_measurements = []
@@ -325,7 +340,47 @@ def test_clip_measurements_are_retained_as_ordered_events_and_isolated_per_run(a
     second_snapshot = wait_for_status(client, second_id, "completed")
     second_events = client.get(f"/api/v1/transcriptions/{second_id}/events?after=0").json()
     assert second_snapshot["latest_rtf"] is None
+    assert second_snapshot["rtf_min"] is None
+    assert second_snapshot["rtf_max"] is None
+    assert second_snapshot["rtf_avg"] is None
+    assert second_snapshot["rtf_count"] == 0
     assert not any(event["type"] == "measurement" for event in second_events["events"])
+
+
+def test_rtf_aggregates_survive_event_eviction_and_do_not_change_on_reads(api):
+    client, service = api
+    client.app.state.backend_runtime.event_limit = 2
+    service.clip_measurements = [
+        {"sequence": index, "rtf": value, "status": "completed"}
+        for index, value in enumerate((0.2, 0.8, 0.5))
+    ]
+
+    workflow_id = upload_clip(client).json()["workflow_id"]
+    snapshot = wait_for_status(client, workflow_id, "completed")
+    expired = client.get(f"/api/v1/transcriptions/{workflow_id}/events?after=0")
+    assert expired.status_code == 410
+    oldest_cursor = expired.json()["detail"]["oldest_cursor"]
+    events = client.get(
+        f"/api/v1/transcriptions/{workflow_id}/events?after={oldest_cursor - 1}"
+    ).json()
+    assert len(events["events"]) == 2
+    assert sum(event["type"] == "measurement" for event in events["events"]) < 3
+    assert snapshot["rtf_min"] == 0.2
+    assert snapshot["rtf_max"] == 0.8
+    assert snapshot["rtf_avg"] == pytest.approx(0.5)
+    assert snapshot["rtf_count"] == 3
+    assert client.get(f"/api/v1/transcriptions/{workflow_id}").json() == snapshot
+
+
+def test_rtf_aggregate_rejects_invalid_values_and_counts_zero():
+    record = RunRecord("test", "clip", "running", ())
+    for value in (None, True, -0.1, float("nan"), float("inf"), 0):
+        record.record_rtf(value)
+
+    assert record.rtf_min == 0
+    assert record.rtf_max == 0
+    assert record.rtf_avg == 0
+    assert record.rtf_count == 1
 
 
 @pytest.mark.parametrize("kind", ["clip", "microphone"])

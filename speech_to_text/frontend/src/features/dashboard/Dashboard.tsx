@@ -93,13 +93,16 @@ export function RunList({ runs, stopping, onStop, emptyTitle = 'No transcription
     const rtfDescription = !hasRtf ? 'Waiting for first measurement' : latestRtf <= 1 ? 'Within real time' : 'Slower than real time'
     const rtfValue = hasRtf ? latestRtf.toFixed(2) : '—'
     const rtfState = !hasRtf ? 'is-waiting' : latestRtf <= 1 ? 'is-realtime' : 'is-slower'
+    const rtfSummary = run.rtf_count
+      ? `min ${run.rtf_min?.toFixed(2)} · avg ${run.rtf_avg?.toFixed(2)} · max ${run.rtf_max?.toFixed(2)}`
+      : hasRtf ? (latestRtf <= 1 ? '≤ real time' : 'slower') : 'Waiting'
     return <div className="run-row" key={run.workflow_id}>
-      <Link to={`/runs/${run.workflow_id}`} className="run-row-link" aria-label={`Open workflow ${name}; realtime factor ${hasRtf ? `${rtfValue}, ${rtfDescription}` : rtfDescription}`}>
+      <Link to={`/runs/${run.workflow_id}`} className="run-row-link" aria-label={`Open workflow ${name}; realtime factor ${hasRtf ? `${rtfValue}, ${rtfDescription}` : rtfDescription}; ${rtfSummary}`}>
         <span className={`run-state ${active(run.status) ? 'is-active' : ''}`} />
         <div className="run-main"><strong>{name}</strong><span>{run.source_type === 'rtsp' ? 'IPCAM (RTSP)' : run.device || 'Default input'} · {run.keywords.join(' / ')}</span></div>
         <span className={`status-pill status-${run.status}`}>{statusLabel(run.status)}</span>
-        <span className={`run-row-rtf ${rtfState}`} aria-label={`Realtime factor: ${hasRtf ? `${rtfValue}, ${rtfDescription}` : rtfDescription}`} title={`Realtime factor: ${hasRtf ? `${rtfValue}, ${rtfDescription}` : rtfDescription}`}>
-          <small>RTF</small><strong>{rtfValue}</strong><em>{hasRtf ? (latestRtf <= 1 ? '≤ real time' : 'slower') : 'Waiting'}</em>
+        <span className={`run-row-rtf ${rtfState}`} aria-label={`Realtime factor: ${hasRtf ? `${rtfValue}, ${rtfDescription}` : rtfDescription}; ${rtfSummary}`} title={`Realtime factor: ${hasRtf ? `${rtfValue}, ${rtfDescription}` : rtfDescription}; ${rtfSummary}`}>
+          <small>RTF</small><strong>{rtfValue}</strong><em>{rtfSummary}</em>
         </span>
         <time>{new Date(run.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</time>
         <span className="row-arrow">↗</span>

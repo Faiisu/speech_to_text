@@ -138,3 +138,5 @@
 @media(max-width:760px){.main-nav{grid-template-columns:repeat(7,minmax(0,1fr))}.main-nav a{justify-content:center;flex-direction:column;height:43px;padding:0 3px;gap:1px;font-size:7px;white-space:nowrap}.main-nav .nav-icon{width:auto;font-size:14px}.main-nav .nav-text{max-width:100%;overflow:hidden;text-overflow:ellipsis}}
 
 .timeline-item p.timeline-transcript{white-space:pre-wrap;overflow-wrap:anywhere;color:#35594d;font-size:11px;line-height:1.7;background:#f5f8f1;padding:8px 10px}.timeline-transcript span{display:block;margin-bottom:3px;color:#82916d;font:8px var(--mono);letter-spacing:.4px;text-transform:uppercase}
+.run-row-rtf em{display:block}@media(max-width:760px){.run-row-rtf{min-width:78px}.run-row-rtf em{display:block;font-size:6px;line-height:1.2;white-space:normal}}
+@media(max-width:760px){.dashboard-page .run-row-rtf{min-width:80px}.dashboard-page .run-row-rtf em{display:block;font-size:6px;line-height:1.2;white-space:normal}}

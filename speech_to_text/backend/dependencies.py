@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import math
+import os
 import threading
 import time
-import os
 from copy import deepcopy
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -49,6 +50,10 @@ class RunRecord:
     transcript: str | None = None
     matches: list[dict] | None = None
     latest_rtf: float | None = None
+    rtf_min: float | None = None
+    rtf_max: float | None = None
+    rtf_avg: float | None = None
+    rtf_count: int = 0
     first_queued_at: str | None = None
     last_response_at: str | None = None
     error: str | None = None
@@ -76,6 +81,24 @@ class RunRecord:
     recovery_cancel: threading.Event = field(default_factory=threading.Event)
     stop_complete: threading.Event = field(default_factory=threading.Event)
     controller_thread: threading.Thread | None = None
+
+    def record_rtf(self, value):
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            return
+        with self.lock:
+            self.rtf_count += 1
+            self.rtf_min = value if self.rtf_min is None else min(self.rtf_min, value)
+            self.rtf_max = value if self.rtf_max is None else max(self.rtf_max, value)
+            self.rtf_avg = (
+                value
+                if self.rtf_avg is None
+                else self.rtf_avg + (value - self.rtf_avg) / self.rtf_count
+            )
 
 
 @dataclass
@@ -416,6 +439,10 @@ def run_snapshot(record):
             "transcript": record.transcript,
             "matches": record.matches,
             "latest_rtf": record.latest_rtf,
+            "rtf_min": record.rtf_min,
+            "rtf_max": record.rtf_max,
+            "rtf_avg": record.rtf_avg,
+            "rtf_count": record.rtf_count,
             "first_queued_at": record.first_queued_at,
             "last_response_at": record.last_response_at,
             "error": record.error,

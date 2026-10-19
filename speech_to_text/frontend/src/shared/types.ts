@@ -141,6 +141,10 @@ export type Transcription = {
   transcript: string | null
   matches: { keyword: string; count: number }[] | null
   latest_rtf: number | null
+  rtf_min?: number | null
+  rtf_max?: number | null
+  rtf_avg?: number | null
+  rtf_count?: number
   error: string | null
   destination_id?: string | null
   delivery?: DeliveryStatus | null

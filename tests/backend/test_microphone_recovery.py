@@ -107,6 +107,7 @@ class _RecoveryWorkflow:
         stop_error=None,
         stop_completion_status="stopped",
         wait_always_timeout=False,
+        measurement_rtf=None,
     ):
         self.output_queue = queue.Queue()
         self.stopped = threading.Event()
@@ -118,6 +119,8 @@ class _RecoveryWorkflow:
             self.active = True
         else:
             self.active = False
+            if measurement_rtf is not None:
+                self.output_queue.put({"type": "measurement", "rtf": measurement_rtf})
             if initial_termination == "failed":
                 self.output_queue.put(
                     {
@@ -132,6 +135,8 @@ class _RecoveryWorkflow:
                 self.output_queue.put(
                     {"type": "completed", "source_id": source_id, "status": initial_termination}
                 )
+        if active and measurement_rtf is not None:
+            self.output_queue.put({"type": "measurement", "rtf": measurement_rtf})
 
     def wait(self, timeout=0):
         if self.active and (self.wait_always_timeout or not self.stopped.is_set()):
@@ -164,6 +169,7 @@ class _RecoveryService:
         restart_stop_error=None,
         restart_stop_status="stopped",
         restart_wait_always_timeout=False,
+        measurement_values=None,
     ):
         self.failed_restarts = failed_restarts
         self.block_restart = block_restart
@@ -174,6 +180,7 @@ class _RecoveryService:
         self.restart_stop_error = restart_stop_error
         self.restart_stop_status = restart_stop_status
         self.restart_wait_always_timeout = restart_wait_always_timeout
+        self.measurement_values = measurement_values or ()
         self.restart_entered = threading.Event()
         self.release_restart = threading.Event()
         self.starts = []
@@ -198,6 +205,7 @@ class _RecoveryService:
                 initial_termination=self.initial_termination,
                 stop_error=self.initial_stop_error,
                 wait_always_timeout=self.initial_wait_always_timeout,
+                measurement_rtf=self.measurement_values[0] if self.measurement_values else None,
             )
             self.workflows.append(workflow)
             return workflow
@@ -212,6 +220,9 @@ class _RecoveryService:
             stop_error=self.restart_stop_error,
             stop_completion_status=self.restart_stop_status,
             wait_always_timeout=self.restart_wait_always_timeout,
+            measurement_rtf=self.measurement_values[len(self.starts) - 1]
+            if len(self.measurement_values) >= len(self.starts)
+            else None,
         )
         self.workflows.append(workflow)
         return workflow
@@ -302,6 +313,24 @@ def test_unexpected_natural_termination_recovers_without_terminal_event(terminat
         assert not any(event["type"] == "completed" for event in _api_events(client, workflow_id))
         assert client.post(f"/api/v1/transcriptions/{workflow_id}/stop").status_code == 202
         assert _wait_for_status(client, workflow_id, "stopped")["status"] == "stopped"
+
+
+def test_rtf_aggregate_continues_across_live_source_recovery():
+    service = _RecoveryService(measurement_values=(0.2, 0.8))
+    _runtime, client = _run_api(service, initial_delay=0.01, max_delay=0.01)
+    with client:
+        workflow_id = client.post(
+            "/api/v1/transcriptions/microphones", json={"keywords": ["ไทย"]}
+        ).json()["workflow_id"]
+        _wait_until(lambda: any(event["type"] == "recovered" for event in _api_events(client, workflow_id)))
+        snapshot = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+        assert snapshot["rtf_min"] == 0.2
+        assert snapshot["rtf_max"] == 0.8
+        assert snapshot["rtf_avg"] == pytest.approx(0.5)
+        assert snapshot["rtf_count"] == 2
+        client.post(f"/api/v1/transcriptions/{workflow_id}/stop")
+        final = _wait_for_status(client, workflow_id, "stopped")
+        assert final["rtf_count"] == 2
 
 
 def test_stop_during_backoff_is_idempotent_and_prevents_restart():

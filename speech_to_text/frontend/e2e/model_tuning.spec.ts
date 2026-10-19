@@ -129,6 +129,7 @@ test('keeps incremental chunk measurements distinct and preserves failed null RT
     return route.fulfill({ json: {
       workflow_id: workflowId, kind: 'clip', status: statusReads === 1 ? 'running' : 'completed',
       transcript: 'hello', matches: [], latest_rtf: 0.43, model: 'turbo', runtime: 'openvino-gpu',
+      rtf_min: 0.1, rtf_avg: 0.265, rtf_max: 0.43, rtf_count: 2,
       language: 'th', silence_threshold: 0, keywords: ['สวัสดี'], decoding_options: {}, error: null,
     } })
   })
@@ -148,6 +149,8 @@ test('keeps incremental chunk measurements distinct and preserves failed null RT
   await page.getByRole('button', { name: /Run tuning trial/ }).click()
   const trial = page.locator('.tuning-trial-card').first()
   await expect(trial).toContainText('completed', { timeout: 8_000 })
+  await expect(trial).toContainText('MIN / AVG / MAX RTF')
+  await expect(trial.locator('.trial-result-grid')).toContainText('0.100 / 0.265 / 0.430')
   const rows = trial.locator('.trial-measurements tbody tr')
   await expect(rows).toHaveCount(3)
   await expect(rows.nth(0).locator('td').nth(3)).toHaveText('0.100')

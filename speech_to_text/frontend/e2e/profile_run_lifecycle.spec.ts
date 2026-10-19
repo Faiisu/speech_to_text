@@ -1,5 +1,49 @@
 import { expect, test } from '@playwright/test'
 
+test('run detail reload reads retained RTF aggregates from backend status after event history expires', async ({ page }) => {
+  let statusReads = 0
+  await page.route('**/api/v1/transcriptions/retained-rtf-run', route => {
+    if (route.request().method() !== 'GET') return route.continue()
+    statusReads += 1
+    return route.fulfill({ json: {
+      workflow_id: 'retained-rtf-run', kind: 'microphone', status: 'stopped', keywords: [],
+      profile_id: null, profile_name: null, device: null, execution_mode: null,
+      silence_threshold: null, decoding_options: null, model: 'turbo', runtime: 'openvino-gpu',
+      transcript: null, matches: [], latest_rtf: 0.5, rtf_min: 0.2, rtf_avg: 0.5,
+      rtf_max: 0.8, rtf_count: 3, error: null, created_at: '2026-10-19T00:00:00Z',
+    } })
+  })
+  await page.route('**/api/v1/transcriptions/retained-rtf-run/events**', route => route.fulfill({
+    json: { workflow_id: 'retained-rtf-run', events: [], next_cursor: 8 },
+  }))
+
+  await page.goto('/runs/retained-rtf-run')
+  await expect(page.locator('.run-rtf')).toContainText('Min 0.20 · Avg 0.50 · Max 0.80 (3 measurements)')
+  await page.reload()
+  await expect(page.locator('.run-rtf')).toContainText('Min 0.20 · Avg 0.50 · Max 0.80 (3 measurements)')
+  expect(statusReads).toBe(2)
+})
+
+test('dashboard shows backend RTF aggregates on a narrow viewport', async ({ page }) => {
+  await page.route('**/api/v1/profiles', route => route.fulfill({ json: { profiles: [] } }))
+  await page.route('**/api/v1/transcriptions', route => route.fulfill({ json: { transcriptions: [{
+    workflow_id: 'dashboard-rtf-run', kind: 'microphone', status: 'recording', keywords: ['สวัสดี'],
+    profile_id: 'studio-profile', profile_name: 'Studio microphone', device: 'Studio Mic',
+    source_type: 'microphone', execution_mode: 'shared', silence_threshold: 0, decoding_options: null,
+    model: 'turbo', runtime: 'openvino-gpu', language: 'th', transcript: null, matches: [],
+    latest_rtf: 0.5, rtf_min: 0.2, rtf_avg: 0.5, rtf_max: 0.8, rtf_count: 3,
+    error: null, created_at: '2026-10-19T00:00:00Z',
+  }] } }))
+  await page.route('**/api/v1/microphones', route => route.fulfill({ json: { devices: [] } }))
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  const rtfSummary = page.locator('.run-row-rtf em')
+  await expect(rtfSummary).toContainText('min 0.20 · avg 0.50 · max 0.80')
+  await expect(rtfSummary).toBeVisible()
+  await expect(rtfSummary).toHaveCSS('display', 'block')
+})
+
 test('IPCAM profiles stay usable when microphone discovery is unavailable', async ({ page }) => {
   await page.route('**/api/v1/microphones', route => route.fulfill({
     status: 503,

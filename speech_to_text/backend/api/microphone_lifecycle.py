@@ -309,6 +309,7 @@ def _pump_microphone(runtime, record, workflow):
                             and completed_at.endswith("+00:00")
                             else completed_at
                         )
+                        record.record_rtf(event.get("rtf"))
                 if event_type == "audio_queued":
                     with record.lock:
                         if record.first_queued_at is None:
