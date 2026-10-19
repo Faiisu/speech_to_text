@@ -529,7 +529,10 @@ def test_microphone_api_exposes_cumulative_matches_before_stop(api, monkeypatch)
         ).json()["events"] if event["type"] == "transcript"
     ]
     assert len(transcript_events) == 2
-    assert all("text" not in event for event in transcript_events)
+    assert [event["text"] for event in transcript_events] == ["alpha", " alpha"]
+    assert [(event["source_id"], event["sequence"]) for event in transcript_events] == [
+        (workflow_id, 0), (workflow_id, 1)
+    ]
 
     stopped = client.post(f"/api/v1/transcriptions/{workflow_id}/stop")
     assert stopped.status_code == 202
@@ -627,7 +630,9 @@ def test_two_per_workflow_process_microphones_infer_concurrently(monkeypatch):
                 wait_for_event_type(client, workflow_id, "transcript")[0]
                 for workflow_id in workflow_ids
             ]
-            assert all("text" not in event for event in observed)
+            assert all(event.get("text") for event in observed)
+            assert all(event["source_id"] == workflow_id for event, workflow_id in zip(observed, workflow_ids))
+            assert all(event["sequence"] == 0 for event in observed)
             assert len({event["pid"] for event in observed}) == 2
             assert all(event["pid"] != os.getpid() for event in observed)
         finally:

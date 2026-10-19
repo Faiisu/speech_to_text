@@ -361,7 +361,11 @@ def _pump_microphone(runtime, record, workflow):
                     break
                 runtime.append_event(
                     record,
-                    {key: value for key, value in event.items() if key != "text"},
+                    {
+                        key: value
+                        for key, value in event.items()
+                        if key != "text" or event_type == "transcript"
+                    },
                 )
         except Exception as exc:
             ended_reason = str(exc).strip() or type(exc).__name__

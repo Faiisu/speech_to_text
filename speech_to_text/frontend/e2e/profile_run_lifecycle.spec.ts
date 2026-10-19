@@ -598,7 +598,7 @@ test('singular run route keeps keyword tracking and only the latest 100 events a
       workflow_id: 'workspace-e2e', kind: 'microphone', status: 'running', keywords: ['alpha'],
       profile_id: null, profile_name: 'Workspace e2e', source_type: 'microphone', device: 'Test mic',
       execution_mode: 'shared', silence_threshold: 0, decoding_options: null, model: 'small', runtime: 'ctranslate2',
-      language: 'en', transcript: 'This response contains transcript content which must not render.', matches: [{ keyword: 'alpha', count: 7 }],
+      language: 'en', transcript: 'Aggregate transcript content must not render.', matches: [{ keyword: 'alpha', count: 7 }],
       latest_rtf: 0.5, error: null, delivery: null, created_at: '2026-10-17T00:00:00Z',
     }),
   }))
@@ -606,7 +606,7 @@ test('singular run route keeps keyword tracking and only the latest 100 events a
   await page.route('**/api/v1/transcriptions/workspace-e2e/events?after=*', async route => {
     const after = new URL(route.request().url()).searchParams.get('after')
     if (eventRequest++ === 0) {
-      const events = Array.from({ length: 80 }, (_, index) => ({ cursor: index + 1, type: index === 1 ? 'transcript' : 'recording', text: 'Event transcript content must not render.', timestamp: '2026-10-17T00:00:00Z' }))
+      const events = Array.from({ length: 80 }, (_, index) => ({ cursor: index + 1, type: 'recording', text: 'Non-transcript event text must not render.', timestamp: '2026-10-17T00:00:00Z' }))
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ workflow_id: 'workspace-e2e', events, next_cursor: 80 }) })
     } else if (after === '80') {
       const events = Array.from({ length: 50 }, (_, index) => ({ cursor: index + 81, type: 'recording', timestamp: '2026-10-17T00:00:00Z' }))
@@ -615,7 +615,9 @@ test('singular run route keeps keyword tracking and only the latest 100 events a
       await route.fulfill({ status: 410, contentType: 'application/json', body: JSON.stringify({ detail: { message: 'event cursor expired', oldest_cursor: 201 } }) })
     } else {
       expect(after).toBe('200')
-      const events = Array.from({ length: 30 }, (_, index) => ({ cursor: index + 201, type: 'recording', timestamp: '2026-10-17T00:00:00Z' }))
+      const events: Array<Record<string, unknown>> = Array.from({ length: 30 }, (_, index) => ({ cursor: index + 201, type: 'recording', timestamp: '2026-10-17T00:00:00Z' }))
+      events[0] = { ...events[0], type: 'transcript', source_id: 'workspace-e2e', sequence: 0, text: 'สวัสดีจากไมโครโฟน\nบรรทัดที่สอง' }
+      events[1] = { ...events[1], type: 'transcript', source_id: 'workspace-e2e', sequence: 1, text: 'The next English chunk is deliberately long: ' + 'word '.repeat(35) }
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ workflow_id: 'workspace-e2e', events, next_cursor: 230 }) })
     }
   })
@@ -630,7 +632,16 @@ test('singular run route keeps keyword tracking and only the latest 100 events a
   await expect(page.locator('.timeline')).toContainText('#230')
   await expect(page.locator('.timeline')).toContainText('#61')
   await expect(page.locator('.timeline')).not.toContainText('#31')
-  await expect(page.locator('body')).not.toContainText('transcript content')
+  await expect(page.locator('.timeline-transcript')).toHaveCount(2)
+  await expect(page.locator('.timeline-transcript').nth(0)).toContainText('Chunk 1')
+  await expect(page.locator('.timeline-transcript').nth(0)).toContainText('สวัสดีจากไมโครโฟน')
+  await expect(page.locator('.timeline-transcript').nth(0)).toContainText('บรรทัดที่สอง')
+  await expect(page.locator('.timeline-transcript').nth(1)).toContainText('Chunk 2')
+  await expect(page.locator('.timeline-transcript').nth(1)).toContainText('The next English chunk')
+  expect(await page.locator('.timeline-transcript').nth(0).evaluate(element => getComputedStyle(element).whiteSpace)).toBe('pre-wrap')
+  expect(await page.locator('.timeline-transcript').nth(1).evaluate(element => getComputedStyle(element).overflowWrap)).toBe('anywhere')
+  await expect(page.locator('body')).not.toContainText('Aggregate transcript content')
+  await expect(page.locator('body')).not.toContainText('Non-transcript event text')
 })
 
 test('authenticated RTSP profiles keep passwords write-only and require duplicate re-entry', async ({ page }) => {

@@ -93,7 +93,7 @@ HTTP failures raise `ForwardingError` with status and safe diagnostic context.
 
 - Match configured literal substrings cumulatively across live chunks and across the complete transcript for finite clips.
 - HTTP destinations forward completed clips once. HTTP/callable and MQTT destinations forward live microphone chunks separately, without a terminal aggregate record; clip transcription produces no MQTT publication.
-- The original callable delivery implementation includes no UI page, inbound HTTP route, database, durable outbox, or destination-specific payload mapping. MQTT microphone records contain chunk-local text and matches; workflow events preserve each source transcript event and cumulative match snapshots, while live run monitoring omits transcript text and retains cumulative matching snapshots. Configurable destination extensions are described below.
+- The original callable delivery implementation includes no UI page, inbound HTTP route, database, durable outbox, or destination-specific payload mapping. MQTT microphone records contain chunk-local text and matches; workflow events preserve each source transcript event and cumulative match snapshots. Live run event retention and display behavior follow the [backend monitoring contract](../backend-transcription-api/spec.md#get-transcriptionsworkflow_id). Configurable destination extensions are described below.
 
 ## Acceptance criteria
 
@@ -151,7 +151,7 @@ Profile create/edit/duplicate includes optional destination selection. An unavai
 
 Allow clip and microphone workflows, including profile-started runs in both execution modes, to send JSON to a configured HTTP or HTTPS receiver. Receiver technology is irrelevant: a compatible endpoint may be served by FastAPI, Express, PHP, Java, .NET, a reverse proxy, or an API gateway. HTTP compatibility alone does not make application schemas or authentication interchangeable; each destination must accept the configured method, body, and credentials.
 
-Keep one optional destination per run. HTTP sends one logical output record per completed clip. HTTP and MQTT live sessions send one chunk-local record per transcript event with a unique chunk event ID, and no terminal aggregate. Workflow events expose source transcript events and cumulative match snapshots; backend live monitoring discards transcript text and exposes cumulative match totals. Keep Feature 01 unchanged. Preserve existing Python callers using `endpoint_url` and `bearer_token`, and preserve the current JSON fields without renaming or wrapping them. No destination means no network request and no synthetic delivery event.
+Keep one optional destination per run. HTTP sends one logical output record per completed clip. HTTP and MQTT live sessions send one chunk-local record per transcript event with a unique chunk event ID, and no terminal aggregate. Workflow events expose source transcript events and cumulative match snapshots; backend live monitoring retains chunk text and exposes cumulative match totals as specified by the [backend monitoring contract](../backend-transcription-api/spec.md#get-transcriptionsworkflow_id). Keep Feature 01 unchanged. Preserve existing Python callers using `endpoint_url` and `bearer_token`, and preserve the current JSON fields without renaming or wrapping them. No destination means no network request and no synthetic delivery event.
 
 ```mermaid
 flowchart LR

@@ -569,6 +569,11 @@ def test_recovery_reuses_mqtt_snapshot_and_unique_chunk_identity(tmp_path, monke
             f"{workflow_id}:restart:1:chunk:1",
         }
         assert any(event["type"] == "recovered" for event in events())
+        transcript_events = [event for event in events() if event["type"] == "transcript"]
+        assert [(event["source_id"], event["sequence"], event["text"]) for event in transcript_events] == [
+            (workflow_id, 1, "สวัสดี"),
+            (f"{workflow_id}:restart:1", 1, "สวัสดี"),
+        ]
         recovered = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
         assert recovered["status"] == "recording"
         assert recovered["error"] is None
