@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import threading
 import tempfile
 import uuid
+import wave
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -346,7 +348,16 @@ class RecordingService:
             record = self._refresh(recording_id)
             if record is None:
                 return None
-            return {key: value for key, value in record.items() if not key.startswith("_")}
+            snapshot = {key: value for key, value in record.items() if not key.startswith("_")}
+            if record["status"] != "recording":
+                audio_path, _ = self._paths(recording_id)
+                try:
+                    with wave.open(str(audio_path), "rb") as audio:
+                        snapshot["sample_rate"] = audio.getframerate()
+                        snapshot["channels"] = audio.getnchannels()
+                except (OSError, wave.Error, EOFError):
+                    pass
+            return snapshot
 
     def get(self, recording_id):
         with self._lock:
@@ -383,6 +394,32 @@ class RecordingService:
                 return wav_path if wav_path.is_file() else None
             except OSError as exc:
                 raise RecordingUnavailableError("Unable to access recording audio") from exc
+
+    def copy_audio_snapshot(self, recording_id, destination_path):
+        """Copy a finalized, usable recording while deletion is excluded."""
+        with self._lock:
+            record = self._records.get(recording_id)
+            if record is None:
+                return None
+            self._refresh(recording_id)
+            if record["status"] == "recording":
+                raise RecordingConflictError("Recording is still active")
+            source_path, _ = self._paths(recording_id)
+            try:
+                if not source_path.is_file():
+                    return None
+                duration = validate_wav(source_path, max_seconds=self.max_seconds)
+                shutil.copyfile(source_path, destination_path)
+                if Path(destination_path).stat().st_size == 0:
+                    raise AudioInputError("Recording audio is empty")
+            except AudioInputError as exc:
+                Path(destination_path).unlink(missing_ok=True)
+                raise RecordingInvalidAudioError(str(exc)) from exc
+            except OSError as exc:
+                Path(destination_path).unlink(missing_ok=True)
+                raise RecordingUnavailableError("Unable to snapshot recording audio") from exc
+            snapshot = {key: value for key, value in record.items() if not key.startswith("_")}
+            return snapshot, duration
 
     def delete(self, recording_id):
         with self._lock:

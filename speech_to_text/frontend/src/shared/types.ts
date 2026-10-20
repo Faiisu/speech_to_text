@@ -231,6 +231,8 @@ export type Recording = {
   recording_id: string
   status: 'recording' | 'completed' | 'failed' | string
   duration_seconds: number
+  sample_rate?: number
+  channels?: number
   device: string | null
   source?: 'microphone' | 'rtsp' | 'upload'
   rtsp_url?: string | null
@@ -241,6 +243,31 @@ export type Recording = {
   error: string | null
   created_at: string
   warnings?: string[]
+}
+
+export type RecordingSpectrogram = {
+  times_seconds: number[]
+  frequencies_hz: number[]
+  dbfs: number[][]
+}
+
+export type FilteredRecordingResult = {
+  recording: Recording
+  source: Recording
+  source_recording_id: string
+  settings: {
+    low_hz: number
+    high_hz: number
+    order: number
+    sample_rate: number
+    channels: number
+    duration_seconds: number
+    nyquist_hz: number
+    db_min: number
+    db_max: number
+  }
+  before: RecordingSpectrogram
+  after: RecordingSpectrogram
 }
 
 export type StressChunk = {

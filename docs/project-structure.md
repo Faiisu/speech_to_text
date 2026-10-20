@@ -25,15 +25,18 @@ This document is the source of truth for where project files belong. Follow it w
 │   │       └── schemas/
 │   ├── features/               # Callable feature modules
 │   │   ├── model_deployment/
+│   │   ├── noise_filtering/     # Configurable sample-level frequency filtering
 │   │   └── word_matching/
 │   └── workflows/              # Use cases and their output behavior
 │       ├── audio_recording/
 │       ├── audio_input_test/      # Bounded no-model microphone signal diagnostics
 │       ├── transcribe_match_forward/
 │       ├── file_replay_stress/
-│       └── model_management/     # Bounded download/conversion jobs and preparation lifecycle
+│       ├── model_management/     # Bounded download/conversion jobs and preparation lifecycle
+│       └── noise_filtering/      # Standalone WAV filtering and output behavior
 ├── tests/                      # Automated tests organized by owner and boundary
 │   ├── feature_01/
+│   ├── noise_filtering/
 │   ├── word_matching/
 │   ├── backend/
 │   ├── workflows/
@@ -61,7 +64,8 @@ speech_to_text/frontend/src/
     ├── runs/
     ├── models/                   # Hugging Face downloads, runtime conversion, and compatibility
     ├── stress-tests/             # Capacity matrix controls, polling, and reports
-    └── model-tuning/             # Host recording, microphone diagnostics, audio uploads, and model comparisons
+    ├── model-tuning/             # Host recording, microphone diagnostics, audio uploads, and model comparisons
+    └── noise-filtering/          # Saved-audio band-pass controls, listening, and spectrogram comparison
 ```
 
 The implemented backend module layout is:
@@ -82,9 +86,11 @@ speech_to_text/backend/
     │   ├── models.py
     │   ├── profiles.py
     │   ├── stress_tests.py
+    │   ├── noise_filtering.py
     │   └── transcription.py
     └── schemas/                 # API request and response models
         ├── stress_tests.py
+        ├── noise_filtering.py
         ├── models.py             # Model inspection and preparation requests
         └── transcription.py
 ```
@@ -102,6 +108,8 @@ The model-deployment feature also owns IP camera audio capture in `model_deploym
 The transcribe-match-forward workflow owns destination configuration and validation in `destinations.py`, and outbound JSON/HTTP transport in `http_output.py` and MQTT publication in `mqtt_output.py`. The backend's destination routes manage stored definitions through the existing profile store and call the workflow's public sender for synthetic tests. Destination credentials remain deployment-managed references, not database secret values. The [workflow output specification](../.scratch/transcript-matching-forwarding/spec.md) owns their configuration contract.
 
 The audio-input-test workflow owns one bounded, process-local microphone signal diagnostic session and its transient RMS/peak/frame measurements. It opens a source through Feature 01's model-free microphone-source boundary, retains only the latest status, and never stores audio. The microphone routes expose its start/status/stop API. The [microphone diagnostic specification](../.scratch/live-audio/spec.md) owns the duration and lifecycle contract; the [backend API specification](../.scratch/backend-transcription-api/spec.md#microphone-input-test-endpoints) owns the HTTP response shape.
+
+The noise-filtering feature owns reusable Butterworth band-pass sample processing; the noise-filtering workflow owns bounded WAV validation, writing filtered copies into the audio-recording library, and comparable bounded spectrogram data. Its [specification](../.scratch/noise-filtering/spec.md) defines defaults, validation, and the frequency-filtering limitation.
 
 The canonical outgoing payload schema is packaged as `workflows/transcribe_match_forward/match_results_v1.schema.json`. Browser-only receiver fixtures belong under `tests/frontend_e2e/`, including `fake_receiver.py`; browser assertions remain in `frontend/e2e/`.
 

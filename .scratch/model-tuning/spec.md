@@ -16,6 +16,8 @@ Feature 01 exposes `validate_wav(path, *, max_seconds=120) -> float` and `conver
 
 The API generates opaque recording IDs and derives all audio and metadata paths from those IDs. It never accepts filesystem paths; imported files are written under server-generated paths. Recordings and metadata survive backend restart in the configured storage directory. Default storage is `data/tuning-recordings`; `SPEECH_TO_TEXT_RECORDINGS_DIR` overrides it. Only completed and failed recordings are restored at startup. A finalized recording can be deleted by ID.
 
+`RecordingService.copy_audio_snapshot(recording_id, destination_path)` is the workflow's public boundary for consumers that need an independent finite-audio copy. It returns `(recording_metadata, duration_seconds)` for a finalized, non-empty usable WAV, or `None` when the ID or audio file is unavailable. It raises `RecordingConflictError` while capture is active, `RecordingInvalidAudioError` for unusable or over-duration WAV audio, and `RecordingUnavailableError` for storage failures. The copy is made under the recording-library lock so concurrent deletion cannot interrupt it; the caller owns and removes the destination file.
+
 Routes are mounted under `/api/v1`:
 
 | Method and route | Behavior |
@@ -29,6 +31,8 @@ Routes are mounted under `/api/v1`:
 | `DELETE /recordings/{id}` | Delete a finalized WAV and its metadata; return 409 while active. |
 
 Snapshots contain `recording_id`, `status` (`recording`, `completed`, or `failed`), `duration_seconds`, `device`, `error`, `warnings`, `source` (`microphone`, `rtsp`, or `upload`), nullable display-only `filename`, and UTC `created_at`. RTSP recordings also retain their non-secret source fields as described below. Older saved manifests without `source` or `filename` restore as microphone recordings with no filename. Unknown IDs return 404. A second active capture returns 409. Invalid input returns 422; oversized uploads return 413; unavailable capture, storage, or compressed-audio decoding returns 503. Audio downloads are WAV: uploaded WAV bytes remain unchanged, while MP3/M4A downloads contain the normalized WAV.
+
+Finalized recording snapshots also include `sample_rate` and `channels` when their WAV header is readable. These values are read from the saved WAV, including for older manifests, so callers can validate frequency bounds against the actual audio. They are omitted for active captures or unreadable headers.
 
 ### IPCAM recording
 

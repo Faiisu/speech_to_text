@@ -2442,6 +2442,9 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 
 [package.optional-dependencies]
@@ -2512,6 +2515,7 @@ requires-dist = [
     { name = "python-multipart", marker = "extra == 'backend'", specifier = ">=0.0.9" },
     { name = "python-multipart", marker = "extra == 'test'", specifier = ">=0.0.9" },
     { name = "safetensors", marker = "extra == 'model-management'", specifier = ">=0.4" },
+    { name = "scipy", specifier = ">=1.11,<2" },
     { name = "sounddevice", marker = "extra == 'microphone'", specifier = ">=0.5" },
     { name = "torch", marker = "extra == 'model-management'", specifier = ">=2.2" },
     { name = "transformers", marker = "extra == 'model-management'", specifier = ">=4.40" },

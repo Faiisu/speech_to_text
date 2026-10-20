@@ -7,6 +7,7 @@ import StressTests from '../features/stress-tests/StressTests'
 import Destinations from '../features/destinations/Destinations'
 import ModelTuning from '../features/model-tuning/ModelTuning'
 import ModelManagement from '../features/models/ModelManagement'
+import NoiseFiltering from '../features/noise-filtering/NoiseFiltering'
 
 function Shell() {
   return <div className="app-shell">
@@ -18,6 +19,7 @@ function Shell() {
         <NavLink to="/profiles"><span className="nav-icon">◉</span><span className="nav-text">Audio inputs & profiles</span></NavLink>
         <NavLink to="/destinations"><span className="nav-icon">↗</span><span className="nav-text">Destinations</span></NavLink>
         <NavLink to="/model-tuning"><span className="nav-icon">♫</span><span className="nav-text">Model tuning</span></NavLink>
+        <NavLink to="/noise-filtering"><span className="nav-icon">≋</span><span className="nav-text">Noise filtering</span></NavLink>
         <NavLink to="/models"><span className="nav-icon">▧</span><span className="nav-text">Models</span></NavLink>
         <NavLink to="/stress-tests"><span className="nav-icon">⌁</span><span className="nav-text">Stress test</span></NavLink>
       </nav>
@@ -33,6 +35,7 @@ function Shell() {
         <Route path="/live-audio" element={<Navigate to="/model-tuning" replace />} />
         <Route path="/destinations" element={<Destinations />} />
         <Route path="/model-tuning" element={<ModelTuning />} />
+        <Route path="/noise-filtering" element={<NoiseFiltering />} />
         <Route path="/models" element={<ModelManagement />} />
         <Route path="/runs/:workflowId" element={<RunDetail />} />
         <Route path="/run/:workflowId" element={<RunDetail />} />

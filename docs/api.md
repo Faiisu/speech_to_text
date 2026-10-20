@@ -22,6 +22,10 @@ finally:
 
 The [model-management contract](../.scratch/model-management/spec.md) documents Hugging Face inspection, asynchronous source download/runtime conversion jobs, transient tokens, runtime verification, and guarded local model deletion. These extend the read-only `/api/v1/models` catalog; a completed conversion becomes available to profile and clip workflows through that existing catalog.
 
+## Noise filtering
+
+The [noise-filtering contract](../.scratch/noise-filtering/spec.md) documents the standalone `filter_wav` callable and the saved-recording Noise filtering page/API, including its shared-scale spectrogram output and frequency-filtering limitation.
+
 ## Word matching and forwarding
 
 The matching feature and its output behavior are composed by the [transcript matching workflow](../.scratch/transcript-matching-forwarding/spec.md). The workflow returns results to its backend caller and can also send completed results to a configured receiver.

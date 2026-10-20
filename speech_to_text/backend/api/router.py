@@ -9,6 +9,7 @@ from .routes.destinations import router as destinations_router
 from .routes.stress_tests import router as stress_tests_router
 from .routes.transcription import router as transcription_router
 from .routes.recordings import router as recordings_router
+from .routes.noise_filtering import router as noise_filtering_router
 
 router = APIRouter()
 router.include_router(microphones_router)
@@ -18,3 +19,4 @@ router.include_router(destinations_router)
 router.include_router(stress_tests_router)
 router.include_router(transcription_router)
 router.include_router(recordings_router)
+router.include_router(noise_filtering_router)
