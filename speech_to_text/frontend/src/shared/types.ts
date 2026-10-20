@@ -340,6 +340,9 @@ export type StressTest = {
   model: string
   runtime: RuntimeChoice['key']
   precision: string
+  recording_id?: string | null
+  audio_filename?: string
+  audio_duration_seconds?: number
   report: StressReport | null
   error: string | null
   created_at: number

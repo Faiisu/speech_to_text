@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import queue
+import io
+from pathlib import Path
+import tempfile
+import wave
 import threading
 import time
 
@@ -11,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from speech_to_text.backend.app import create_app
 from speech_to_text.backend.dependencies import BackendRuntime
+from speech_to_text.workflows.audio_recording import RecordingService
 from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
 )
@@ -77,7 +82,7 @@ class FakeProfileStore:
 
 
 @pytest.fixture
-def stress_api():
+def stress_api(tmp_path):
     entered = threading.Event()
     release = threading.Event()
     calls = []
@@ -115,6 +120,7 @@ def stress_api():
         workflow_service=service,
         profile_store=FakeProfileStore(),
         stress_workflow=stress_workflow,
+        recording_service=RecordingService(output_directory=tmp_path / "recordings"),
     )
     app = create_app(runtime=runtime)
     with TestClient(app) as client:
@@ -130,6 +136,16 @@ def wait_for_status(client, stress_test_id, expected, timeout=2):
             return response.json()
         time.sleep(0.01)
     pytest.fail(f"stress test {stress_test_id} did not reach {expected!r}")
+
+
+def wav_bytes(seconds=0.6):
+    stream = io.BytesIO()
+    with wave.open(stream, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(b"\x01\x00" * int(16000 * seconds))
+    return stream.getvalue()
 
 
 def test_stress_request_defaults_resolve_overrides_and_reject_invalid_values(stress_api):
@@ -148,6 +164,8 @@ def test_stress_request_defaults_resolve_overrides_and_reject_invalid_values(str
         ("model-default", "openvino-gpu"),
         ("model-default", "openvino-gpu"),
     ]
+    assert default_status["recording_id"] is None
+    assert default_status["audio_filename"] == "test-audio.wav"
 
     release.set()
     wait_for_status(client, default_id, "completed")
@@ -234,6 +252,108 @@ def test_stress_api_lifecycle_forwards_repeatable_cursor_events_and_report(stres
     ]
     assert all_events["next_cursor"] == 6
     assert calls[0][0].endswith("audio/test-audio.wav")
+
+
+def test_selected_recording_is_the_matrix_input_and_keeps_its_snapshot_after_delete(stress_api, tmp_path, monkeypatch):
+    client, _, entered, release, calls, _ = stress_api
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    original = wav_bytes()
+    upload = client.post(
+        "/api/v1/recordings/upload",
+        files={"file": ("office-sample.wav", original, "audio/wav")},
+    )
+    assert upload.status_code == 201
+    recording = upload.json()
+
+    created = client.post(
+        "/api/v1/stress-tests", json={"recording_id": recording["recording_id"]}
+    )
+    assert created.status_code == 202
+    stress_id = created.json()["stress_test_id"]
+    assert entered.wait(timeout=1)
+    status = client.get(f"/api/v1/stress-tests/{stress_id}").json()
+    assert status["recording_id"] == recording["recording_id"]
+    assert status["audio_filename"] == "office-sample.wav"
+    assert status["audio_duration_seconds"] == pytest.approx(0.6)
+    matrix_audio = calls[-1][0]
+    assert not matrix_audio.endswith("audio/test-audio.wav")
+    assert Path(matrix_audio).read_bytes() == original
+    conflict = client.post(
+        "/api/v1/stress-tests", json={"recording_id": recording["recording_id"]}
+    )
+    assert conflict.status_code == 409
+    assert list(tmp_path.glob("stress-audio-*.wav")) == [Path(matrix_audio)]
+
+    deleted = client.delete(f"/api/v1/recordings/{recording['recording_id']}")
+    assert deleted.status_code == 204
+    assert Path(matrix_audio).read_bytes() == original
+    release.set()
+    wait_for_status(client, stress_id, "completed")
+    assert not Path(matrix_audio).exists()
+    assert list(tmp_path.glob("stress-audio-*.wav")) == []
+
+
+def test_selected_recording_rejects_unknown_and_active_audio(stress_api):
+    client, *_ = stress_api
+    unknown = client.post("/api/v1/stress-tests", json={"recording_id": "bad-id"})
+    assert unknown.status_code == 404
+
+    service = client.app.state.backend_runtime.recording_service
+    service._records["active-id"] = {"recording_id": "active-id", "status": "recording"}
+    active = client.post("/api/v1/stress-tests", json={"recording_id": "active-id"})
+    assert active.status_code == 409
+
+
+def test_selected_recording_snapshot_is_removed_after_workflow_failure(tmp_path):
+    paths = []
+
+    def fail_workflow(*, clip_path, model_config, progress_callback):
+        paths.append(Path(clip_path))
+        raise RuntimeError("scripted matrix failure")
+
+    service = RecordingService(output_directory=tmp_path / "recordings")
+    runtime = BackendRuntime(
+        workflow_service=FakeWorkflowService(),
+        profile_store=FakeProfileStore(),
+        recording_service=service,
+        stress_workflow=fail_workflow,
+    )
+    with TestClient(create_app(runtime=runtime)) as client:
+        original = wav_bytes()
+        uploaded = client.post(
+            "/api/v1/recordings/upload",
+            files={"file": ("failure-sample.wav", original, "audio/wav")},
+        ).json()
+        created = client.post(
+            "/api/v1/stress-tests", json={"recording_id": uploaded["recording_id"]}
+        )
+        stress_id = created.json()["stress_test_id"]
+        failed = wait_for_status(client, stress_id, "failed")
+        assert failed["audio_filename"] == "failure-sample.wav"
+        assert paths and not paths[0].exists()
+        assert client.get(f"/api/v1/recordings/{uploaded['recording_id']}/audio").status_code == 200
+
+
+def test_selected_recording_snapshot_is_removed_when_queue_submission_fails(stress_api, tmp_path, monkeypatch):
+    client, *_ = stress_api
+    runtime = client.app.state.backend_runtime
+    original = wav_bytes()
+    uploaded = client.post(
+        "/api/v1/recordings/upload",
+        files={"file": ("queue-sample.wav", original, "audio/wav")},
+    ).json()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    def fail_submission(*args):
+        raise RuntimeError("worker pool unavailable")
+
+    monkeypatch.setattr(runtime.executor, "submit", fail_submission)
+    response = client.post(
+        "/api/v1/stress-tests", json={"recording_id": uploaded["recording_id"]}
+    )
+    assert response.status_code == 503
+    assert list(tmp_path.glob("stress-audio-*.wav")) == []
+    assert client.get(f"/api/v1/recordings/{uploaded['recording_id']}/audio").status_code == 200
 
 
 def test_stress_and_microphone_starts_return_serialized_conflicts(stress_api):

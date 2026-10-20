@@ -108,6 +108,9 @@ class StressTestRecord:
     model: str
     runtime: str
     precision: str
+    recording_id: str | None = None
+    audio_filename: str = "test-audio.wav"
+    audio_duration_seconds: float = 29.33
     created_at: float = field(default_factory=time.time)
     report: dict | None = None
     error: str | None = None
@@ -475,6 +478,9 @@ def stress_test_snapshot(record):
             "model": record.model,
             "runtime": record.runtime,
             "precision": record.precision,
+            "recording_id": record.recording_id,
+            "audio_filename": record.audio_filename,
+            "audio_duration_seconds": record.audio_duration_seconds,
             "report": record.report,
             "error": record.error,
             "created_at": record.created_at,

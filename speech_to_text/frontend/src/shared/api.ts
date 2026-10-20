@@ -92,7 +92,7 @@ export const api = {
     return response.json() as Promise<{ workflow_id: string; status: string }>
   },
   stop: (id: string) => request<{ workflow_id: string; status: string }>(`/transcriptions/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
-  startStressTest: (settings: { model?: string; runtime?: string; precision?: string }) => request<{ stress_test_id: string; status: string }>('/stress-tests', { method: 'POST', body: JSON.stringify(settings) }),
+  startStressTest: (settings: { model?: string; runtime?: string; precision?: string; recording_id?: string }) => request<{ stress_test_id: string; status: string }>('/stress-tests', { method: 'POST', body: JSON.stringify(settings) }),
   stressTest: (id: string) => request<import('./types').StressTest>(`/stress-tests/${encodeURIComponent(id)}`),
   stressEvents: (id: string, after: number) => request<{ stress_test_id: string; events: import('./types').StressEvent[]; next_cursor: number }>(`/stress-tests/${encodeURIComponent(id)}/events?after=${after}`),
 }

@@ -1,6 +1,7 @@
 """Asynchronous file-replay stress-test routes."""
 
 from pathlib import Path
+import tempfile
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -17,6 +18,11 @@ from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowUnavailableError,
 )
+from speech_to_text.workflows.audio_recording import (
+    RecordingConflictError,
+    RecordingInvalidAudioError,
+    RecordingUnavailableError,
+)
 
 router = APIRouter(prefix="/stress-tests")
 
@@ -24,6 +30,14 @@ _DEFAULT_MODEL = "turbo"
 _DEFAULT_RUNTIME = "openvino-gpu"
 _OPENVINO_PRECISIONS = {"source", "bf16", "int8", "int4"}
 _CTRANSLATE2_PRECISIONS = {"int8", "float32"}
+
+
+def _cleanup_snapshot(snapshot_path):
+    if snapshot_path is not None:
+        try:
+            snapshot_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _resolve_model_config(runtime, body):
@@ -103,7 +117,7 @@ def _resolve_model_config(runtime, body):
     return {"model": model, "runtime": selected_runtime, "precision": precision}
 
 
-def _stress_worker(runtime, record, model_config, clip_path):
+def _stress_worker(runtime, record, model_config, clip_path, snapshot_path=None):
     with record.lock:
         record.status = "running"
     runtime.append_stress_event(
@@ -127,6 +141,7 @@ def _stress_worker(runtime, record, model_config, clip_path):
         )
     except Exception as exc:
         error = str(exc).strip() or type(exc).__name__
+        _cleanup_snapshot(snapshot_path)
         with record.lock:
             record.status = "failed"
             record.error = error
@@ -140,6 +155,7 @@ def _stress_worker(runtime, record, model_config, clip_path):
         )
         return
 
+    _cleanup_snapshot(snapshot_path)
     with record.lock:
         record.report = report
         record.status = "completed"
@@ -157,6 +173,37 @@ def _stress_worker(runtime, record, model_config, clip_path):
 def start_stress_test(request: Request, body: StressTestRequest | None = None):
     runtime = request.app.state.backend_runtime
     model_config = _resolve_model_config(runtime, body)
+    clip_path = str(Path(__file__).resolve().parents[4] / "audio" / "test-audio.wav")
+    snapshot_path = None
+    recording_id = body.recording_id if body else None
+    audio_filename = "test-audio.wav"
+    audio_duration_seconds = 29.33
+    if recording_id is not None:
+        try:
+            with tempfile.NamedTemporaryFile(prefix="stress-audio-", suffix=".wav", delete=False) as stream:
+                snapshot_path = Path(stream.name)
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="Unable to prepare recording audio") from exc
+        try:
+            copied = runtime.recording_service.copy_audio_snapshot(recording_id, snapshot_path)
+        except RecordingConflictError as exc:
+            _cleanup_snapshot(snapshot_path)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RecordingInvalidAudioError as exc:
+            _cleanup_snapshot(snapshot_path)
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RecordingUnavailableError as exc:
+            _cleanup_snapshot(snapshot_path)
+            raise HTTPException(status_code=503, detail="Unable to read recording audio") from exc
+        except Exception:
+            _cleanup_snapshot(snapshot_path)
+            raise
+        if copied is None:
+            _cleanup_snapshot(snapshot_path)
+            raise HTTPException(status_code=404, detail="recording not found")
+        recording, audio_duration_seconds = copied
+        audio_filename = recording.get("filename") or f"Recording {recording_id[:8]}.wav"
+        clip_path = str(snapshot_path)
     stress_test_id = uuid.uuid4().hex
     record = StressTestRecord(
         stress_test_id=stress_test_id,
@@ -164,24 +211,29 @@ def start_stress_test(request: Request, body: StressTestRequest | None = None):
         model=model_config["model"],
         runtime=model_config["runtime"],
         precision=model_config["precision"],
+        recording_id=recording_id,
+        audio_filename=audio_filename,
+        audio_duration_seconds=audio_duration_seconds,
     )
     try:
         runtime.add_stress_test(record)
     except StressTestConflictError as exc:
+        _cleanup_snapshot(snapshot_path)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except RunRegistryFullError as exc:
+        _cleanup_snapshot(snapshot_path)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     runtime.append_stress_event(
         record,
         {"type": "queued", "stress_test_id": stress_test_id},
     )
-    clip_path = str(Path(__file__).resolve().parents[4] / "audio" / "test-audio.wav")
     try:
         runtime.executor.submit(
-            _stress_worker, runtime, record, model_config, clip_path
+            _stress_worker, runtime, record, model_config, clip_path, snapshot_path
         )
     except Exception as exc:
+        _cleanup_snapshot(snapshot_path)
         runtime.remove_stress_test(stress_test_id)
         raise HTTPException(
             status_code=503, detail="unable to queue stress test"

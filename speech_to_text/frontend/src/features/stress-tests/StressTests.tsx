@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, ApiRequestError } from '../../shared/api'
-import type { ModelChoice, StressEvent, StressTest, StressTrial, Transcription } from '../../shared/types'
+import type { ModelChoice, Recording, StressEvent, StressTest, StressTrial, Transcription } from '../../shared/types'
 import TrialEvidence from './TrialEvidence'
 import './stress-tests.css'
 
@@ -30,6 +30,10 @@ export default function StressTests() {
   const [selectedModel, setSelectedModel] = useState('')
   const [selectedRuntime, setSelectedRuntime] = useState('')
   const [selectedPrecision, setSelectedPrecision] = useState('')
+  const [recordings, setRecordings] = useState<Recording[]>([])
+  const [recordingError, setRecordingError] = useState('')
+  const [selectedRecordingId, setSelectedRecordingId] = useState('')
+  const [uploading, setUploading] = useState(false)
   const [runs, setRuns] = useState<Transcription[]>([])
   const [run, setRun] = useState<StressTest | null>(null)
   const [stressId, setStressId] = useState('')
@@ -42,6 +46,7 @@ export default function StressTests() {
   const [error, setError] = useState('')
   const [announcement, setAnnouncement] = useState('')
   const cursor = useRef(0)
+  const recordingsRequest = useRef(0)
   const currentRunId = useRef('')
   const inFlight = useRef<{ id: string; promise: Promise<void> } | null>(null)
   const activeMic = useMemo(() => runs.find(item => item.kind === 'microphone' && ['starting', 'queued', 'running', 'recording', 'stopping'].includes(item.status)), [runs])
@@ -49,14 +54,24 @@ export default function StressTests() {
   const runtimes = model?.runtimes ?? []
   const runtime = runtimes.find(item => item.key === selectedRuntime)
   const precisionOptions = runtime?.precision_options ?? []
+  const selectedRecording = recordings.find(item => item.recording_id === selectedRecordingId && item.status !== 'recording' && item.duration_seconds > 0)
   const matrixBusy = !!stressId && (!run || isActive(run.status))
-  const canStart = prerequisitesReady && !loading && !starting && !!catalog && !!selectedModel && !!runtime?.compatible && !activeMic && !matrixBusy && (!selectedPrecision || precisionOptions.includes(selectedPrecision))
+  const canStart = prerequisitesReady && !loading && !starting && !uploading && (!selectedRecordingId || !!selectedRecording) && !!catalog && !!selectedModel && !!runtime?.compatible && !activeMic && !matrixBusy && (!selectedPrecision || precisionOptions.includes(selectedPrecision))
 
   const refreshPrerequisites = useCallback(async () => {
     try {
       const [modelData, transcriptionRuns] = await Promise.all([api.models(), api.transcriptions()])
       setCatalog(modelData)
       setRuns(transcriptionRuns)
+      const recordingsRequestId = ++recordingsRequest.current
+      void api.recordings().then(data => {
+        if (recordingsRequest.current === recordingsRequestId) {
+          setRecordings(data)
+          setRecordingError('')
+        }
+      }).catch(e => {
+        if (recordingsRequest.current === recordingsRequestId) setRecordingError(e instanceof Error ? e.message : 'Could not load saved recordings.')
+      })
       setSelectedModel(current => current || modelData.default_model)
       setSelectedRuntime(current => current || modelData.default_runtime)
       setPrerequisitesReady(true)
@@ -169,10 +184,11 @@ export default function StressTests() {
     setStarting(true)
     setError('')
     try {
-      const settings: { model?: string; runtime?: string; precision?: string } = {}
+      const settings: { model?: string; runtime?: string; precision?: string; recording_id?: string } = {}
       if (selectedModel && selectedModel !== catalog?.default_model) settings.model = selectedModel
       if (selectedRuntime && selectedRuntime !== catalog?.default_runtime) settings.runtime = selectedRuntime
       if (selectedPrecision) settings.precision = selectedPrecision
+      if (selectedRecording) settings.recording_id = selectedRecording.recording_id
       const started = await api.startStressTest(settings)
       localStorage.setItem(STORAGE_KEY, started.stress_test_id)
       currentRunId.current = started.stress_test_id
@@ -192,24 +208,44 @@ export default function StressTests() {
     } finally { setStarting(false) }
   }
 
+  const uploadAudio = async (file?: File) => {
+    if (!file) return
+    setUploading(true)
+    setError('')
+    try {
+      const recording = await api.uploadRecording(file)
+      recordingsRequest.current += 1
+      setRecordings(current => [recording, ...current.filter(item => item.recording_id !== recording.recording_id)])
+      setRecordingError('')
+      setSelectedRecordingId(recording.recording_id)
+      setAnnouncement(`Selected ${recording.filename || file.name} for the next matrix.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not upload audio.')
+    } finally { setUploading(false) }
+  }
+
   return <div className="page-content stress-page">
     {error && <div className="stress-error" role="alert"><b>Capacity matrix unavailable</b><span>{error}</span><button className="button button-outline" onClick={() => { void refreshPrerequisites().catch(e => setError(e instanceof Error ? e.message : 'Could not refresh microphone status.')); if (stressId) void loadRun(stressId) }}>Refresh</button></div>}
     {gapNotice && <p className="stress-gap" role="status">Some earlier progress events expired. The current report and retained events are shown.</p>}
     {missing && <div className="stress-missing" role="status"><b>This run is no longer available.</b><span>The backend restarted or evicted its bounded history. Start a new matrix to continue.</span></div>}
     <header className="stress-heading">
-      <div><div className="eyebrow">CAPACITY LAB <span className="stress-heading-rule" /></div><h1>Capacity lab</h1><p>Replay a fixed speech clip at real time to see how each process topology handles concurrent workflows.</p></div>
+      <div><div className="eyebrow">CAPACITY LAB <span className="stress-heading-rule" /></div><h1>Capacity lab</h1><p>Replay the selected speech clip at real time to see how each process topology handles concurrent workflows.</p></div>
       <div className="stress-retention"><span className="retention-mark">⌁</span><span><b>LOCAL RUN HISTORY</b><small>Retained by this backend process</small></span></div>
     </header>
 
     <section className="stress-setup" aria-label="Stress test setup">
-      <div className="workload-facts"><div className="facts-head"><span className="eyebrow">FIXED WORKLOAD</span><span className="workload-wav">WAV / PCM16</span></div><div className="wav-filename"><span aria-hidden="true">♫</span><strong>test-audio.wav</strong></div><div className="facts-grid"><div><small>DURATION</small><b>29.33 <i>s</i></b></div><div><small>PLAYBACK</small><b>2 <i>loops</i></b></div><div><small>CHUNK</small><b>30 <i>s</i></b></div></div></div>
+      <div className="workload-facts"><div className="facts-head"><span className="eyebrow">{matrixBusy && run ? 'RUN WORKLOAD' : 'NEXT WORKLOAD'}</span><span className="workload-wav">WAV / PCM16</span></div><div className="wav-filename"><span aria-hidden="true">♫</span><strong>{matrixBusy && run ? run.audio_filename || 'test-audio.wav' : selectedRecording?.filename || (selectedRecording ? `Recording ${selectedRecording.recording_id.slice(0, 8)}.wav` : 'test-audio.wav')}</strong></div><div className="facts-grid"><div><small>DURATION</small><b>{(matrixBusy && run ? run.audio_duration_seconds ?? 29.33 : selectedRecording?.duration_seconds ?? 29.33).toFixed(2)} <i>s</i></b></div><div><small>PLAYBACK</small><b>2 <i>loops</i></b></div><div><small>CHUNK</small><b>30 <i>s</i></b></div></div></div>
       <div className="stress-settings">
         <div className="settings-heading"><div><span className="eyebrow">CONFIGURATION</span><h2>Model settings</h2></div><span className="backend-default">BACKEND DEFAULTS</span></div>
         <div className="settings-controls">
-          <label>Model<select disabled={!!run && isActive(run.status)} value={selectedModel} onChange={event => { setSelectedModel(event.target.value); const next = catalog?.models.find(item => item.key === event.target.value); if (!next?.runtimes.some(entry => entry.key === selectedRuntime && entry.compatible)) setSelectedRuntime(next?.runtimes.find(entry => entry.compatible)?.key ?? '') ; setSelectedPrecision('') }}>{catalog?.models.map(item => <option key={item.key} value={item.key}>{item.display_name}{!item.installed ? ' · not installed' : ''}</option>)}</select></label>
-          <label>Runtime<select disabled={!!run && isActive(run.status)} value={selectedRuntime} onChange={event => { setSelectedRuntime(event.target.value); setSelectedPrecision('') }}>{runtimes.map(item => <option key={item.key} value={item.key} disabled={!item.compatible}>{item.key}{!item.compatible ? ' · incompatible' : !item.ready ? ' · unavailable' : ''}</option>)}</select><small>{runtime && (!runtime.compatible ? runtime.reason || 'This runtime is incompatible.' : !runtime.ready ? `${runtime.reason || 'Runtime is not ready.'} Affected trials may be unavailable.` : 'Compatible and ready on this host.')}</small></label>
-          <label>Precision<select disabled={!!run && isActive(run.status)} value={selectedPrecision} onChange={event => setSelectedPrecision(event.target.value)}><option value="">Backend default</option>{precisionOptions.map(option => <option key={option} value={option}>{option}</option>)}</select><small>Overrides are sent only when selected.</small></label>
+          <label>Stress test audio<select aria-label="Stress test audio" disabled={starting || uploading || matrixBusy} value={selectedRecordingId} onChange={event => setSelectedRecordingId(event.target.value)}><option value="">Bundled sample · test-audio.wav</option>{recordings.filter(item => item.status !== 'recording' && item.duration_seconds > 0).map(item => <option key={item.recording_id} value={item.recording_id}>{item.filename || `Recording ${item.recording_id.slice(0, 8)}.wav`} · {item.duration_seconds.toFixed(2)} s</option>)}</select><small>Choose a saved microphone, RTSP, or imported recording.</small></label>
+          <label className="stress-upload">Upload audio<input aria-label="Upload stress test audio" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" disabled={starting || uploading || matrixBusy} onChange={event => { void uploadAudio(event.target.files?.[0]); event.currentTarget.value = '' }} /><small>WAV, MP3, or M4A · up to 20 MiB and 120 seconds.</small></label>
+          <label>Model<select disabled={starting || matrixBusy || uploading} value={selectedModel} onChange={event => { setSelectedModel(event.target.value); const next = catalog?.models.find(item => item.key === event.target.value); if (!next?.runtimes.some(entry => entry.key === selectedRuntime && entry.compatible)) setSelectedRuntime(next?.runtimes.find(entry => entry.compatible)?.key ?? '') ; setSelectedPrecision('') }}>{catalog?.models.map(item => <option key={item.key} value={item.key}>{item.display_name}{!item.installed ? ' · not installed' : ''}</option>)}</select></label>
+          <label>Runtime<select disabled={starting || matrixBusy || uploading} value={selectedRuntime} onChange={event => { setSelectedRuntime(event.target.value); setSelectedPrecision('') }}>{runtimes.map(item => <option key={item.key} value={item.key} disabled={!item.compatible}>{item.key}{!item.compatible ? ' · incompatible' : !item.ready ? ' · unavailable' : ''}</option>)}</select><small>{runtime && (!runtime.compatible ? runtime.reason || 'This runtime is incompatible.' : !runtime.ready ? `${runtime.reason || 'Runtime is not ready.'} Affected trials may be unavailable.` : 'Compatible and ready on this host.')}</small></label>
+          <label>Precision<select disabled={starting || matrixBusy || uploading} value={selectedPrecision} onChange={event => setSelectedPrecision(event.target.value)}><option value="">Backend default</option>{precisionOptions.map(option => <option key={option} value={option}>{option}</option>)}</select><small>Overrides are sent only when selected.</small></label>
         </div>
+        {recordingError && <div className="stress-recording-error" role="status">Saved recordings could not be loaded: {recordingError} <button className="button button-outline" onClick={() => { void refreshPrerequisites().catch(e => setError(e instanceof Error ? e.message : 'Could not refresh setup.')) }}>Refresh recordings</button></div>}
+        {selectedRecordingId && !selectedRecording && <div className="stress-recording-error" role="status">The selected recording is no longer available. Choose another audio item before starting.</div>}
         <div className="settings-footer"><span>One matrix at a time · no cancel action</span><button className="button button-lime stress-start" onClick={() => void start()} disabled={!canStart} aria-label="Run capacity matrix">{starting ? 'Queueing…' : matrixBusy ? 'Checking matrix' : run && isActive(run.status) ? 'Matrix running' : 'Run capacity matrix'} <span>↗</span></button></div>
       </div>
     </section>
@@ -233,7 +269,7 @@ export default function StressTests() {
         })}</div>
       </section>)}</div>
       <div className="stress-live" aria-live="polite" aria-atomic="true">{announcement}</div>
-      {stressId && <div className="matrix-run-meta"><span>Run {stressId}</span>{run ? <><span className={`status-pill status-${run.status}`}>{run.status}</span><span>{run.model} · {run.runtime} · {run.precision}</span></> : <span className="status-pill status-running">checking status</span>}{(!run || !isActive(run.status)) && <button className="button button-outline" onClick={() => void start()} disabled={!canStart}>Run again ↻</button>}</div>}
+      {stressId && <div className="matrix-run-meta"><span>Run {stressId}</span>{run ? <><span className={`status-pill status-${run.status}`}>{run.status}</span><span>{run.model} · {run.runtime} · {run.precision}</span><span>Input: {run.audio_filename || 'test-audio.wav'} · {formatSeconds(run.audio_duration_seconds ?? 29.33)}</span></> : <span className="status-pill status-running">checking status</span>}{(!run || !isActive(run.status)) && <button className="button button-outline" onClick={() => void start()} disabled={!canStart}>Run again ↻</button>}</div>}
     </section>
 
     {run?.status === 'failed' && run.error && <div className="stress-error" role="alert"><b>Stress workflow failed</b><span>{run.error}</span></div>}

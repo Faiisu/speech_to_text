@@ -146,3 +146,52 @@ test('refreshes microphone state after a concurrent start conflict', async ({ pa
   await expect(page.getByRole('link', { name: 'Open workflow' })).toHaveAttribute('href', '/runs/active-mic-run')
   await expect(page.getByRole('button', { name: 'Run capacity matrix' })).toBeDisabled()
 })
+
+test('uses a selected saved recording or uploaded audio and keeps run identity fixed', async ({ page }) => {
+  const saved = { recording_id: 'saved-recording', status: 'completed', duration_seconds: 3.25, device: 'Studio Mic', source: 'microphone', filename: 'studio.wav', error: null, created_at: '2026-10-20T00:00:00Z' }
+  const uploaded = { recording_id: 'uploaded-recording', status: 'completed', duration_seconds: 6.5, device: null, source: 'upload', filename: 'imported.m4a', error: null, created_at: '2026-10-20T00:01:00Z' }
+  await page.route('**/api/v1/models', route => route.fulfill({ json: { default_model: 'turbo', default_runtime: 'openvino-gpu', models: [{ key: 'turbo', display_name: 'Typhoon Turbo', installed: true, ready: true, runtimes: [{ key: 'openvino-gpu', compatible: true, ready: true, precision_options: ['source'], reason: null }] }] } }))
+  await page.route('**/api/v1/transcriptions', route => route.fulfill({ json: { transcriptions: [] } }))
+  await page.route('**/api/v1/recordings', route => route.fulfill({ json: { recordings: [saved] } }))
+  await page.route('**/api/v1/recordings/upload', route => route.fulfill({ status: 201, json: uploaded }))
+  let posted: Record<string, unknown> | undefined
+  await page.route('**/api/v1/stress-tests', route => {
+    if (route.request().method() === 'POST') {
+      posted = route.request().postDataJSON()
+      return route.fulfill({ status: 202, json: { stress_test_id: 'sample-matrix', status: 'queued' } })
+    }
+    return route.fulfill({ json: { stress_test_id: 'sample-matrix', events: [], next_cursor: 0 } })
+  })
+  await page.route('**/api/v1/stress-tests/sample-matrix/events?after=*', route => route.fulfill({ json: { stress_test_id: 'sample-matrix', events: [], next_cursor: 0 } }))
+  await page.route('**/api/v1/stress-tests/sample-matrix', route => {
+    const isUpload = posted?.recording_id === 'uploaded-recording'
+    return route.fulfill({ json: { stress_test_id: 'sample-matrix', status: 'completed', model: 'turbo', runtime: 'openvino-gpu', precision: 'source', recording_id: isUpload ? 'uploaded-recording' : 'saved-recording', audio_filename: isUpload ? 'imported.m4a' : 'studio.wav', audio_duration_seconds: isUpload ? 6.5 : 3.25, report: null, error: null, created_at: 1791600000 } })
+  })
+
+  await page.goto('/stress-tests')
+  await page.getByLabel('Stress test audio', { exact: true }).selectOption('saved-recording')
+  await expect(page.getByText('studio.wav', { exact: true }).first()).toBeVisible()
+  await page.getByRole('button', { name: 'Run capacity matrix' }).click()
+  await expect(page.getByText('Input: studio.wav · 3.25 s')).toBeVisible()
+  expect(posted).toEqual({ recording_id: 'saved-recording' })
+
+  await page.getByLabel('Upload stress test audio').setInputFiles({ name: 'imported.m4a', mimeType: 'audio/mp4', buffer: Buffer.from('fixture') })
+  await expect(page.getByLabel('Stress test audio', { exact: true })).toHaveValue('uploaded-recording')
+  await expect(page.getByText('Input: studio.wav · 3.25 s')).toBeVisible()
+  await page.getByRole('button', { name: 'Run again ↻' }).click()
+  await expect(page.getByText('Input: imported.m4a · 6.50 s')).toBeVisible()
+  expect(posted).toEqual({ recording_id: 'uploaded-recording' })
+})
+
+test('disables audio choice and upload while a matrix is active', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('echodesk.lastStressTestId', 'active-matrix'))
+  await page.route('**/api/v1/models', route => route.fulfill({ json: { default_model: 'turbo', default_runtime: 'openvino-gpu', models: [{ key: 'turbo', display_name: 'Typhoon Turbo', installed: true, ready: true, runtimes: [{ key: 'openvino-gpu', compatible: true, ready: true, precision_options: ['source'], reason: null }] }] } }))
+  await page.route('**/api/v1/transcriptions', route => route.fulfill({ json: { transcriptions: [] } }))
+  await page.route('**/api/v1/recordings', route => route.fulfill({ json: { recordings: [] } }))
+  await page.route('**/api/v1/stress-tests/active-matrix', route => route.fulfill({ json: { stress_test_id: 'active-matrix', status: 'running', model: 'turbo', runtime: 'openvino-gpu', precision: 'source', recording_id: 'original-sample', audio_filename: 'original.wav', audio_duration_seconds: 8, report: null, error: null, created_at: 1791600000 } }))
+  await page.route('**/api/v1/stress-tests/active-matrix/events?after=*', route => route.fulfill({ json: { stress_test_id: 'active-matrix', events: [], next_cursor: 0 } }))
+  await page.goto('/stress-tests')
+  await expect(page.getByLabel('Stress test audio', { exact: true })).toBeDisabled()
+  await expect(page.getByLabel('Upload stress test audio')).toBeDisabled()
+  await expect(page.getByText('Input: original.wav · 8.00 s')).toBeVisible()
+})

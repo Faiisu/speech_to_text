@@ -10,3 +10,4 @@ class StressTestRequest(BaseModel):
     model: StrictStr | None = None
     runtime: StrictStr | None = None
     precision: StrictStr | None = None
+    recording_id: StrictStr | None = None
