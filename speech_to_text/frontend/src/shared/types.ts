@@ -251,6 +251,22 @@ export type RecordingSpectrogram = {
   dbfs: number[][]
 }
 
+export type NoiseProfileSummary = {
+  recording_id?: string
+  filename?: string
+  recording_ids?: string[]
+  sources?: { recording_id: string; filename: string }[]
+  source_count?: number
+  total_duration_seconds?: number
+  combination?: string
+  sample_rate: number
+  duration_seconds: number
+  fft_size: number
+  overlap: number
+  window: string
+  frequency_bins: number
+}
+
 export type FilteredRecordingResult = {
   recording: Recording
   source: Recording
@@ -265,6 +281,21 @@ export type FilteredRecordingResult = {
     nyquist_hz: number
     db_min: number
     db_max: number
+    denoise_enabled: boolean
+    noise_recording_id: string | null
+    noise_filename: string | null
+    noise_recording_ids: string[]
+    noise_sources: { recording_id: string; filename: string }[]
+    noise_source_count: number
+    noise_total_duration_seconds: number | null
+    noise_combination: string | null
+    denoising_fft_size: number | null
+    denoising_overlap: number | null
+    denoising_window: string | null
+    denoising_subtraction_strength: number | null
+    denoising_gain_floor: number | null
+    denoising_smoothing_size: number | null
+    denoising_max_attenuation_db: number | null
   }
   before: RecordingSpectrogram
   after: RecordingSpectrogram

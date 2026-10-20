@@ -1,4 +1,4 @@
-import type { Destination, DestinationDefinition, DestinationSummary, FilteredRecordingResult, Microphone, MicrophoneTest, ModelChoice, ModelDeletionPlan, ModelDeletionResult, ModelInspection, ModelJob, Profile, ProfileDefinition, Recording, Transcription, WorkflowEvent } from './types'
+import type { Destination, DestinationDefinition, DestinationSummary, FilteredRecordingResult, Microphone, MicrophoneTest, ModelChoice, ModelDeletionPlan, ModelDeletionResult, ModelInspection, ModelJob, NoiseProfileSummary, Profile, ProfileDefinition, Recording, Transcription, WorkflowEvent } from './types'
 
 const API_ROOT = '/api/v1'
 
@@ -71,7 +71,9 @@ export const api = {
     }
     return response.json() as Promise<Recording>
   },
-  filterRecording: (input: { recording_id: string; low_hz: number; high_hz: number; order?: number }) => request<FilteredRecordingResult>('/noise-filtering/recordings', { method: 'POST', body: JSON.stringify(input) }),
+  analyzeNoiseRecording: (recording_id: string) => request<NoiseProfileSummary>('/noise-filtering/noise-profiles', { method: 'POST', body: JSON.stringify({ recording_id }) }),
+  analyzeNoiseRecordings: (recording_ids: string[]) => request<NoiseProfileSummary>('/noise-filtering/noise-profiles', { method: 'POST', body: JSON.stringify({ recording_ids }) }),
+  filterRecording: (input: { recording_id: string; low_hz: number; high_hz: number; order?: number; denoise_enabled?: boolean; noise_recording_id?: string; noise_recording_ids?: string[] }) => request<FilteredRecordingResult>('/noise-filtering/recordings', { method: 'POST', body: JSON.stringify(input) }),
   recording: (id: string) => request<Recording>(`/recordings/${encodeURIComponent(id)}`),
   stopRecording: (id: string) => request<Recording>(`/recordings/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
   deleteRecording: (id: string) => request<void>(`/recordings/${encodeURIComponent(id)}`, { method: 'DELETE' }),

@@ -27,6 +27,12 @@ def _wav_bytes(rate=8000):
     return target.getvalue()
 
 
+def _uploaded(client, filename, data):
+    response = client.post("/api/v1/recordings/upload", files={"file": (filename, data, "audio/wav")})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 def test_noise_filter_endpoint_returns_saved_copy_and_rejects_nyquist(tmp_path):
     recording_service = RecordingService(output_directory=tmp_path)
     runtime = BackendRuntime(
@@ -66,3 +72,92 @@ def test_noise_filter_endpoint_returns_saved_copy_and_rejects_nyquist(tmp_path):
             "recording_id": "0123456789abcdef0123456789abcdef", "low_hz": 100, "high_hz": 3500,
         })
         assert missing.status_code == 404
+
+
+def test_noise_profile_endpoint_and_opt_in_denoising_snapshot(tmp_path):
+    recording_service = RecordingService(output_directory=tmp_path)
+    runtime = BackendRuntime(
+        workflow_service=_Closable(), profile_store=_Closable(), destination_registry=object(),
+        recording_service=recording_service,
+    )
+    with TestClient(create_app(runtime=runtime)) as client:
+        target = _uploaded(client, "target.wav", _wav_bytes())
+        noise = _uploaded(client, "noise.wav", _wav_bytes())
+        analysis = client.post("/api/v1/noise-filtering/noise-profiles", json={"recording_id": noise["recording_id"]})
+        assert analysis.status_code == 200, analysis.text
+        profile = analysis.json()
+        assert profile["recording_id"] == noise["recording_id"]
+        assert profile["sample_rate"] == 8000
+        assert profile["fft_size"] == 1024
+        assert profile["window"] == "hann"
+        assert "noise_power" not in profile
+
+        invalid = client.post("/api/v1/noise-filtering/recordings", json={
+            "recording_id": target["recording_id"], "low_hz": 100, "high_hz": 3500,
+            "denoise_enabled": "true", "noise_recording_id": noise["recording_id"],
+        })
+        assert invalid.status_code == 422
+
+        result = client.post("/api/v1/noise-filtering/recordings", json={
+            "recording_id": target["recording_id"], "low_hz": 100, "high_hz": 3500,
+            "denoise_enabled": True, "noise_recording_id": noise["recording_id"],
+        })
+        assert result.status_code == 201, result.text
+        settings = result.json()["settings"]
+        assert settings["denoise_enabled"] is True
+        assert settings["noise_recording_id"] == noise["recording_id"]
+        assert settings["noise_filename"] == "noise.wav"
+        assert settings["denoising_fft_size"] == 1024
+        assert settings["denoising_window"] == "hann"
+        assert settings["denoising_subtraction_strength"] == 1.0
+        assert settings["denoising_smoothing_size"] == 3
+
+        other_rate_noise = _uploaded(client, "other-rate.wav", _wav_bytes(16000))
+        mismatch = client.post("/api/v1/noise-filtering/recordings", json={
+            "recording_id": target["recording_id"], "low_hz": 100, "high_hz": 3500,
+            "denoise_enabled": True, "noise_recording_id": other_rate_noise["recording_id"],
+        })
+        assert mismatch.status_code == 422
+        assert "sample rate" in mismatch.json()["detail"]
+        assert len(client.get("/api/v1/recordings").json()["recordings"]) == 4
+
+
+def test_noise_profiles_and_filtering_accept_multiple_sources_and_reject_bad_collections(tmp_path):
+    recording_service = RecordingService(output_directory=tmp_path)
+    runtime = BackendRuntime(
+        workflow_service=_Closable(), profile_store=_Closable(), destination_registry=object(),
+        recording_service=recording_service,
+    )
+    with TestClient(create_app(runtime=runtime)) as client:
+        target = _uploaded(client, "target.wav", _wav_bytes())
+        noise_a = _uploaded(client, "vent.wav", _wav_bytes())
+        noise_b = _uploaded(client, "traffic.wav", _wav_bytes())
+        ids = [noise_a["recording_id"], noise_b["recording_id"]]
+        analysis = client.post("/api/v1/noise-filtering/noise-profiles", json={"recording_ids": ids})
+        assert analysis.status_code == 200, analysis.text
+        assert analysis.json()["recording_ids"] == ids
+        assert [source["filename"] for source in analysis.json()["sources"]] == ["vent.wav", "traffic.wav"]
+        assert analysis.json()["source_count"] == 2
+        assert analysis.json()["combination"] == "maximum"
+
+        result = client.post("/api/v1/noise-filtering/recordings", json={
+            "recording_id": target["recording_id"], "low_hz": 100, "high_hz": 3500,
+            "denoise_enabled": True, "noise_recording_ids": ids,
+        })
+        assert result.status_code == 201, result.text
+        settings = result.json()["settings"]
+        assert settings["noise_recording_ids"] == ids
+        assert settings["noise_source_count"] == 2
+        assert [source["filename"] for source in settings["noise_sources"]] == ["vent.wav", "traffic.wav"]
+        assert settings["noise_combination"] == "maximum"
+        assert settings["noise_recording_id"] is None
+        assert settings["noise_filename"] is None
+
+        for payload in ({"recording_ids": []}, {"recording_ids": ids + ids[:1]}, {"recording_ids": [""]}, {"recording_id": ids[0], "recording_ids": ids}):
+            invalid = client.post("/api/v1/noise-filtering/noise-profiles", json=payload)
+            assert invalid.status_code == 422
+        invalid_filter = client.post("/api/v1/noise-filtering/recordings", json={
+            "recording_id": target["recording_id"], "low_hz": 100, "high_hz": 3500,
+            "denoise_enabled": True, "noise_recording_ids": [],
+        })
+        assert invalid_filter.status_code == 422

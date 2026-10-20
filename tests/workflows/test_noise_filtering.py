@@ -6,7 +6,7 @@ import pytest
 
 from speech_to_text.features.model_deployment import AudioInputError
 from speech_to_text.workflows.audio_recording import RecordingService
-from speech_to_text.workflows.noise_filtering import filter_recording, filter_wav
+from speech_to_text.workflows.noise_filtering import analyze_noise_wav, analyze_noise_wavs, filter_recording, filter_wav
 
 
 def write_wav(path, samples, sample_rate=16000):
@@ -50,6 +50,84 @@ def test_filter_wav_preserves_wav_layout_and_source(tmp_path):
         filtered = np.frombuffer(wav.readframes(rate), dtype="<i2").reshape(-1, 2)
     assert rms(filtered[1000:-1000, 0]) > 6500
     assert rms(filtered[1000:-1000, 1]) < 1000
+
+
+def test_noise_wav_analysis_and_optional_denoising_preserve_layout(tmp_path):
+    rate = 16000
+    time = np.arange(rate, dtype=np.float32) / rate
+    noise = .12 * np.sin(2 * np.pi * 600 * time)
+    target = np.column_stack((noise + .3 * np.sin(2 * np.pi * 1100 * time), -noise - .3 * np.sin(2 * np.pi * 1100 * time)))
+    noise_path, source_path = tmp_path / "noise.wav", tmp_path / "speech.wav"
+    output_path, legacy_path = tmp_path / "denoised.wav", tmp_path / "legacy.wav"
+    write_wav(noise_path, np.rint(np.column_stack((noise, -noise)) * 32767).astype(np.int16), rate)
+    write_wav(source_path, np.rint(target * 32767).astype(np.int16), rate)
+    noise_bytes, source_bytes = noise_path.read_bytes(), source_path.read_bytes()
+
+    profile = analyze_noise_wav(noise_path)
+    result = filter_wav(source_path, output_path, denoise_enabled=True, noise_wav_path=noise_path)
+    filter_wav(source_path, legacy_path, denoise_enabled=False)
+
+    assert profile.sample_rate == rate
+    assert profile.duration_seconds == 1
+    assert result.denoise_enabled is True
+    assert result.noise_profile == profile
+    assert result.frames == rate and result.channels == 2
+    assert noise_path.read_bytes() == noise_bytes
+    assert source_path.read_bytes() == source_bytes
+    with wave.open(str(output_path), "rb") as wav:
+        assert (wav.getframerate(), wav.getnchannels(), wav.getnframes()) == (rate, 2, rate)
+    assert output_path.read_bytes() != legacy_path.read_bytes()
+
+
+def test_multiple_noise_wavs_cover_each_stationary_tone_and_validate_collection(tmp_path):
+    rate = 16000
+    time = np.arange(rate * 2, dtype=np.float32) / rate
+    first = .14 * np.sin(2 * np.pi * 600 * time)
+    second = .14 * np.sin(2 * np.pi * 1600 * time)
+    speech = .22 * np.sin(2 * np.pi * 1000 * time)
+    noise_a, noise_b, source = (tmp_path / name for name in ("vent.wav", "traffic.wav", "speech.wav"))
+    write_wav(noise_a, np.rint(first * 32767).astype(np.int16), rate)
+    write_wav(noise_b, np.rint(second * 32767).astype(np.int16), rate)
+    write_wav(source, np.rint((first + second + speech) * 32767).astype(np.int16), rate)
+    multi, one, plain = (tmp_path / name for name in ("multi.wav", "one.wav", "plain.wav"))
+
+    profiles = analyze_noise_wavs([noise_a, noise_b])
+    assert profiles.duration_seconds == 4
+    filter_wav(source, multi, config={"low_hz": 300, "high_hz": 3000}, denoise_enabled=True, noise_wav_paths=[noise_a, noise_b])
+    filter_wav(source, one, config={"low_hz": 300, "high_hz": 3000}, denoise_enabled=True, noise_wav_path=noise_a)
+    filter_wav(source, plain, config={"low_hz": 300, "high_hz": 3000})
+    with wave.open(str(multi), "rb") as wav:
+        filtered = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2").astype(np.float64)
+    with wave.open(str(plain), "rb") as wav:
+        unfiltered = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2").astype(np.float64)
+
+    def tone_amplitude(samples, frequency):
+        samples = samples[2000:-2000]
+        phase = np.arange(len(samples)) * 2 * np.pi * frequency / rate
+        return float(np.hypot(np.dot(samples, np.sin(phase)), np.dot(samples, np.cos(phase))) * 2 / len(samples))
+
+    assert tone_amplitude(filtered, 600) < tone_amplitude(unfiltered, 600) * .65
+    assert tone_amplitude(filtered, 1600) < tone_amplitude(unfiltered, 1600) * .65
+    assert tone_amplitude(filtered, 1000) > 4000
+    for collection in ([], [noise_a] * 2, [noise_a] * 9, str(noise_a)):
+        with pytest.raises(ValueError):
+            analyze_noise_wavs(collection)
+    with pytest.raises(ValueError, match="not both"):
+        filter_wav(source, tmp_path / "both.wav", denoise_enabled=True, noise_wav_path=noise_a, noise_wav_paths=[noise_b])
+
+
+def test_filter_wav_requires_matching_noise_rate_and_keeps_off_default(tmp_path):
+    noise, source = tmp_path / "noise.wav", tmp_path / "source.wav"
+    write_wav(noise, np.zeros(16000, dtype=np.int16), 16000)
+    write_wav(source, np.zeros(8000, dtype=np.int16), 8000)
+    with pytest.raises(ValueError, match="sample rate"):
+        filter_wav(source, tmp_path / "mismatch.wav", denoise_enabled=True, noise_wav_path=noise)
+    assert not (tmp_path / "mismatch.wav").exists()
+    with pytest.raises(ValueError, match="required"):
+        filter_wav(source, tmp_path / "missing.wav", denoise_enabled=True)
+    filter_wav(source, tmp_path / "default.wav", config={"high_hz": 3000})
+    filter_wav(source, tmp_path / "disabled.wav", config={"high_hz": 3000}, denoise_enabled=False)
+    assert (tmp_path / "default.wav").read_bytes() == (tmp_path / "disabled.wav").read_bytes()
 
 
 def test_filter_wav_rejects_output_overwrite_and_bad_nyquist(tmp_path):

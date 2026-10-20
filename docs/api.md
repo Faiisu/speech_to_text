@@ -24,7 +24,7 @@ The [model-management contract](../.scratch/model-management/spec.md) documents 
 
 ## Noise filtering
 
-The [noise-filtering contract](../.scratch/noise-filtering/spec.md) documents the standalone `filter_wav` callable and the saved-recording Noise filtering page/API, including its shared-scale spectrogram output and frequency-filtering limitation.
+The [noise-filtering contract](../.scratch/noise-filtering/spec.md) documents the standalone WAV callables and saved-recording Noise filtering page/API, including optional spectral denoising from up to 8 noise WAVs and shared-scale spectrogram output.
 
 ## Word matching and forwarding
 

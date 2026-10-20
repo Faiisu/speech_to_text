@@ -25,7 +25,7 @@ This document is the source of truth for where project files belong. Follow it w
 │   │       └── schemas/
 │   ├── features/               # Callable feature modules
 │   │   ├── model_deployment/
-│   │   ├── noise_filtering/     # Configurable sample-level frequency filtering
+│   │   ├── noise_filtering/     # Band-pass filtering and optional stationary-noise denoising
 │   │   └── word_matching/
 │   └── workflows/              # Use cases and their output behavior
 │       ├── audio_recording/
@@ -109,7 +109,7 @@ The transcribe-match-forward workflow owns destination configuration and validat
 
 The audio-input-test workflow owns one bounded, process-local microphone signal diagnostic session and its transient RMS/peak/frame measurements. It opens a source through Feature 01's model-free microphone-source boundary, retains only the latest status, and never stores audio. The microphone routes expose its start/status/stop API. The [microphone diagnostic specification](../.scratch/live-audio/spec.md) owns the duration and lifecycle contract; the [backend API specification](../.scratch/backend-transcription-api/spec.md#microphone-input-test-endpoints) owns the HTTP response shape.
 
-The noise-filtering feature owns reusable Butterworth band-pass sample processing; the noise-filtering workflow owns bounded WAV validation, writing filtered copies into the audio-recording library, and comparable bounded spectrogram data. Its [specification](../.scratch/noise-filtering/spec.md) defines defaults, validation, and the frequency-filtering limitation.
+The noise-filtering feature owns reusable Butterworth band-pass processing and optional stationary-noise estimation and denoising; the noise-filtering workflow owns bounded WAV validation, noise analysis and filtering orchestration, writing filtered copies into the audio-recording library, and comparable bounded spectrogram data. Its [specification](../.scratch/noise-filtering/spec.md) defines defaults and validation.
 
 The canonical outgoing payload schema is packaged as `workflows/transcribe_match_forward/match_results_v1.schema.json`. Browser-only receiver fixtures belong under `tests/frontend_e2e/`, including `fake_receiver.py`; browser assertions remain in `frontend/e2e/`.
 

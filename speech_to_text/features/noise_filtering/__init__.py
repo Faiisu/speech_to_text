@@ -7,6 +7,8 @@ import math
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
+from .spectral import NoiseProfile, analyze_noise, combine_noise_profiles, denoise_audio
+
 
 def filter_audio(samples, sample_rate, config=None):
     """Apply a zero-phase Butterworth band-pass to frame-first audio samples.
@@ -59,4 +61,4 @@ def filter_audio(samples, sample_rate, config=None):
         raise ValueError(f"Audio is too short for the configured filter: {exc}") from exc
 
 
-__all__ = ["filter_audio"]
+__all__ = ["NoiseProfile", "analyze_noise", "combine_noise_profiles", "denoise_audio", "filter_audio"]

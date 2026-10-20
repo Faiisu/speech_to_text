@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../shared/api'
-import type { FilteredRecordingResult, Recording, RecordingSpectrogram } from '../../shared/types'
+import type { FilteredRecordingResult, NoiseProfileSummary, Recording, RecordingSpectrogram } from '../../shared/types'
 import './noise-filtering.css'
 
 const playable = (recording: Recording) => ['completed', 'failed'].includes(recording.status) && recording.duration_seconds > 0
@@ -11,11 +11,15 @@ export default function NoiseFiltering() {
   const [recordings, setRecordings] = useState<Recording[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [noiseUploadFiles, setNoiseUploadFiles] = useState<File[]>([])
+  const [noiseIds, setNoiseIds] = useState<string[]>([])
+  const [noiseProfile, setNoiseProfile] = useState<NoiseProfileSummary | null>(null)
+  const [denoiseEnabled, setDenoiseEnabled] = useState(false)
   const [lowHz, setLowHz] = useState('100')
   const [highHz, setHighHz] = useState('7000')
   const [result, setResult] = useState<FilteredRecordingResult | null>(null)
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState<'uploading' | 'filtering' | ''>('')
+  const [busy, setBusy] = useState<'uploading' | 'uploading-noise' | 'analyzing-noise' | 'filtering' | ''>('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const mounted = useRef(false)
@@ -24,6 +28,10 @@ export default function NoiseFiltering() {
   const nyquist = useMemo(() => selected?.sample_rate ? selected.sample_rate / 2 : 0, [selected])
   const validBounds = Number.isFinite(Number(lowHz)) && Number.isFinite(Number(highHz)) && Number(lowHz) > 0 && Number(highHz) > Number(lowHz) && Number(highHz) < nyquist
   const eligibleRecordings = recordings.filter(playable)
+  const noiseRecordings = eligibleRecordings.filter(item => /\.wav$/i.test(item.filename || ''))
+  const selectedNoise = noiseRecordings.filter(item => noiseIds.includes(item.recording_id))
+  const profileMatchesSelection = Boolean(noiseProfile && noiseProfile.recording_ids && noiseProfile.recording_ids.length === noiseIds.length && noiseProfile.recording_ids.every(id => noiseIds.includes(id)))
+  const noiseRateMatches = Boolean(noiseProfile && selected?.sample_rate === noiseProfile.sample_rate)
 
   const refreshRecordings = async () => {
     setError('')
@@ -58,6 +66,7 @@ export default function NoiseFiltering() {
       if (!mounted.current) return
       setRecordings(current => [imported, ...current.filter(item => item.recording_id !== imported.recording_id)])
       setSelectedId(imported.recording_id)
+      setNoiseProfile(null)
       setUploadFile(null)
       const input = document.getElementById('noise-filter-file') as HTMLInputElement | null
       if (input) input.value = ''
@@ -66,13 +75,52 @@ export default function NoiseFiltering() {
     finally { if (mounted.current) setBusy('') }
   }
 
+  const uploadNoise = async () => {
+    if (!noiseUploadFiles.length || busy) return
+    if (noiseUploadFiles.length + noiseIds.length > 8) { setError('Select no more than 8 noise WAVs in total.'); return }
+    const invalid = noiseUploadFiles.find(file => !/\.wav$/i.test(file.name) || file.size > MAX_UPLOAD_BYTES)
+    if (invalid) { setError(!/\.wav$/i.test(invalid.name) ? 'Choose WAV files containing noise only, with no human speech.' : 'Each audio file must be 20 MiB or smaller.'); return }
+    setBusy('uploading-noise'); setError(''); setNotice(''); setNoiseProfile(null)
+    const importedItems: Recording[] = []
+    let failure = ''
+    try {
+      for (let index = 0; index < noiseUploadFiles.length; index++) {
+        const file = noiseUploadFiles[index]
+        try { importedItems.push(await api.uploadRecording(file)) }
+        catch (reason) { failure = reason instanceof Error ? `${file.name}: ${reason.message}` : `Could not upload ${file.name}.`; setNoiseUploadFiles(noiseUploadFiles.slice(index)); break }
+      }
+      if (!mounted.current) return
+      if (importedItems.length) {
+        setRecordings(current => [...importedItems, ...current.filter(item => !importedItems.some(imported => imported.recording_id === item.recording_id))])
+        setNoiseIds(current => [...current, ...importedItems.map(item => item.recording_id)])
+        setNotice(`${importedItems.length} noise WAV${importedItems.length === 1 ? '' : 's'} added for analysis.`)
+      }
+      if (!failure) setNoiseUploadFiles([])
+      const input = document.getElementById('noise-filter-noise-file') as HTMLInputElement | null
+      if (input && !failure) input.value = ''
+      if (failure) setError(importedItems.length ? `${importedItems.length} file${importedItems.length === 1 ? '' : 's'} uploaded. ${failure} Remaining files stay selected so you can retry.` : `No files uploaded. ${failure} The selected files stay available so you can retry.`)
+    } finally { if (mounted.current) setBusy('') }
+  }
+
+  const analyzeNoise = async () => {
+    if (!selectedNoise.length || busy) return
+    setBusy('analyzing-noise'); setError(''); setNotice(''); setNoiseProfile(null)
+    try {
+      const profile = await api.analyzeNoiseRecordings(noiseIds)
+      if (!mounted.current) return
+      setNoiseProfile(profile)
+      setNotice('Noise profile analyzed. Denoising is ready to use.')
+    } catch (reason) { if (mounted.current) setError(reason instanceof Error ? reason.message : 'Could not analyze these noise WAVs.') }
+    finally { if (mounted.current) setBusy('') }
+  }
+
   const filter = async () => {
-    if (!selected || !playable(selected) || !validBounds || busy) return
+    if (!selected || !playable(selected) || !validBounds || (denoiseEnabled && (!selectedNoise.length || !profileMatchesSelection)) || busy) return
     const snapshot = selected
     const bounds = { low_hz: Number(lowHz), high_hz: Number(highHz) }
     setBusy('filtering'); setError(''); setNotice('')
     try {
-      const filtered = await api.filterRecording({ recording_id: snapshot.recording_id, ...bounds })
+      const filtered = await api.filterRecording({ recording_id: snapshot.recording_id, ...bounds, denoise_enabled: denoiseEnabled, ...(denoiseEnabled ? { noise_recording_ids: [...noiseIds] } : {}) })
       if (!mounted.current) return
       setRecordings(current => [filtered.recording, ...current.filter(item => item.recording_id !== filtered.recording.recording_id)])
       setResult(filtered)
@@ -94,15 +142,25 @@ export default function NoiseFiltering() {
     <section className="noise-filter-setup" aria-label="Choose audio and filter frequencies">
       <div className="noise-filter-source">
         <div className="noise-filter-section-title"><span className="eyebrow">SOURCE AUDIO</span><h2>Choose a recording</h2><p>Use a saved clip or add a WAV, MP3, or M4A file.</p><button className="text-button noise-filter-refresh" onClick={() => void refreshRecordings().catch(() => {})}>Refresh saved audio</button></div>
-        <label className="noise-filter-select">Saved audio<select aria-label="Saved audio" value={selectedId} disabled={Boolean(busy)} onChange={event => { setSelectedId(event.target.value); setError('') }}><option value="">Select a saved recording</option>{eligibleRecordings.map(item => <option key={item.recording_id} value={item.recording_id}>{item.filename || `${item.source === 'rtsp' ? 'IPCAM · ' : ''}${new Date(item.created_at).toLocaleString()}`} · {formatDuration(item.duration_seconds)}</option>)}</select></label>
+        <label className="noise-filter-select">Saved audio<select aria-label="Saved audio" value={selectedId} disabled={Boolean(busy)} onChange={event => { setSelectedId(event.target.value); setNoiseProfile(null); setError('') }}><option value="">Select a saved recording</option>{eligibleRecordings.map(item => <option key={item.recording_id} value={item.recording_id}>{item.filename || `${item.source === 'rtsp' ? 'IPCAM · ' : ''}${new Date(item.created_at).toLocaleString()}`} · {formatDuration(item.duration_seconds)}</option>)}</select></label>
         {selected ? <div className="noise-filter-recording-meta"><span><small>CLIP</small><b title={selected.filename || ''}>{selected.filename || (selected.source === 'rtsp' ? 'IPCAM (RTSP)' : 'Saved recording')}</b></span><span><small>DURATION</small><b>{formatDuration(selected.duration_seconds)}</b></span><span aria-label="Sample rate"><small>SAMPLE RATE</small><b>{selected.sample_rate ? `${selected.sample_rate.toLocaleString()} Hz` : '—'}</b></span></div> : <div className="noise-filter-empty">{eligibleRecordings.length ? 'Select a saved clip to begin.' : 'No saved clips yet. Upload audio to start filtering.'}</div>}
         <div className="noise-filter-upload"><label htmlFor="noise-filter-file">Add an audio file <span>WAV · MP3 · M4A, up to 20 MiB</span></label><input id="noise-filter-file" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" disabled={Boolean(busy)} onChange={event => { setUploadFile(event.target.files?.[0] ?? null); setError('') }} /><button className="button button-outline" disabled={!uploadFile || Boolean(busy)} onClick={() => void upload()}>{busy === 'uploading' ? 'Uploading…' : 'Upload audio'} <span>↑</span></button></div>
+        <div className="noise-filter-noise-source">
+          <fieldset className="noise-filter-noise-list" aria-label="Noise-only WAV samples"><legend>Noise-only WAV samples <span>{noiseIds.length}/8 selected</span></legend>{noiseRecordings.map(item => <label key={item.recording_id}><input type="checkbox" checked={noiseIds.includes(item.recording_id)} disabled={Boolean(busy) || (!noiseIds.includes(item.recording_id) && noiseIds.length >= 8)} onChange={event => { setNoiseIds(current => event.target.checked ? [...current, item.recording_id] : current.filter(id => id !== item.recording_id)); setNoiseProfile(null); setError('') }} /><span title={item.filename || ''}>{item.filename || 'Unnamed WAV'}</span><small>{formatDuration(item.duration_seconds)}</small></label>)}{!noiseRecordings.length && <p>No saved noise WAVs yet.</p>}</fieldset>
+          <p>Each WAV must contain background noise only, with no human speech. Up to 8 sources are analyzed separately and combined by the maximum spectrum per frequency bin.</p>
+          <div className="noise-filter-upload"><label htmlFor="noise-filter-noise-file">Add noise WAVs <span>WAV only · up to 20 MiB each · 8 total</span></label><input id="noise-filter-noise-file" type="file" multiple accept=".wav,audio/wav" disabled={Boolean(busy)} onChange={event => { setNoiseUploadFiles(Array.from(event.target.files ?? [])); setError('') }} /><button className="button button-outline" disabled={!noiseUploadFiles.length || Boolean(busy)} onClick={() => void uploadNoise()}>{busy === 'uploading-noise' ? 'Uploading…' : 'Upload noise WAVs'} <span>↑</span></button></div>
+          <button className="button button-outline noise-filter-analyze" disabled={!selectedNoise.length || Boolean(busy)} onClick={() => void analyzeNoise()}>{busy === 'analyzing-noise' ? 'Analyzing noise…' : 'Analyze selected noise WAVs'} <span>⌁</span></button>
+          {noiseProfile && profileMatchesSelection && <p className="noise-filter-profile-ready" role="status">Analyzed {noiseProfile.source_count} noise WAVs: {noiseProfile.sample_rate.toLocaleString()} Hz, {noiseProfile.total_duration_seconds?.toFixed(2)} s total, {noiseProfile.frequency_bins} frequency bins.</p>}
+        </div>
       </div>
       <div className="noise-filter-controls">
         <div className="noise-filter-section-title"><span className="eyebrow">BAND-PASS FILTER</span><h2>Keep a frequency range</h2><p>Frequencies outside these bounds are reduced.</p></div>
         <div className="noise-filter-bounds"><label>Low cutoff <span>Hz</span><input aria-label="Low cutoff frequency" type="number" min="1" max={nyquist - 1} step="any" value={lowHz} disabled={Boolean(busy)} onChange={event => setLowHz(event.target.value)} /></label><div className="noise-filter-range-mark" aria-hidden="true">to</div><label>High cutoff <span>Hz</span><input aria-label="High cutoff frequency" type="number" min="1" max={nyquist - 1} step="any" value={highHz} disabled={Boolean(busy)} onChange={event => setHighHz(event.target.value)} /></label></div>
         <div className="noise-filter-bound-note">{nyquist ? <>Valid range: 0 &lt; low &lt; high &lt; {nyquist.toLocaleString()} Hz Nyquist</> : selected ? 'Sample rate unavailable. Refresh saved audio to read the WAV header.' : 'Choose a recording to see its valid frequency range.'}</div>
-        <button className="button button-dark noise-filter-action" disabled={!selected || !selected.sample_rate || !playable(selected) || !validBounds || Boolean(busy)} onClick={() => void filter()}>{busy === 'filtering' ? 'Filtering audio…' : 'Filter and compare'} <span>↗</span></button>
+        <label className="noise-filter-denoise-toggle"><input type="checkbox" checked={denoiseEnabled} disabled={Boolean(busy)} onChange={event => setDenoiseEnabled(event.target.checked)} /><span><b>Enable spectral denoising</b><small>Uses the analyzed noise-only WAV before band-pass filtering.</small></span></label>
+        {denoiseEnabled && !profileMatchesSelection && <p className="noise-filter-denoise-note">Select and analyze the noise-only WAVs before filtering.</p>}
+        {denoiseEnabled && noiseProfile && !noiseRateMatches && <p className="noise-filter-denoise-note">Noise WAV and target must use the same sample rate.</p>}
+        <button className="button button-dark noise-filter-action" disabled={!selected || !selected.sample_rate || !playable(selected) || !validBounds || (denoiseEnabled && (!selectedNoise.length || !profileMatchesSelection || !noiseRateMatches)) || Boolean(busy)} onClick={() => void filter()}>{busy === 'filtering' ? 'Filtering audio…' : denoiseEnabled ? 'Denoise, filter and compare' : 'Filter and compare'} <span>↗</span></button>
       </div>
     </section>
 
@@ -113,16 +171,16 @@ export default function NoiseFiltering() {
 function Comparison({ result }: { result: FilteredRecordingResult }) {
   const { settings } = result
   const sourceName = result.source.filename || (result.source.source === 'rtsp' ? 'IPCAM recording' : `Recording ${result.source_recording_id.slice(0, 8)}`)
-  const filteredName = result.recording.filename || `Filtered recording ${result.recording.recording_id.slice(0, 8)}`
+  const filteredName = result.recording.filename || `${settings.denoise_enabled ? 'Denoised ' : ''}filtered recording ${result.recording.recording_id.slice(0, 8)}`
   return <section className="noise-filter-comparison" aria-label="Before and after comparison">
-    <div className="noise-filter-result-heading"><div><span className="eyebrow">FILTERED COPY / {settings.low_hz.toLocaleString()}–{settings.high_hz.toLocaleString()} HZ</span><h2>Before and after</h2><p>{sourceName} · {settings.sample_rate.toLocaleString()} Hz · {settings.channels === 1 ? 'Mono' : 'Stereo'} · {formatDuration(settings.duration_seconds)}</p></div><span className="noise-filter-snapshot">Saved WAV <b>{filteredName}</b></span></div>
+    <div className="noise-filter-result-heading"><div><span className="eyebrow">{settings.denoise_enabled ? 'DENOISED + ' : ''}FILTERED COPY / {settings.low_hz.toLocaleString()}–{settings.high_hz.toLocaleString()} HZ</span><h2>Before and after</h2><p>{sourceName} · {settings.sample_rate.toLocaleString()} Hz · {settings.channels === 1 ? 'Mono' : 'Stereo'} · {formatDuration(settings.duration_seconds)}</p></div><span className="noise-filter-snapshot">Saved WAV <b>{filteredName}</b>{settings.denoise_enabled && settings.noise_sources.map(source => <b key={source.recording_id}>Noise: {source.filename}</b>)}</span></div>
     <div className="noise-filter-players"><AudioColumn label="Before" name={sourceName} recordingId={result.source_recording_id} /><AudioColumn label="After" name={filteredName} recordingId={result.recording.recording_id} /></div>
     <div className="noise-filter-plots">
       <Spectrogram title="Before filtering" data={result.before} duration={settings.duration_seconds} nyquist={settings.nyquist_hz} />
       <Spectrogram title="After filtering" data={result.after} duration={settings.duration_seconds} nyquist={settings.nyquist_hz} />
     </div>
     <div className="noise-filter-legend"><span>POWER / dBFS</span><div className="noise-filter-colorbar" aria-hidden="true" /><div className="noise-filter-color-ticks"><span>−100</span><span>−75</span><span>−50</span><span>−25</span><span>0 dBFS</span></div></div>
-    <p className="noise-filter-method">Both plots use one absolute scale and average channel power before plotting. Band-pass filtering reduces frequencies outside the selected range; it does not identify noise that overlaps speech.</p>
+    <p className="noise-filter-method">Both plots use one absolute scale and average channel power before plotting. {settings.denoise_enabled ? `Spectral denoising used ${settings.noise_sources.map(source => source.filename).join(', ')} with a maximum spectrum per frequency bin before band-pass filtering.` : 'Band-pass filtering reduces frequencies outside the selected range; spectral denoising is disabled.'}</p>
   </section>
 }
 
