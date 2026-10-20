@@ -437,3 +437,27 @@ def test_queue_timeout_ignores_inflight_result_from_failed_source(api):
     finally:
         runtime.release.set()
         stop_and_close(handle, failing, healthy)
+
+
+def test_live_audio_monitor_tees_same_pcm_without_blocking_stt(api):
+    source = ManualAudioSource()
+    runtime = ScriptedRuntime(['first', 'second'])
+    handle = api.load_model({}, runtime_factory=RuntimeFactory(runtime))
+    session = start(api, handle, source, silence_threshold=0)
+    listener = session.audio_monitor.subscribe()
+    try:
+        source.push(np.full(1600, 0.3, dtype=np.float32))
+        packet = listener.get(timeout=1)
+        assert np.frombuffer(packet, dtype='<i2') == pytest.approx(np.full(1600, int(0.3 * 32767)), abs=1)
+        # A listener which never reads cannot stall capture or grow memory.
+        for _ in range(30):
+            source.push(np.zeros(100, dtype=np.float32))
+        assert listener.qsize() <= 4
+        session.audio_monitor.unsubscribe(listener)
+        source.push(np.full(1600, 0.2, dtype=np.float32))
+        session.stop(timeout=3)
+        assert len(texts(collect_until_completed(session))) >= 2
+        with pytest.raises(ValueError):
+            session.audio_monitor.subscribe()
+    finally:
+        stop_and_close(handle, session)

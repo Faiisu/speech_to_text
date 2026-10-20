@@ -10,7 +10,7 @@ from inspect import Parameter, signature
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, WebSocket
 
 from speech_to_text.backend.api.schemas.transcription import (
     MicrophoneTranscriptionRequest,
@@ -534,3 +534,10 @@ def _stop_microphone_workflow(runtime, record):
                 "status": stop_status,
             }
         )
+
+
+@router.websocket("/{workflow_id}/audio")
+async def live_audio(websocket: WebSocket, workflow_id: str):
+    from speech_to_text.backend.live_audio import stream_workflow_audio
+
+    await stream_workflow_audio(websocket, workflow_id)

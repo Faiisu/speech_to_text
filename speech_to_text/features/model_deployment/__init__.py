@@ -57,7 +57,7 @@ def list_microphone_devices():
 
 
 def start_microphone_flow(
-    device=None, model_handle=None, flow_config=None, *, audio_source_factory=None
+    device=None, model_handle=None, flow_config=None, *, audio_source_factory=None, audio_monitor_sink=None
 ):
     """Start one microphone source owned by the current process.
     ``device`` is omitted for the host OS default or is an exact stable device
@@ -73,6 +73,7 @@ def start_microphone_flow(
         model_handle,
         {} if flow_config is None else flow_config,
         audio_source_factory,
+        audio_monitor_sink,
     )
     model_handle._sessions.add(session)
     return session

@@ -364,3 +364,40 @@ def test_shared_ipc_timeout_discards_inflight_source_and_keeps_other_source(api)
         release.set()
         if group._manager is not None:
             group.stop(timeout=10)
+
+
+class MonitoringSource(ProcessAudioSource):
+    def start(self):
+        self.stopped_event = threading.Event()
+        self.started = True
+
+    def start_stream(self):
+        threading.Thread(target=self._stream, daemon=True).start()
+
+    def _stream(self):
+        while not self.stopped_event.wait(0.05):
+            self.on_audio(np.full(800, 0.25, dtype=np.float32))
+
+    def stop(self):
+        self.stopped_event.set()
+
+
+@pytest.mark.parametrize('topology', ['shared-model', 'per-input-model'])
+def test_live_pcm_crosses_bounded_process_channel_without_entering_results(api, topology):
+    group = api.start_multiprocess_microphone_flows(
+        ['monitor-test'], model_config={}, flow_config={'chunk_seconds': 0.1, 'silence_threshold': 0},
+        topology=topology, runtime_factory=ProcessRuntimeFactory(), audio_source_factory=MonitoringSource,
+    )
+    session, = group.sessions
+    listener = session.audio_monitor.subscribe()
+    try:
+        packet = listener.get(timeout=3)
+        np.testing.assert_allclose(np.frombuffer(packet, dtype='<i2'), int(0.25 * 32767), atol=1)
+        session.audio_monitor.unsubscribe(listener)
+        time.sleep(0.15)
+        group.stop(timeout=10)
+        events = collect_until_completed(session, timeout=2)
+        assert texts(events)
+        assert all(isinstance(event, dict) and 'pcm' not in event for event in events)
+    finally:
+        group.abort()

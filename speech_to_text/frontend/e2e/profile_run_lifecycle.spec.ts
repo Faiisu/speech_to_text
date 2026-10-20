@@ -671,7 +671,7 @@ test('singular run route keeps keyword tracking and only the latest 100 events a
   await expect(page.locator('.match-list')).toContainText('alpha')
   await expect(page.locator('.match-list')).toContainText('7 matches')
   await expect(page.getByRole('heading', { name: 'Events' })).toBeVisible()
-  await expect(page.getByRole('status')).toContainText('Earlier events expired', { timeout: 8_000 })
+  await expect(page.locator('.event-panel').getByRole('status')).toContainText('Earlier events expired', { timeout: 8_000 })
   await expect(page.locator('.event-count')).toHaveText('100')
   await expect(page.locator('.timeline')).toContainText('#230')
   await expect(page.locator('.timeline')).toContainText('#61')

@@ -140,3 +140,9 @@
 .timeline-item p.timeline-transcript{white-space:pre-wrap;overflow-wrap:anywhere;color:#35594d;font-size:11px;line-height:1.7;background:#f5f8f1;padding:8px 10px}.timeline-transcript span{display:block;margin-bottom:3px;color:#82916d;font:8px var(--mono);letter-spacing:.4px;text-transform:uppercase}
 .run-row-rtf em{display:block}@media(max-width:760px){.run-row-rtf{min-width:78px}.run-row-rtf em{display:block;font-size:6px;line-height:1.2;white-space:normal}}
 @media(max-width:760px){.dashboard-page .run-row-rtf{min-width:80px}.dashboard-page .run-row-rtf em{display:block;font-size:6px;line-height:1.2;white-space:normal}}
+
+.live-audio-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 20px; margin-bottom: 20px; }
+.live-audio-panel > div { flex: 1; min-width: 220px; }
+.live-audio-panel h2 { margin: 0 0 6px; }
+.live-audio-panel p { margin: 0; }
+.live-audio-panel > small, .live-audio-panel > p { flex-basis: 100%; }

@@ -74,6 +74,7 @@ The implemented backend module layout is:
 speech_to_text/backend/
 ├── app.py                      # FastAPI app factory and process lifecycle
 ├── dependencies.py             # Own workflow service, worker pool, and run registries
+├── live_audio.py               # WebSocket transport for bounded workflow audio subscriptions
 ├── profile_store.py            # Persist microphone profiles and output destinations in SQLite
 ├── profile_credentials.py      # Encrypt saved camera passwords and manage the private database-side key
 └── api/
@@ -135,3 +136,5 @@ When a task introduces a lasting folder category or changes ownership boundaries
 ## Package discovery
 
 The installable package is discovered from `speech_to_text*` by the configuration in `pyproject.toml`. New application Python packages belong under `speech_to_text/`; tests, docs, scripts, and local assets remain outside that package.
+
+Feature 01 owns bounded transient PCM monitoring in `model_deployment/live_audio.py`, including capture fanout and process IPC. The transcription workflow exposes subscriptions; `backend/live_audio.py` owns WebSocket delivery; `frontend/src/features/runs/LiveAudio.tsx` owns browser playback. The [live audio API contract](../.scratch/backend-transcription-api/spec.md#ws-transcriptionsworkflow_idaudio) defines lifecycle and limits.

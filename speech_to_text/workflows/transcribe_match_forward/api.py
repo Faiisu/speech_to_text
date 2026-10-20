@@ -157,6 +157,13 @@ class SessionWorkflow:
         )
         self._thread.start()
 
+    def subscribe_audio(self):
+        """Subscribe to transient 16 kHz mono PCM; caller must unsubscribe."""
+        return self.session.audio_monitor.subscribe()
+
+    def unsubscribe_audio(self, listener):
+        self.session.audio_monitor.unsubscribe(listener)
+
     def _consume(self):
         matcher = StreamingWordMatcher(self.matching_config)
         latest_match = match_keywords("", self.matching_config)

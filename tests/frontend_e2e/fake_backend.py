@@ -17,6 +17,7 @@ from speech_to_text.backend.dependencies import BackendRuntime
 from speech_to_text.backend.profile_store import SQLiteProfileStore
 from speech_to_text.workflows.audio_recording import RecordingService
 from speech_to_text.features.model_deployment import load_model
+from speech_to_text.features.model_deployment.live_audio import AudioMonitor
 from speech_to_text.workflows.transcribe_match_forward import TranscriptionService
 from speech_to_text.workflows.transcribe_match_forward import service as transcription_service_module
 
@@ -44,7 +45,21 @@ class FakeMicrophoneWorkflow:
         self.workflow_id = workflow_id
         self.source_type = source_type
         self.stopped = threading.Event()
+        self.audio_monitor = AudioMonitor()
+        threading.Thread(target=self._emit_audio, daemon=True).start()
         threading.Thread(target=self._emit_results, daemon=True).start()
+
+    def _emit_audio(self):
+        samples = np.sin(np.arange(1600) * 2 * np.pi * 440 / 16000).astype(np.float32) * 0.05
+        while not self.stopped.wait(0.1):
+            self.audio_monitor.publish(samples)
+        self.audio_monitor.close()
+
+    def subscribe_audio(self):
+        return self.audio_monitor.subscribe()
+
+    def unsubscribe_audio(self, listener):
+        self.audio_monitor.unsubscribe(listener)
 
     def _emit_results(self):
         time.sleep(0.2)

@@ -13,6 +13,7 @@ from queue import Empty, Full, Queue
 
 import numpy as np
 
+from .live_audio import AudioMonitor
 from .audio import TARGET_RATE, StreamingResampler
 from .capture import AudioInputOverflow, SoundDeviceSource
 from .config import flow_config
@@ -25,7 +26,8 @@ def _event(kind, source_id, **fields):
 
 
 class TranscriptionSession:
-    def __init__(self, device, model_handle, settings, audio_source_factory=None):
+    def __init__(self, device, model_handle, settings, audio_source_factory=None, audio_monitor_sink=None):
+        self.audio_monitor = AudioMonitor(audio_monitor_sink)
         self.model_handle = model_handle
         self.settings = flow_config(settings)
         if (
@@ -112,6 +114,7 @@ class TranscriptionSession:
             pcm = self._resampler.feed(frames)
             if not pcm.size:
                 return
+            self.audio_monitor.publish(pcm)
             with self._lock:
                 if not self._active or self._stopping:
                     return
@@ -234,6 +237,7 @@ class TranscriptionSession:
             self._emit_completed("stopped")
 
     def _emit_completed(self, status):
+        self.audio_monitor.close()
         with self._condition:
             if self._terminal:
                 return

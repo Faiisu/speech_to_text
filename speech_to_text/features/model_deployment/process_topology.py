@@ -16,6 +16,7 @@ from queue import Empty, Full, Queue
 
 import numpy as np
 
+from .live_audio import AudioMonitor
 from .audio import TARGET_RATE, StreamingResampler
 from .catalog import list_models
 from .config import (
@@ -163,11 +164,14 @@ def _capture_chunks(
     topology,
     runtime_factory=None,
     audio_source_factory=None,
+    audio_monitor_queue=None,
 ):
     """Capture in its own spawned process; only bounded audio enters IPC."""
     from .capture import AudioInputOverflow, SoundDeviceSource
     from .model import load_model
 
+    if audio_monitor_queue is not None:
+        audio_monitor_queue.cancel_join_thread()
     local_frames = Queue(maxsize=16)
     local_control = Queue()
     queue_drop_pending = threading.Event()
@@ -186,7 +190,8 @@ def _capture_chunks(
             from . import start_microphone_flow
 
             session = start_microphone_flow(
-                device, handle, flow, audio_source_factory=audio_source_factory
+                device, handle, flow, audio_source_factory=audio_source_factory,
+                audio_monitor_sink=audio_monitor_queue
             )
             source = session.source
             ready_queue.put(
@@ -216,6 +221,8 @@ def _capture_chunks(
                 output_queue.put(event)
                 if event["type"] == "completed":
                     return
+
+        monitor = AudioMonitor(audio_monitor_queue)
 
         def on_audio(frames):
             try:
@@ -434,7 +441,9 @@ def _capture_chunks(
                 if getattr(source, "finished", False):
                     stop_requested = True
                 continue
-            buffer = np.concatenate((buffer, resampler.feed(frames)))
+            pcm = resampler.feed(frames)
+            monitor.publish(pcm)
+            buffer = np.concatenate((buffer, pcm))
             offset = 0
             while buffer.size - offset >= target_frames:
                 if not submit(buffer[offset : offset + target_frames].copy()):
@@ -455,7 +464,9 @@ def _capture_chunks(
                 frames = local_frames.get_nowait()
             except Empty:
                 break
-            buffer = np.concatenate((buffer, resampler.feed(frames)))
+            pcm = resampler.feed(frames)
+            monitor.publish(pcm)
+            buffer = np.concatenate((buffer, pcm))
             while buffer.size >= target_frames:
                 if not submit(buffer[:target_frames].copy()):
                     capture_error = None
@@ -710,7 +721,7 @@ def _shared_model_worker(
 
 
 class ProcessSession:
-    def __init__(self, source_id, process, control_queue, *, result_queue=None):
+    def __init__(self, source_id, process, control_queue, *, result_queue=None, audio_monitor_queue=None):
         self.source_id = source_id
         self.process = process
         self._control_queue = control_queue
@@ -719,6 +730,22 @@ class ProcessSession:
         self._terminal = False
         self._terminal_event = threading.Event()
         self._last_sequence = None
+        self.audio_monitor = AudioMonitor()
+        if audio_monitor_queue is not None:
+            threading.Thread(target=self._drain_audio, args=(audio_monitor_queue,), daemon=True).start()
+
+    def _drain_audio(self, audio_queue):
+        try:
+            while not self._terminal and not self._stopping and self.process.exitcode is None:
+                try:
+                    packet = audio_queue.get(timeout=0.1)
+                except Empty:
+                    continue
+                self.audio_monitor.publish_packet(packet)
+        finally:
+            self.audio_monitor.close()
+            audio_queue.close()
+
 
     def stop(self, *, timeout=30):
         _validate_timeout(timeout)
@@ -1098,6 +1125,7 @@ def start_multiprocess_microphone_flows(
             )
             flow["source_id"] = source_id
             source_control = manager.Queue()
+            audio_queue = context.Queue(maxsize=8)
             source_start = time.perf_counter()
             process = context.Process(
                 target=_capture_chunks,
@@ -1115,11 +1143,12 @@ def start_multiprocess_microphone_flows(
                     topology,
                     runtime_factory,
                     audio_source_factory,
+                    audio_queue,
                 ),
                 name=f"stt-{source_id}",
             )
             process.start()
-            sessions.append(ProcessSession(source_id, process, source_control))
+            sessions.append(ProcessSession(source_id, process, source_control, audio_monitor_queue=audio_queue))
             session_start_times[source_id] = source_start
         source_load_seconds = {}
         per_source_model_load_seconds = {}
