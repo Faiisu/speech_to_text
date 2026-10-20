@@ -48,6 +48,8 @@ The Model tuning capture panel provides an accessible Input source selector with
 
 ## Tuning workflow
 
+The microphone capture panel also exposes the existing bounded no-model [microphone level diagnostic](../live-audio/spec.md). It uses the selected host device (or system default), polls transient RMS/peak and capture details, supports stop/retry, and closes an active test when leaving Model tuning. Diagnostic capture and recording cannot run at the same time; device discovery can be refreshed, and ambiguous devices remain visible but unavailable. The diagnostic does not create a saved recording or a transcription trial.
+
 Language is selected per trial and retained with the trial's immutable configuration snapshot. The [backend language configuration contract](../backend-transcription-api/spec.md) owns supported choices, defaults, and the meaning of automatic language detection; this page does not identify detected languages or promise code-switching accuracy.
 
 The user can select a discovered host input device or configure an IPCAM RTSP source and record, or import a WAV, MP3, or M4A file; they can listen to or download the saved WAV and rerun it through the existing clip transcription operation with selected model/runtime/decoding options and keywords. Each trial shows transcript, keyword matches, latest chunk RTF, cumulative minimum/average/maximum RTF from backend run status, and an ordered RTF measurement row for every chunk that reached inference, including actual duration for a shorter final chunk. Measurement rows show queue wait, inference time, status, and any error. Failed and null RTF values remain visible without being replaced by zero; when no chunk reached inference, the trial says so. The page keeps its comparison history for the current browser page session; transcription status and event history follow the existing backend run registry's retention rules. The saved recording remains unchanged across reruns. Model loading remains owned by the existing transcription workflow.
@@ -59,7 +61,7 @@ The [clip API contract](../backend-transcription-api/spec.md#post-transcriptions
 - `features/model_deployment/recording.py` owns bounded host capture and WAV encoding.
 - `workflows/audio_recording/` owns generated IDs, persistent metadata and file lifecycle.
 - Backend routes own HTTP validation and translate service outcomes.
-- The model-tuning frontend owns recording and rerun interactions.
+- The model-tuning frontend owns recording, microphone diagnostic, and rerun interactions.
 - Recordings are local runtime data, not model artifacts or packaged audio fixtures.
 
 ## Acceptance
@@ -70,7 +72,7 @@ The [clip API contract](../backend-transcription-api/spec.md#post-transcriptions
 - Generated IDs cannot be used to access arbitrary filesystem paths.
 - Finalized recordings and metadata are discoverable after restart; active recordings are not restored as active.
 - One recording at a time is allowed; active WAV download and deletion return conflict.
-- Browser users can listen to/download a saved recording, rerun it with configurable transcription options, and compare transcript, keyword matches, latest RTF, and every inferred chunk's timing, status, and RTF; all-silence trials show that no chunk reached inference.
+- Browser users can diagnose microphone signal from the capture panel, stop on navigation, and cannot overlap a diagnostic with a recording. They can listen to/download a saved recording, rerun it with configurable transcription options, and compare transcript, keyword matches, latest RTF, and every inferred chunk's timing, status, and RTF; all-silence trials show that no chunk reached inference.
 - Browser users can import WAV, MP3, and M4A files up to 20 MiB; malformed, unsupported, empty, truncated, or over-duration audio is rejected without leaving files or metadata behind.
 - RTSP capture preserves its source metadata across restart, uses the production capture seam, and supports safe startup failure cleanup and partial audio preservation after disconnect. Invalid/mixed source fields and unavailable/disallowed secret references are rejected before opening capture; resolved credentials are absent from responses, errors, and persisted manifests.
 - Browser coverage records/stops an IPCAM clip with unavailable microphone discovery, verifies a downloadable WAV, replays the saved clip in a tuning trial, and covers secret-reference selection. Existing microphone and upload scenarios continue to pass. Actual camera codec/authentication and target hardware performance remain separate proofs without supplied camera access.

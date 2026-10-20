@@ -19,7 +19,7 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   await page.goto('/model-tuning')
   await expect(page.getByRole('heading', { name: 'Model tuning' })).toBeVisible()
   await expect(page.getByText('MODEL READY', { exact: true })).toBeVisible()
-  await page.getByLabel('Microphone').selectOption('E2E Studio Mic')
+  await page.getByLabel('Microphone', { exact: true }).selectOption('E2E Studio Mic')
   await page.getByRole('button', { name: /Start recording/ }).click()
   await expect(page.getByText(/Recording ·/)).toBeVisible()
   await page.getByRole('button', { name: /Stop recording/ }).click()
@@ -74,6 +74,80 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   expect(clipRuns).toHaveLength(2)
   expect(clipRuns[1]).toMatchObject({ model: 'turbo', runtime: 'openvino-gpu', language: 'th', silence_threshold: 0.12, keywords: ['สวัสดี'], decoding_options: { beam_size: 4, temperature: 0.2, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.3 } })
   expect(clipRuns[0]).toMatchObject({ model: 'turbo', runtime: 'openvino-cpu', language: 'en', silence_threshold: 0.07, decoding_options: { beam_size: 2 } })
+})
+
+test('runs the microphone level diagnostic from Model tuning and stops it on navigation', async ({ page }) => {
+  let stopCalls = 0
+  let statusPolls = 0
+  const snapshot = (status: string) => ({
+    test_id: 'diagnostic-e2e', status, device: 'E2E Studio Mic', sample_rate: 16_000, channels: 1,
+    frames_received: status === 'stopped' ? 6400 : 3200, rms: 0.25, peak: 0.6,
+    elapsed_seconds: status === 'stopped' ? 0.4 : 0.2, error: null,
+  })
+  await page.route('**/api/v1/microphones/test', async route => {
+    if (route.request().method() === 'POST') return route.fulfill({ json: snapshot('running'), status: 201 })
+    return route.continue()
+  })
+  await page.route('**/api/v1/microphones/test/diagnostic-e2e', route => {
+    statusPolls += 1
+    return route.fulfill({ json: { ...snapshot('running'), rms: 0.4, peak: 0.8 } })
+  })
+  await page.route('**/api/v1/microphones/test/diagnostic-e2e/stop', async route => {
+    stopCalls += 1
+    return route.fulfill({ json: snapshot('stopped') })
+  })
+
+  await page.goto('/model-tuning')
+  await expect(page.getByRole('heading', { name: 'Model tuning' })).toBeVisible()
+  await page.getByLabel('Microphone').selectOption('E2E Studio Mic')
+  await page.getByRole('button', { name: 'Start microphone test' }).click()
+  await expect(page.getByRole('meter', { name: 'RMS level' })).toHaveAttribute('aria-valuenow', '0.25')
+  await expect(page.getByText('16,000 Hz')).toBeVisible()
+  await expect(page.getByRole('meter', { name: 'RMS level' })).toHaveAttribute('aria-valuenow', '0.4')
+  await expect(page.getByRole('meter', { name: 'Peak level' })).toHaveAttribute('aria-valuenow', '0.8')
+  await expect(page.getByRole('button', { name: 'Start recording' })).toBeDisabled()
+  await expect.poll(() => statusPolls).toBeGreaterThan(0)
+  await page.getByRole('button', { name: 'Stop test' }).click()
+  await expect(page.getByText('Test stopped.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start recording' })).toBeEnabled()
+
+  await page.getByRole('button', { name: 'Test again' }).click()
+  await expect(page.getByRole('button', { name: 'Stop test' })).toBeVisible()
+  await page.getByRole('link', { name: /Overview/ }).click()
+  await expect(page).toHaveURL('/')
+  await expect.poll(() => stopCalls).toBe(2)
+})
+
+test('stops a diagnostic whose start response arrives after leaving Model tuning', async ({ page }) => {
+  let stopCalls = 0
+  await page.route('**/api/v1/microphones/test', async route => {
+    if (route.request().method() !== 'POST') return route.continue()
+    await new Promise(resolve => setTimeout(resolve, 300))
+    return route.fulfill({ status: 201, json: {
+      test_id: 'late-diagnostic', status: 'running', device: null, sample_rate: 16_000, channels: 1,
+      frames_received: 0, rms: null, peak: null, elapsed_seconds: 0, error: null,
+    } })
+  })
+  await page.route('**/api/v1/microphones/test/late-diagnostic/stop', route => {
+    stopCalls += 1
+    return route.fulfill({ json: {
+      test_id: 'late-diagnostic', status: 'stopped', device: null, sample_rate: 16_000, channels: 1,
+      frames_received: 0, rms: null, peak: null, elapsed_seconds: 0, error: null,
+    } })
+  })
+
+  await page.goto('/model-tuning')
+  await page.getByRole('button', { name: 'Start microphone test' }).click()
+  await page.getByRole('link', { name: /Overview/ }).click()
+  await expect(page).toHaveURL('/')
+  await expect.poll(() => stopCalls).toBe(1)
+})
+
+test('redirects the retired microphone test URL to Model tuning', async ({ page }) => {
+  await page.goto('/live-audio')
+  await expect(page).toHaveURL('/model-tuning')
+  await expect(page.getByRole('heading', { name: 'Model tuning' })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Microphone test/ })).toHaveCount(0)
 })
 
 test('shows every inferred chunk RTF including a short final chunk and explicit silence state', async ({ page }) => {

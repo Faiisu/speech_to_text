@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiRequestError, api } from '../../shared/api'
-import { LANGUAGE_LABELS, type DecodingOptions, type Language, type Microphone, type ModelChoice, type Recording, type RuntimeChoice, type Transcription } from '../../shared/types'
+import { LANGUAGE_LABELS, type DecodingOptions, type Language, type Microphone, type MicrophoneTest, type ModelChoice, type Recording, type RuntimeChoice, type Transcription } from '../../shared/types'
 
 type Settings = {
   model: string
@@ -38,10 +38,16 @@ const hasAudio = (recording: Recording | null) => Boolean(recording && ['complet
 const canTranscribe = (recording: Recording | null) => Boolean(hasAudio(recording) && recording && recording.duration_seconds > 0)
 const formatDuration = (seconds: number) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+const diagnosticActive = (status: string) => ['starting', 'running', 'stopping'].includes(status)
+const formatLevel = (value: number | null) => value === null || !Number.isFinite(value) ? '—' : value.toFixed(4)
 
 export default function ModelTuning() {
   const [microphones, setMicrophones] = useState<Microphone[]>([])
   const [microphoneError, setMicrophoneError] = useState('')
+  const [microphoneTest, setMicrophoneTest] = useState<MicrophoneTest | null>(null)
+  const [microphoneTestBusy, setMicrophoneTestBusy] = useState<'starting' | 'stopping' | ''>('')
+  const [microphoneTestError, setMicrophoneTestError] = useState('')
+  const [microphoneTestRefresh, setMicrophoneTestRefresh] = useState(0)
   const [models, setModels] = useState<ModelChoice[]>([])
   const [recordings, setRecordings] = useState<Recording[]>([])
   const [selectedRecordingId, setSelectedRecordingId] = useState('')
@@ -72,6 +78,9 @@ export default function ModelTuning() {
   const [audioPlaying, setAudioPlaying] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const inFlight = useRef(false)
+  const mounted = useRef(false)
+  const latestMicrophoneTest = useRef<MicrophoneTest | null>(null)
+  latestMicrophoneTest.current = microphoneTest
 
   const selectedRecording = recordings.find(item => item.recording_id === selectedRecordingId) ?? null
   const activeRecording = recordings.find(item => item.status === 'recording') ?? null
@@ -79,8 +88,38 @@ export default function ModelTuning() {
   const runtimes = selectedModel?.runtimes ?? []
   const selectedRuntime = runtimes.find(item => item.key === runtime)
   const ready = Boolean(selectedModel?.ready && selectedRuntime?.compatible && selectedRuntime.ready)
-  const enabledMicrophones = useMemo(() => microphones.filter(item => item.selectable), [microphones])
   const trialRunning = trials.some(item => isActive(item.status))
+  const microphoneTestRunning = Boolean(microphoneTest && diagnosticActive(microphoneTest.status))
+
+  const refreshMicrophones = async () => {
+    setMicrophoneError('')
+    try { setMicrophones(await api.microphones()) }
+    catch (reason) { setMicrophoneError(reason instanceof Error ? reason.message : 'Microphone discovery is unavailable.') }
+  }
+
+  const startMicrophoneTest = async () => {
+    if (microphoneTestBusy || microphoneTestRunning || activeRecording || recordingBusy || sourceType !== 'microphone' || (device && !microphones.find(item => item.name === device)?.selectable)) return
+    setMicrophoneTestBusy('starting'); setMicrophoneTestError('')
+    try {
+      const next = await api.startMicrophoneTest(device || null)
+      if (!mounted.current) {
+        if (diagnosticActive(next.status)) void api.stopMicrophoneTest(next.test_id).catch(() => {})
+        return
+      }
+      setMicrophoneTest(next)
+    } catch (reason) { if (mounted.current) setMicrophoneTestError(reason instanceof Error ? reason.message : 'Could not start the microphone test. Try again.') }
+    finally { if (mounted.current) setMicrophoneTestBusy('') }
+  }
+
+  const stopMicrophoneTest = async () => {
+    if (!microphoneTest || !microphoneTestRunning || microphoneTestBusy) return
+    setMicrophoneTestBusy('stopping'); setMicrophoneTestError('')
+    try {
+      const stopped = await api.stopMicrophoneTest(microphoneTest.test_id)
+      if (mounted.current) setMicrophoneTest(stopped)
+    } catch (reason) { if (mounted.current) setMicrophoneTestError(reason instanceof Error ? reason.message : 'Could not stop the microphone test. Try again.') }
+    finally { if (mounted.current) setMicrophoneTestBusy('') }
+  }
 
   const load = useCallback(async () => {
     const results = await Promise.allSettled([api.microphones(), api.models(), api.recordings()])
@@ -113,6 +152,31 @@ export default function ModelTuning() {
   }, [])
 
   useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      const current = latestMicrophoneTest.current
+      if (current && diagnosticActive(current.status)) void api.stopMicrophoneTest(current.test_id).catch(() => {})
+    }
+  }, [])
+  useEffect(() => {
+    if (!microphoneTest || !diagnosticActive(microphoneTest.status)) return
+    let current = true
+    let pending = false
+    const poll = async () => {
+      if (pending) return
+      pending = true
+      try {
+        const latest = await api.microphoneTest(microphoneTest.test_id)
+        if (current) { setMicrophoneTest(latest); setMicrophoneTestError('') }
+      } catch (reason) {
+        if (current) setMicrophoneTestError(reason instanceof Error ? reason.message : 'Could not read microphone test results.')
+      } finally { pending = false }
+    }
+    const timer = window.setInterval(() => { void poll() }, 250)
+    return () => { current = false; window.clearInterval(timer) }
+  }, [microphoneTest?.test_id, microphoneTest?.status, microphoneTestRefresh])
   useEffect(() => {
     if (!recordings.some(item => item.status === 'recording')) return
     let pending = false
@@ -152,6 +216,7 @@ export default function ModelTuning() {
   }, [trials])
 
   const startRecording = async () => {
+    if (microphoneTestRunning || microphoneTestBusy) return
     setRecordingBusy(true); setError('')
     try {
       const source = sourceType === 'rtsp'
@@ -259,19 +324,34 @@ export default function ModelTuning() {
       <div className="tuning-recording-main">
         <div className="tuning-section-label"><span className="tuning-step">01</span><div><h2>Record a reusable clip</h2><p>Audio is saved by the backend and reused for every trial.</p></div></div>
         <label htmlFor="tuning-source">Input source</label>
-        <select id="tuning-source" value={sourceType} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => { const next = event.target.value as 'microphone' | 'rtsp'; setSourceType(next); if (next === 'microphone') { setRtspUsername(''); setRtspPassword('') } }}><option value="microphone">Microphone</option><option value="rtsp">IPCAM (RTSP)</option></select>
+        <select id="tuning-source" value={sourceType} disabled={Boolean(activeRecording) || recordingBusy || microphoneTestRunning || Boolean(microphoneTestBusy)} onChange={event => { const next = event.target.value as 'microphone' | 'rtsp'; setSourceType(next); if (next === 'microphone') { setRtspUsername(''); setRtspPassword('') } }}><option value="microphone">Microphone</option><option value="rtsp">IPCAM (RTSP)</option></select>
         {sourceType === 'microphone' ? <>
-          <label htmlFor="tuning-microphone">Microphone</label>
-          <select id="tuning-microphone" value={device} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setDevice(event.target.value)}><option value="">System default microphone</option>{device && !enabledMicrophones.some(item => item.name === device) && <option value={device}>{device} · unavailable</option>}{enabledMicrophones.map(item => <option key={item.name} value={item.name}>{item.name}{item.is_default ? ' · Default' : ''}</option>)}</select>
-          <small>Input devices are discovered by the backend host.</small>
+          <div className="tuning-microphone-heading"><label htmlFor="tuning-microphone">Microphone</label><button className="text-button" type="button" onClick={() => void refreshMicrophones()} disabled={microphoneTestRunning || Boolean(microphoneTestBusy)}>Refresh devices ↻</button></div>
+          <select id="tuning-microphone" value={device} disabled={Boolean(activeRecording) || recordingBusy || microphoneTestRunning || Boolean(microphoneTestBusy)} onChange={event => setDevice(event.target.value)}><option value="">System default microphone</option>{device && !microphones.some(item => item.name === device) && <option value={device} disabled>{device} · unavailable</option>}{microphones.map(item => <option key={item.name} value={item.name} disabled={!item.selectable}>{item.name}{item.selectable && item.is_default ? ' · Default' : item.selectable ? '' : ' · unavailable'}</option>)}</select>
+          <small>Input devices are discovered by the backend host. Ambiguous device names are unavailable.</small>
           {microphoneError && <small className="tuning-mic-notice" role="status">{microphoneError}</small>}
+          <section className="tuning-mic-test" aria-label="Input level diagnostic">
+            <div className="tuning-mic-test-heading"><div><b>Microphone level</b><small>Check the input signal without recording or loading a model.</small></div>{microphoneTest && <span className={`tuning-mic-status ${microphoneTest.status}`} role="status">{microphoneTest.status.replaceAll('_', ' ')}</span>}</div>
+            {microphoneTestError && <div className="tuning-mic-error" role="alert"><span>{microphoneTestError}</span>{microphoneTestRunning && <button type="button" onClick={() => { setMicrophoneTestError(''); setMicrophoneTestRefresh(value => value + 1) }}>Retry</button>}</div>}
+            {microphoneTest?.error && <div className="tuning-mic-error" role="alert">{microphoneTest.error}</div>}
+            <div className="tuning-mic-levels" aria-live="polite">
+              <DiagnosticMeter label="RMS level" value={microphoneTest?.rms ?? null} />
+              <DiagnosticMeter label="Peak level" value={microphoneTest?.peak ?? null} />
+            </div>
+            {microphoneTest && <div className="tuning-mic-details"><span>Sample rate <b>{microphoneTest.sample_rate ? `${microphoneTest.sample_rate.toLocaleString()} Hz` : '—'}</b></span><span>Channels <b>{microphoneTest.channels ?? '—'}</b></span><span>Frames <b>{microphoneTest.frames_received.toLocaleString()}</b></span><span>Elapsed <b>{microphoneTest.elapsed_seconds.toFixed(2)} s</b></span></div>}
+            {microphoneTestRunning && <p className="tuning-mic-state" role="status">{microphoneTest!.frames_received === 0 ? 'Waiting for audio frames…' : microphoneTest!.rms === 0 && microphoneTest!.peak === 0 ? 'Audio frames are arriving, but the current signal is silent.' : 'Audio signal detected.'} The test stops automatically after 30 seconds.</p>}
+            {microphoneTest?.status === 'completed' && <p className="tuning-mic-state" role="status">{completionMessage(microphoneTest)}</p>}
+            {microphoneTest?.status === 'stopped' && <p className="tuning-mic-state" role="status">Test stopped.</p>}
+            <div className="tuning-mic-actions">{microphoneTestRunning ? <button className="button button-outline" type="button" onClick={() => void stopMicrophoneTest()} disabled={Boolean(microphoneTestBusy)}>{microphoneTestBusy === 'stopping' || microphoneTest?.status === 'stopping' ? 'Stopping…' : 'Stop test'}</button> : <button className="button button-outline" type="button" onClick={() => void startMicrophoneTest()} disabled={Boolean(microphoneTestBusy) || Boolean(activeRecording) || recordingBusy || (device !== '' && !microphones.find(item => item.name === device)?.selectable)}>{microphoneTestBusy === 'starting' ? 'Starting…' : microphoneTest ? 'Test again' : 'Start microphone test'}</button>}{microphoneTest && !microphoneTestRunning && <button className="text-button" type="button" onClick={() => { setMicrophoneTest(null); setMicrophoneTestError('') }}>Clear result</button>}</div>
+            {(microphoneTestRunning || microphoneTestBusy !== '') && <small className="tuning-mic-conflict">Stop the level test before starting a recording.</small>}
+          </section>
         </> : <>
           <label htmlFor="tuning-rtsp-mode">RTSP address source</label>
           <select id="tuning-rtsp-mode" value={rtspMode} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => { const next = event.target.value as 'url' | 'secret_ref'; setRtspMode(next); if (next === 'secret_ref') { setRtspUsername(''); setRtspPassword('') } }}><option value="url">Direct URL</option><option value="secret_ref">Environment variable reference</option></select>
           {rtspMode === 'url' ? <><label htmlFor="tuning-rtsp-url">RTSP URL<input id="tuning-rtsp-url" type="text" value={rtspUrl} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => { const value = event.target.value; setRtspUrl(value); if (/^rtsps?:\/\/[^/]*@/i.test(value)) { setRtspUsername(''); setRtspPassword('') } }} placeholder="rtsp://camera.local:554/audio" /></label><label htmlFor="tuning-rtsp-username">Username<input id="tuning-rtsp-username" value={rtspUsername} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspUsername(event.target.value)} autoComplete="username" /></label><label htmlFor="tuning-rtsp-password">Password<input id="tuning-rtsp-password" type="password" value={rtspPassword} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspPassword(event.target.value)} autoComplete="new-password" /></label><small>Paste a complete authenticated URL, or enter separate credentials. Password stays in this page until you leave.</small></> : <label htmlFor="tuning-rtsp-secret-ref">Environment variable name<input id="tuning-rtsp-secret-ref" value={rtspSecretRef} disabled={Boolean(activeRecording) || recordingBusy} onChange={event => setRtspSecretRef(event.target.value)} placeholder="CAMERA_AUDIO_URL" /></label>}
           {rtspMode === 'secret_ref' && <small>Use an approved backend environment variable for the complete RTSP URL.</small>}
         </>}
-        <div className="tuning-rec-actions">{activeRecording ? <button className="button button-dark" disabled={recordingBusy} onClick={() => void stopRecording()}><i className="recording-square" />{recordingBusy ? 'Stopping…' : 'Stop recording'}</button> : <button className="button button-lime" disabled={recordingBusy || (sourceType === 'rtsp' && (rtspMode === 'url' ? !rtspUrl.trim() : !rtspSecretRef.trim()))} onClick={() => void startRecording()}><i className="recording-dot" />{recordingBusy ? 'Starting…' : 'Start recording'}</button>}<span className={activeRecording ? 'recording-state active' : 'recording-state'}><i />{activeRecording ? `Recording · ${formatDuration(activeRecording.duration_seconds)}` : selectedRecording?.status === 'completed' ? `Saved · ${formatDuration(selectedRecording.duration_seconds)}` : 'Ready to record'}</span></div>
+        <div className="tuning-rec-actions">{activeRecording ? <button className="button button-dark" disabled={recordingBusy} onClick={() => void stopRecording()}><i className="recording-square" />{recordingBusy ? 'Stopping…' : 'Stop recording'}</button> : <button className="button button-lime" disabled={recordingBusy || microphoneTestRunning || Boolean(microphoneTestBusy) || (sourceType === 'rtsp' && (rtspMode === 'url' ? !rtspUrl.trim() : !rtspSecretRef.trim()))} onClick={() => void startRecording()}><i className="recording-dot" />{recordingBusy ? 'Starting…' : 'Start recording'}</button>}<span className={activeRecording ? 'recording-state active' : 'recording-state'}><i />{activeRecording ? `Recording · ${formatDuration(activeRecording.duration_seconds)}` : selectedRecording?.status === 'completed' ? `Saved · ${formatDuration(selectedRecording.duration_seconds)}` : 'Ready to record'}</span></div>
         {activeRecording && <p className="tuning-live-hint" role="status">The backend will end capture at 120 seconds. You can stop it here at any time.</p>}
         <div className="tuning-upload">
           <label htmlFor="tuning-audio-file">Audio file</label>
@@ -343,4 +423,20 @@ function TrialCard({ trial, index }: { trial: Trial; index: number }) {
     </section>
     <details className="trial-settings"><summary>Settings snapshot</summary><div className="trial-setting-values"><span>Model <b>{config.model}</b></span><span>Runtime <b>{config.runtime}</b></span><span>Language <b>{LANGUAGE_LABELS[config.language]}</b></span><span>Silence threshold <b>{config.silence_threshold}</b></span><span>Keywords <b>{config.keywords.join(', ')}</b></span>{Object.entries(config.decoding_options).map(([key, value]) => <span key={key}>{key.replaceAll('_', ' ')} <b>{String(value)}</b></span>)}</div></details>
   </article>
+}
+
+function DiagnosticMeter({ label, value }: { label: string; value: number | null }) {
+  const numeric = value !== null && Number.isFinite(value) ? value : 0
+  return <div className="tuning-mic-meter">
+    <div><span>{label}</span><b>{formatLevel(value)}</b></div>
+    <div className="tuning-mic-track" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={1} aria-valuenow={numeric}><span style={{ width: `${Math.max(0, Math.min(1, numeric)) * 100}%` }} /></div>
+    <small>Full scale · 0 to 1</small>
+  </div>
+}
+
+function completionMessage(test: MicrophoneTest) {
+  if (test.frames_received === 0) return 'Test completed, but no audio frames were received.'
+  if ((test.rms !== null && test.rms > 0) || (test.peak !== null && test.peak > 0)) return 'Signal detected. The input produced a measurable audio level.'
+  if (test.rms === 0) return 'Audio frames were received, but the input is silent.'
+  return 'Audio frames were received, but the signal level could not be measured.'
 }
