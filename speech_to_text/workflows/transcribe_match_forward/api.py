@@ -90,6 +90,7 @@ def transcribe_clip_and_forward(
     flow_config=None,
     *,
     measurement_callback=None,
+    audio_preprocessor=None,
 ):
     """Transcribe and match a finite clip; MQTT destinations are reserved for microphone chunks."""
     matching_config = _validate_matching_config(matching_config)
@@ -110,6 +111,8 @@ def transcribe_clip_and_forward(
             measurement_callback(measurement)
 
     transcription_options = {"source_id": source_id}
+    if audio_preprocessor is not None:
+        transcription_options["audio_preprocessor"] = audio_preprocessor
     if _accepts_keyword_argument(transcribe_clip, "measurement_sink"):
         transcription_options["measurement_sink"] = record_measurement
     transcript = transcribe_clip(
@@ -377,6 +380,7 @@ def start_microphone_and_forward(
     *,
     on_finished=None,
     audio_source_factory=None,
+    audio_preprocessor=None,
 ):
     """Start and wrap one Feature 01 microphone session as a workflow."""
     source_options = (
@@ -384,6 +388,8 @@ def start_microphone_and_forward(
         if audio_source_factory is not None
         else {}
     )
+    if audio_preprocessor is not None:
+        source_options["audio_preprocessor"] = audio_preprocessor
     session = start_microphone_flow(device, model_handle, flow_config, **source_options)
     return forward_session(
         session, forwarder, matching_config, on_finished=on_finished

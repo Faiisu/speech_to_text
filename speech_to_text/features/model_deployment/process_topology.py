@@ -16,6 +16,7 @@ from queue import Empty, Full, Queue
 
 import numpy as np
 
+from .preprocessing import preprocess_chunk, validate_audio_preprocessor
 from .live_audio import AudioMonitor
 from .audio import TARGET_RATE, StreamingResampler
 from .catalog import list_models
@@ -165,6 +166,7 @@ def _capture_chunks(
     runtime_factory=None,
     audio_source_factory=None,
     audio_monitor_queue=None,
+    audio_preprocessor=None,
 ):
     """Capture in its own spawned process; only bounded audio enters IPC."""
     from .capture import AudioInputOverflow, SoundDeviceSource
@@ -191,7 +193,8 @@ def _capture_chunks(
 
             session = start_microphone_flow(
                 device, handle, flow, audio_source_factory=audio_source_factory,
-                audio_monitor_sink=audio_monitor_queue
+                audio_monitor_sink=audio_monitor_queue,
+                audio_preprocessor=audio_preprocessor
             )
             source = session.source
             ready_queue.put(
@@ -264,6 +267,7 @@ def _capture_chunks(
 
         def submit(chunk):
             nonlocal sequence, queue_failed, first_queued_at
+            chunk = preprocess_chunk(chunk, audio_preprocessor)
             if (
                 not chunk.size
                 or float(np.sqrt(np.mean(chunk * chunk))) < flow["silence_threshold"]
@@ -986,6 +990,7 @@ def start_multiprocess_microphone_flows(
     audio_source_factory=None,
     flow_configs=None,
     startup_monitor_callback=None,
+    audio_preprocessor=None,
 ):
     """Start separate capture processes in shared-model or per-input-model mode.
 
@@ -1056,6 +1061,7 @@ def start_multiprocess_microphone_flows(
             raise ConfigurationError(
                 f"Language {flow['language']!r} is not supported by model {resolved_model['model']!r}"
             )
+    validate_audio_preprocessor(audio_preprocessor)
     context = mp.get_context("spawn")
     manager = _IPCManager(ctx=context)
     manager.start()
@@ -1144,6 +1150,7 @@ def start_multiprocess_microphone_flows(
                     runtime_factory,
                     audio_source_factory,
                     audio_queue,
+                    audio_preprocessor,
                 ),
                 name=f"stt-{source_id}",
             )

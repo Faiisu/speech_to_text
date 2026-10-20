@@ -54,6 +54,7 @@ class FakeTranscriptionService:
     def __init__(self):
         self.microphone_start_options = []
         self.microphone_source_factories = []
+        self.microphone_preprocessors = []
         self.keep_microphone_active = False
         self.keyword_validation_barrier = None
         self.default_model = "turbo"
@@ -97,12 +98,13 @@ class FakeTranscriptionService:
 
     def start_microphone(
         self, device, keywords, flow_config=None, *, execution_mode="shared", model=None, runtime=None,
-        audio_source_factory=None,
+        audio_source_factory=None, audio_preprocessor=None,
     ):
         self.microphone_start_options.append(
             (device, tuple(keywords), flow_config, execution_mode, model, runtime)
         )
         self.microphone_source_factories.append(audio_source_factory)
+        self.microphone_preprocessors.append(audio_preprocessor)
         if self.keep_microphone_active:
             return ActiveFakeMicrophoneWorkflow()
         return FakeMicrophoneWorkflow()
@@ -161,6 +163,14 @@ def test_profiles_can_be_created_listed_replaced_and_deleted(api):
         "condition_on_previous_text": False,
         "no_repeat_ngram_size": 3,
         "repetition_penalty": 1.0,
+    }
+    assert profile["noise_filter"] == {
+        "bandpass_enabled": False,
+        "low_hz": 100.0,
+        "high_hz": 7000.0,
+        "order": 4,
+        "denoise_enabled": False,
+        "noise_recording_ids": [],
     }
     assert client.get("/api/v1/models").json()["models"][0]["runtimes"]
     assert profile["created_at"]
@@ -426,6 +436,63 @@ def test_profile_decoding_options_reject_non_finite_json_number(api):
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("noise_filter", [
+    {"high_hz": 8000},
+    {"bandpass_enabled": 1},
+    {"order": 9},
+    {"denoise_enabled": True},
+    {"unknown": True},
+    {"noise_recording_ids": ["same", "same"]},
+    {"noise_recording_ids": [str(index) for index in range(9)]},
+])
+def test_profile_noise_filter_rejects_invalid_settings(api, noise_filter):
+    client, _service = api
+    response = client.post(
+        "/api/v1/profiles",
+        json=profile_body(noise_filter=noise_filter),
+    )
+    assert response.status_code == 422
+
+
+def test_profile_noise_filter_persists_and_run_snapshot_keeps_start_settings(api):
+    client, service = api
+    noise_filter = {
+        "bandpass_enabled": True,
+        "low_hz": 125,
+        "high_hz": 6500,
+        "order": 3,
+        "denoise_enabled": False,
+        "noise_recording_ids": [],
+    }
+    created = client.post(
+        "/api/v1/profiles",
+        json=profile_body(noise_filter=noise_filter),
+    )
+    assert created.status_code == 201
+    profile = created.json()
+    assert profile["noise_filter"] == {
+        **noise_filter,
+        "low_hz": 125.0,
+        "high_hz": 6500.0,
+    }
+
+    started = client.post(f"/api/v1/profiles/{profile['profile_id']}/runs")
+    assert started.status_code == 202
+    status = client.get(f"/api/v1/transcriptions/{started.json()['workflow_id']}").json()
+    assert status["noise_filter"] == profile["noise_filter"]
+    processor = service.microphone_preprocessors[-1]
+    assert callable(processor)
+    assert processor.settings["bandpass_enabled"] is True
+    assert service.microphone_start_options[-1][2].get("audio_preprocessor") is None
+
+    changed = client.put(
+        f"/api/v1/profiles/{profile['profile_id']}",
+        json=profile_body(noise_filter={"bandpass_enabled": False}),
+    )
+    assert changed.status_code == 200
+    assert client.get(f"/api/v1/transcriptions/{started.json()['workflow_id']}").json()["noise_filter"] == status["noise_filter"]
+
+
 def test_profile_decoding_options_normalize_partial_values_and_round_trip(api):
     client, _ = api
     response = client.post(
@@ -660,6 +727,7 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
     assert columns.count("silence_threshold") == 1
     assert columns.count("model") == 1
     assert columns.count("decoding_options_json") == 1
+    assert columns.count("noise_filter_json") == 1
     assert columns.count("language") == 1
     assert columns.count("source_type") == 1
     assert columns.count("rtsp_url") == 1
@@ -687,6 +755,14 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
         "condition_on_previous_text": False,
         "no_repeat_ngram_size": 3,
         "repetition_penalty": 1.0,
+    }
+    assert profiles[0]["noise_filter"] == {
+        "bandpass_enabled": False,
+        "low_hz": 100.0,
+        "high_hz": 7000.0,
+        "order": 4,
+        "denoise_enabled": False,
+        "noise_recording_ids": [],
     }
 
     migrated_store = SQLiteProfileStore(database_path)

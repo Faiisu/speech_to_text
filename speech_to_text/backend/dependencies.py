@@ -69,6 +69,8 @@ class RunRecord:
     execution_mode: str | None = None
     silence_threshold: float | None = None
     decoding_options: dict | None = None
+    noise_filter: dict | None = None
+    audio_preprocessor: object | None = field(default=None, repr=False)
     model: str | None = None
     runtime: str | None = None
     destination_id: str | None = None
@@ -435,6 +437,7 @@ def run_snapshot(record):
             "execution_mode": record.execution_mode,
             "silence_threshold": record.silence_threshold,
             "decoding_options": deepcopy(record.decoding_options),
+            "noise_filter": deepcopy(record.noise_filter),
             "model": record.model,
             "runtime": record.runtime,
             "destination_id": record.destination_id,

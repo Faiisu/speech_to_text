@@ -40,6 +40,7 @@ class MicrophoneTranscriptionRequest(BaseModel):
     execution_mode: Literal["shared", "per_workflow_process"] = "shared"
     destination_id: StrictStr | None = None
     language: Literal["th", "en", "auto"] = "th"
+    noise_filter: dict = Field(default_factory=dict)
 
 
 class RTSPTranscriptionRequest(BaseModel):
@@ -54,6 +55,7 @@ class RTSPTranscriptionRequest(BaseModel):
     execution_mode: Literal["shared", "per_workflow_process"] = "shared"
     destination_id: StrictStr | None = None
     language: Literal["th", "en", "auto"] = "th"
+    noise_filter: dict = Field(default_factory=dict)
 
 
 class MicrophoneProfileDefinition(BaseModel):
@@ -79,6 +81,7 @@ class MicrophoneProfileDefinition(BaseModel):
     decoding_options: DecodingOptionsDefinition = Field(
         default_factory=DecodingOptionsDefinition
     )
+    noise_filter: dict = Field(default_factory=dict)
 
     @validator("silence_threshold", pre=True)
     def reject_boolean_silence_threshold(cls, value):

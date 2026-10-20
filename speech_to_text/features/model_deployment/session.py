@@ -14,6 +14,7 @@ from queue import Empty, Full, Queue
 import numpy as np
 
 from .live_audio import AudioMonitor
+from .preprocessing import preprocess_chunk, validate_audio_preprocessor
 from .audio import TARGET_RATE, StreamingResampler
 from .capture import AudioInputOverflow, SoundDeviceSource
 from .config import flow_config
@@ -26,8 +27,9 @@ def _event(kind, source_id, **fields):
 
 
 class TranscriptionSession:
-    def __init__(self, device, model_handle, settings, audio_source_factory=None, audio_monitor_sink=None):
+    def __init__(self, device, model_handle, settings, audio_source_factory=None, audio_monitor_sink=None, audio_preprocessor=None):
         self.audio_monitor = AudioMonitor(audio_monitor_sink)
+        self._audio_preprocessor = validate_audio_preprocessor(audio_preprocessor)
         self.model_handle = model_handle
         self.settings = flow_config(settings)
         if (
@@ -344,6 +346,11 @@ class TranscriptionSession:
             ) from exc
 
     def _enqueue_chunk(self, chunk, timeout=0):
+        try:
+            chunk = preprocess_chunk(chunk, self._audio_preprocessor)
+        except AudioInputError as exc:
+            self._schedule_fatal("AUDIO_PREPROCESSING_FAILED", str(exc))
+            return False
         if (
             not chunk.size
             or float(np.sqrt(np.mean(chunk * chunk)))

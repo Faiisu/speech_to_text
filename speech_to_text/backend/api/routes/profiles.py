@@ -15,10 +15,17 @@ from speech_to_text.backend.profile_store import (
     UnknownDestinationError,
 )
 from speech_to_text.backend.profile_credentials import ProfileCredentialError
+from speech_to_text.workflows.audio_recording import (
+    RecordingConflictError,
+    RecordingInvalidAudioError,
+    RecordingUnavailableError,
+)
 from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowUnavailableError,
+    normalize_noise_filter,
     normalize_profile_decoding_options,
+    prepare_audio_preprocessor,
     prepare_rtsp_source,
     prepare_rtsp_configuration,
 )
@@ -70,6 +77,10 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except WorkflowUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        noise_filter = normalize_noise_filter(body.noise_filter)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     destination_id = body.destination_id
     if destination_id is not None:
         if runtime.destination_registry.get_config(destination_id) is None:
@@ -101,6 +112,7 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
         "destination_id": destination_id,
         "language": body.language,
         "decoding_options": decoding_options,
+        "noise_filter": noise_filter,
     }
 
 
@@ -178,6 +190,21 @@ def start_profile_run(profile_id: str, request: Request):
     if profile is None:
         raise HTTPException(status_code=404, detail="profile not found")
     keywords = validate_keywords(runtime.workflow_service, profile["keywords"])
+    with runtime.profile_run_start_lock:
+        existing = runtime.get_active_profile_run(profile_id)
+        if existing is not None:
+            with existing.lock:
+                return {
+                    "workflow_id": existing.workflow_id,
+                    "status": existing.status,
+                    "first_queued_at": existing.first_queued_at,
+                    "last_response_at": existing.last_response_at,
+                }
+        return _start_profile_run_from_snapshot(request, profile, keywords)
+
+
+def _start_profile_run_from_snapshot(request: Request, profile: dict, keywords):
+    runtime = request.app.state.backend_runtime
     source_factory = None
     if profile.get("source_type", "microphone") == "rtsp":
         try:
@@ -192,6 +219,21 @@ def start_profile_run(profile_id: str, request: Request):
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except WorkflowUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        noise_filter = normalize_noise_filter(profile.get("noise_filter"))
+        audio_preprocessor = prepare_audio_preprocessor(
+            noise_filter, runtime.recording_service
+        )
+    except WorkflowConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RecordingConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RecordingInvalidAudioError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RecordingUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     forwarder = None
     destination_id = profile.get("destination_id")
     if destination_id is not None:
@@ -221,4 +263,6 @@ def start_profile_run(profile_id: str, request: Request):
         rtsp_username=profile.get("rtsp_username"),
         rtsp_has_password=profile.get("rtsp_has_password", False),
         audio_source_factory=source_factory,
+        noise_filter=noise_filter,
+        audio_preprocessor=audio_preprocessor,
     )

@@ -10,6 +10,7 @@ import warnings
 from copy import deepcopy
 from queue import Queue
 
+from .preprocessing import preprocess_chunk, validate_audio_preprocessor
 from .audio import TARGET_RATE, read_clip
 from .config import (
     flow_config as validate_flow_config,
@@ -207,6 +208,7 @@ def transcribe_clip(
     source_id=None,
     measurement_clock=None,
     monotonic_clock=None,
+    audio_preprocessor=None,
 ):
     if not isinstance(model_handle, ModelHandle):
         raise TypeError("model_handle must be a ModelHandle returned by load_model")
@@ -216,6 +218,7 @@ def transcribe_clip(
         raise ConfigurationError(
             f"Language {flow['language']!r} is not supported by model {model_handle.model!r}"
         )
+    validate_audio_preprocessor(audio_preprocessor)
     audio = read_clip(clip)
     frame_count = max(1, round(flow["chunk_seconds"] * TARGET_RATE))
     transcripts = []
@@ -223,7 +226,7 @@ def transcribe_clip(
     monotonic_clock = monotonic_clock or time.perf_counter
     inferred_chunks = []
     for sequence, start in enumerate(range(0, audio.size, frame_count)):
-        chunk = audio[start : start + frame_count]
+        chunk = preprocess_chunk(audio[start : start + frame_count], audio_preprocessor)
         if (
             chunk.size
             and float((chunk * chunk).mean() ** 0.5) >= flow["silence_threshold"]

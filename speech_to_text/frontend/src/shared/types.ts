@@ -115,6 +115,7 @@ export type Profile = {
   language?: Language
   destination_id?: string | null
   decoding_options: DecodingOptions
+  noise_filter?: NoiseFilterConfig
   created_at: string
   updated_at: string
 }
@@ -135,6 +136,7 @@ export type Transcription = {
   execution_mode: 'shared' | 'per_workflow_process' | null
   silence_threshold: number | null
   decoding_options: DecodingOptions | null
+  noise_filter?: NoiseFilterConfig | null
   model: string | null
   runtime: RuntimeChoice['key'] | null
   language?: Language | null
@@ -149,6 +151,16 @@ export type Transcription = {
   destination_id?: string | null
   delivery?: DeliveryStatus | null
   created_at: string
+}
+
+export type NoiseFilterConfig = {
+  bandpass_enabled: boolean
+  low_hz: number
+  high_hz: number
+  order: number
+  denoise_enabled: boolean
+  noise_recording_ids: string[]
+  noise_sources?: { recording_id: string; filename: string }[]
 }
 
 export type DecodingOptions = {
@@ -360,4 +372,4 @@ export type StressEvent = {
   [key: string]: unknown
 }
 
-export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options'> & { source_type?: 'microphone' | 'rtsp'; rtsp_url?: string | null; rtsp_url_secret_ref?: string | null; rtsp_username?: string | null; rtsp_password?: string; language: Language; destination_id?: string | null }
+export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options' | 'noise_filter'> & { source_type?: 'microphone' | 'rtsp'; rtsp_url?: string | null; rtsp_url_secret_ref?: string | null; rtsp_username?: string | null; rtsp_password?: string; language: Language; destination_id?: string | null }

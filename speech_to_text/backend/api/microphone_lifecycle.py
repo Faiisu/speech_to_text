@@ -49,6 +49,23 @@ def _utc_now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _noise_filter_snapshot(noise_filter, audio_preprocessor):
+    if audio_preprocessor is not None:
+        snapshot = dict(audio_preprocessor.settings)
+        sources = getattr(audio_preprocessor, "noise_sources", None)
+        if sources:
+            snapshot["noise_sources"] = [dict(source) for source in sources]
+        return snapshot
+    return dict(noise_filter or {
+        "bandpass_enabled": False,
+        "low_hz": 100.0,
+        "high_hz": 7000.0,
+        "order": 4,
+        "denoise_enabled": False,
+        "noise_recording_ids": [],
+    })
+
+
 def start_microphone_workflow(
     request,
     *,
@@ -70,6 +87,8 @@ def start_microphone_workflow(
     rtsp_username=None,
     rtsp_has_password=False,
     audio_source_factory=None,
+    noise_filter=None,
+    audio_preprocessor=None,
 ):
     """Start one microphone workflow and register its run for API monitoring."""
     runtime = request.app.state.backend_runtime
@@ -105,6 +124,8 @@ def start_microphone_workflow(
                 rtsp_username=rtsp_username,
                 rtsp_has_password=rtsp_has_password,
                 audio_source_factory=audio_source_factory,
+                noise_filter=noise_filter,
+                audio_preprocessor=audio_preprocessor,
             )
     return _start_microphone_workflow(
         request,
@@ -126,6 +147,8 @@ def start_microphone_workflow(
         rtsp_username=rtsp_username,
         rtsp_has_password=rtsp_has_password,
         audio_source_factory=audio_source_factory,
+        noise_filter=noise_filter,
+        audio_preprocessor=audio_preprocessor,
     )
 
 
@@ -150,6 +173,8 @@ def _start_microphone_workflow(
     rtsp_username=None,
     rtsp_has_password=False,
     audio_source_factory=None,
+    noise_filter=None,
+    audio_preprocessor=None,
 ):
     runtime = request.app.state.backend_runtime
     effective_model = model
@@ -181,6 +206,8 @@ def _start_microphone_workflow(
         decoding_options=deepcopy(
             normalize_profile_decoding_options(decoding_options)
         ),
+        noise_filter=_noise_filter_snapshot(noise_filter, audio_preprocessor),
+        audio_preprocessor=audio_preprocessor,
         destination_id=destination_id,
         forwarder=forwarder,
         delivery={
@@ -221,6 +248,14 @@ def _start_microphone_workflow(
                     "The configured workflow service cannot start an RTSP audio source"
                 )
             start_options["audio_source_factory"] = audio_source_factory
+        if audio_preprocessor is not None:
+            if not _accepts_keyword_argument(
+                runtime.workflow_service.start_microphone, "audio_preprocessor"
+            ):
+                raise WorkflowUnavailableError(
+                    "The configured workflow service cannot apply audio preprocessing"
+                )
+            start_options["audio_preprocessor"] = audio_preprocessor
         if effective_runtime is not None and _accepts_keyword_argument(
             runtime.workflow_service.start_microphone, "runtime"
         ):
@@ -451,6 +486,8 @@ def _pump_microphone(runtime, record, workflow):
             start_options = {"execution_mode": record.execution_mode, "model": record.model}
             if record.audio_source_factory is not None:
                 start_options["audio_source_factory"] = record.audio_source_factory
+            if record.audio_preprocessor is not None:
+                start_options["audio_preprocessor"] = record.audio_preprocessor
             try:
                 if record.audio_source_factory is not None and not _accepts_keyword_argument(
                     runtime.workflow_service.start_microphone, "audio_source_factory"

@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../../shared/api'
-import { LANGUAGE_LABELS, type DestinationSummary, type Language, type Microphone, type ModelChoice, type Profile, type ProfileDefinition, type RuntimeChoice } from '../../shared/types'
+import { LANGUAGE_LABELS, type DestinationSummary, type Language, type Microphone, type ModelChoice, type NoiseFilterConfig, type Profile, type ProfileDefinition, type Recording, type RuntimeChoice } from '../../shared/types'
 import { ApiError, Loading } from '../../shared/States'
 
 const DEFAULT_DECODING_OPTIONS = { beam_size: 1, temperature: 0, condition_on_previous_text: false, no_repeat_ngram_size: 3, repetition_penalty: 1 }
@@ -17,6 +17,8 @@ export default function ProfileEditor() {
   const [devices, setDevices] = useState<Microphone[]>([])
   const [models, setModels] = useState<ModelChoice[]>([])
   const [destinations, setDestinations] = useState<DestinationSummary[]>([])
+  const [recordings, setRecordings] = useState<Recording[]>([])
+  const [recordingLoadError, setRecordingLoadError] = useState('')
   const [destinationId, setDestinationId] = useState('')
   const [destinationError, setDestinationError] = useState('')
   const [name, setName] = useState('')
@@ -40,6 +42,12 @@ export default function ProfileEditor() {
   const [conditionOnPreviousText, setConditionOnPreviousText] = useState(false)
   const [noRepeatNgramSize, setNoRepeatNgramSize] = useState('3')
   const [repetitionPenalty, setRepetitionPenalty] = useState('1')
+  const [bandpassEnabled, setBandpassEnabled] = useState(false)
+  const [lowHz, setLowHz] = useState('100')
+  const [highHz, setHighHz] = useState('7000')
+  const [filterOrder, setFilterOrder] = useState('4')
+  const [denoiseEnabled, setDenoiseEnabled] = useState(false)
+  const [noiseRecordingIds, setNoiseRecordingIds] = useState<string[]>([])
   const [keywordText, setKeywordText] = useState('')
   const [error, setError] = useState('')
   const [loadError, setLoadError] = useState('')
@@ -49,15 +57,18 @@ export default function ProfileEditor() {
     setLoadError('')
     setDeviceLoadError('')
     const sourceProfile = editing ? api.profile(profileId!) : duplicating ? api.profile(duplicateSourceId!) : Promise.resolve(null)
-    const outcomes = await Promise.allSettled([api.microphones(), sourceProfile, api.models(), api.destinations()])
+    const outcomes = await Promise.allSettled([api.microphones(), sourceProfile, api.models(), api.destinations(), api.recordings()])
     const deviceResult = outcomes[0]
     if (deviceResult.status === 'fulfilled') setDevices(deviceResult.value)
     else setDeviceLoadError(deviceResult.reason instanceof Error ? deviceResult.reason.message : 'Could not load audio input devices.')
     const profileResult = outcomes[1]
     const modelResult = outcomes[2]
     const destinationsResult = outcomes[3]
+    const recordingsResult = outcomes[4]
     if (destinationsResult.status === 'fulfilled') setDestinations(destinationsResult.value)
     else setDestinationError('Saved receivers could not be loaded. You can still save without selecting one, or retry after checking the API connection.')
+    if (recordingsResult.status === 'fulfilled') setRecordings(recordingsResult.value)
+    else setRecordingLoadError('Saved recordings could not be loaded. Noise samples are unavailable until the API connection is restored.')
     if (modelResult.status === 'fulfilled') {
       setModels(modelResult.value.models)
       if (!editing && !duplicating) {
@@ -91,6 +102,13 @@ export default function ProfileEditor() {
       setConditionOnPreviousText(options.condition_on_previous_text)
       setNoRepeatNgramSize(String(options.no_repeat_ngram_size))
       setRepetitionPenalty(String(options.repetition_penalty))
+      const noise = p.noise_filter
+      setBandpassEnabled(noise?.bandpass_enabled || false)
+      setLowHz(String(noise?.low_hz ?? 100))
+      setHighHz(String(noise?.high_hz ?? 7000))
+      setFilterOrder(String(noise?.order ?? 4))
+      setDenoiseEnabled(noise?.denoise_enabled || false)
+      setNoiseRecordingIds(noise?.noise_recording_ids || [])
     } else if (profileResult.status === 'rejected') {
       setLoadError(duplicating
         ? `Could not load the profile to duplicate. Check that it still exists, then return to profiles and try again. ${profileResult.reason instanceof Error ? profileResult.reason.message : ''}`
@@ -116,9 +134,14 @@ export default function ProfileEditor() {
     if (!temperature.trim() || !Number.isFinite(temperatureValue) || temperatureValue < 0 || temperatureValue > 1) { setError('Temperature must be from 0 to 1.'); return }
     if (!Number.isInteger(noRepeat) || !noRepeatNgramSize.trim() || noRepeat < 0 || noRepeat > 20) { setError('No-repeat n-gram size must be an integer from 0 to 20.'); return }
     if (!repetitionPenalty.trim() || !Number.isFinite(penalty) || penalty < 1 || penalty > 2) { setError('Repetition penalty must be from 1 to 2.'); return }
+    const low = Number(lowHz); const high = Number(highHz); const order = Number(filterOrder)
+    if (!Number.isFinite(low) || low <= 0 || !Number.isFinite(high) || high <= low || high >= 8000 || !Number.isInteger(order) || order < 1 || order > 8) { setError('Band-pass settings need 0 < low cutoff < high cutoff < 8000 Hz and an integer filter order from 1 to 8.'); return }
+    if (noiseRecordingIds.length > 8) { setError('Choose no more than 8 noise recordings.'); return }
+    if (denoiseEnabled && !noiseRecordingIds.length) { setError('Choose at least one noise-only WAV recording to enable spectral denoising.'); return }
     if (sourceType === 'rtsp' && !(rtspEntryType === 'url' ? rtspUrl.trim() : rtspSecretRef.trim())) { setError(rtspEntryType === 'url' ? 'Enter an RTSP URL.' : 'Enter an environment variable name for the RTSP URL.'); return }
     if (duplicating && hasSavedPassword && sourceType === 'rtsp' && !rtspPassword && rtspEntryType === 'url' && !/^rtsps?:\/\/[^/]*@/i.test(rtspUrl)) { setError('Re-enter the saved camera password for the duplicate profile.'); return }
-    const body: ProfileDefinition = { name: name.trim(), source_type: sourceType, device: sourceType === 'microphone' ? device || null : null, rtsp_url: sourceType === 'rtsp' && rtspEntryType === 'url' ? rtspUrl.trim() : null, rtsp_url_secret_ref: sourceType === 'rtsp' && rtspEntryType === 'secret' ? rtspSecretRef.trim() : null, ...(sourceType === 'rtsp' && rtspEntryType === 'url' && rtspUsername.trim() ? { rtsp_username: rtspUsername.trim() } : {}), ...(sourceType === 'rtsp' && rtspEntryType === 'url' && (rtspPassword || clearSavedPassword) ? { rtsp_password: clearSavedPassword ? '' : rtspPassword } : {}), execution_mode: mode, keywords, silence_threshold: threshold, model, runtime, language, destination_id: destinationId || null, decoding_options: { beam_size: beam, temperature: temperatureValue, condition_on_previous_text: conditionOnPreviousText, no_repeat_ngram_size: noRepeat, repetition_penalty: penalty } }
+    const noise_filter: NoiseFilterConfig = { bandpass_enabled: bandpassEnabled, low_hz: low, high_hz: high, order, denoise_enabled: denoiseEnabled, noise_recording_ids: noiseRecordingIds }
+    const body: ProfileDefinition = { name: name.trim(), source_type: sourceType, device: sourceType === 'microphone' ? device || null : null, rtsp_url: sourceType === 'rtsp' && rtspEntryType === 'url' ? rtspUrl.trim() : null, rtsp_url_secret_ref: sourceType === 'rtsp' && rtspEntryType === 'secret' ? rtspSecretRef.trim() : null, ...(sourceType === 'rtsp' && rtspEntryType === 'url' && rtspUsername.trim() ? { rtsp_username: rtspUsername.trim() } : {}), ...(sourceType === 'rtsp' && rtspEntryType === 'url' && (rtspPassword || clearSavedPassword) ? { rtsp_password: clearSavedPassword ? '' : rtspPassword } : {}), execution_mode: mode, keywords, silence_threshold: threshold, model, runtime, language, destination_id: destinationId || null, decoding_options: { beam_size: beam, temperature: temperatureValue, condition_on_previous_text: conditionOnPreviousText, no_repeat_ngram_size: noRepeat, repetition_penalty: penalty }, noise_filter }
     setSaving(true)
     try { const saved = editing ? await api.updateProfile(profileId!, body) : await api.createProfile(body); navigate('/profiles', { state: { notice: `Saved profile “${saved.name}”.` } }) }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not save the profile.') }
@@ -139,6 +162,18 @@ export default function ProfileEditor() {
         <section className="form-section"><div className="form-section-title"><span className="section-symbol">02</span><div><h2>Audio input</h2><p>Choose a microphone or an IP camera audio stream.</p></div></div><label className="field-label" htmlFor="profile-source-type">Input source</label><select id="profile-source-type" value={sourceType} onChange={event => { const next = event.target.value as 'microphone' | 'rtsp'; setSourceType(next); if (next === 'microphone') { setRtspUsername(''); setRtspPassword(''); setClearSavedPassword(false) } setError('') }}><option value="microphone">Microphone</option><option value="rtsp">IPCAM (RTSP)</option></select>{sourceType === 'microphone' ? <><label className="field-label" htmlFor="profile-device">Microphone</label><select id="profile-device" value={device} onChange={e => setDevice(e.target.value)}><option value="">System default microphone</option>{device && !devices.some(d => d.name === device) && <option value={device}>{device} · saved, unavailable</option>}{devices.map(d => <option key={d.name} value={d.name} disabled={!d.selectable}>{d.name}{d.is_default ? ' · Default' : ''}{!d.selectable ? ' · Duplicate name; unavailable' : ''}</option>)}</select><small className="field-hint">Devices are discovered by the backend host.</small>{deviceLoadError && <div className="notice" role="alert">{deviceLoadError} <button type="button" onClick={() => { setLoading(true); void load() }}>Retry</button></div>}</> : <><label className="field-label" htmlFor="rtsp-entry-type">RTSP address source</label><select id="rtsp-entry-type" value={rtspEntryType} onChange={event => { const next = event.target.value as 'url' | 'secret'; setRtspEntryType(next); if (next === 'secret') { setRtspUsername(''); setRtspPassword(''); setClearSavedPassword(false) } }}><option value="url">Direct URL</option><option value="secret">Environment variable reference</option></select>{rtspEntryType === 'url' ? <><label className="field-label" htmlFor="rtsp-url">RTSP URL</label><input id="rtsp-url" value={rtspUrl} onChange={event => { const value = event.target.value; setRtspUrl(value); if (/^rtsps?:\/\/[^/]*@/i.test(value)) { setRtspUsername(''); setRtspPassword('') } }} placeholder="rtsp://camera.local/live" autoComplete="off" /><small className="field-hint">Paste a complete authenticated URL, or enter separate credentials below.</small><label className="field-label" htmlFor="rtsp-username">Username</label><input id="rtsp-username" value={rtspUsername} onChange={event => setRtspUsername(event.target.value)} autoComplete="username" /><label className="field-label" htmlFor="rtsp-password">Password</label><input id="rtsp-password" type="password" value={rtspPassword} onChange={event => { setRtspPassword(event.target.value); setClearSavedPassword(false) }} autoComplete="new-password" />{hasSavedPassword && editing && <><small className="field-hint">A saved password is stored encrypted. Leave blank to keep it when the URL and username are unchanged.</small><label className="field-hint"><input type="checkbox" checked={clearSavedPassword} onChange={event => setClearSavedPassword(event.target.checked)} /> Clear saved password</label></>}{hasSavedPassword && duplicating && <small className="field-hint">The saved password is not copied. Re-enter it for this profile.</small>}</> : <><label className="field-label" htmlFor="rtsp-secret-ref">Environment variable name</label><input id="rtsp-secret-ref" value={rtspSecretRef} onChange={event => setRtspSecretRef(event.target.value)} placeholder="CAMERA_AUDIO_URL" autoComplete="off" /><small className="field-hint">Store the complete authenticated RTSP URL in an environment variable and allow its name in SPEECH_TO_TEXT_RTSP_SECRET_REFS.</small></>}</>}</section>
         <section className="form-section"><div className="form-section-title"><span className="section-symbol">03</span><div><h2>Keywords</h2><p>Add words or phrases you want to track.</p></div></div><label className="field-label" htmlFor="keywords">One keyword per line</label><textarea id="keywords" rows={5} value={keywordText} onChange={e => setKeywordText(e.target.value)} placeholder={'สวัสดี\nประชุมเริ่มแล้ว\nสรุปงาน'} /><small className="field-hint">The workflow counts each matched occurrence in the transcript.</small></section>
         <section className="form-section"><div className="form-section-title"><span className="section-symbol">04</span><div><h2>Noise floor</h2><p>Audio below this RMS level is treated as silence.</p></div></div><label className="field-label" htmlFor="silence-threshold">Noise floor (RMS silence threshold)</label><input id="silence-threshold" type="number" min="0" step="any" value={silenceThreshold} onChange={e => setSilenceThreshold(e.target.value)} /><small className="field-hint">Enter a value from 0 up to, but not including, 1. Default: 0.00. A value of 0 disables silence filtering.</small></section>
+        <section className="form-section"><div className="form-section-title"><span className="section-symbol">05</span><div><h2>Audio preprocessing</h2><p>Filter each complete transcription chunk before silence detection and recognition.</p></div></div>
+          <label className="profile-decoding-check"><input type="checkbox" checked={bandpassEnabled} onChange={event => setBandpassEnabled(event.target.checked)} /><span>Enable band-pass filter</span></label>
+          <label className="field-label" htmlFor="filter-low-hz">Low cutoff (Hz)</label><input id="filter-low-hz" type="number" min="0.1" step="any" value={lowHz} onChange={event => setLowHz(event.target.value)} />
+          <label className="field-label" htmlFor="filter-high-hz">High cutoff (Hz)</label><input id="filter-high-hz" type="number" min="0.2" max="7999.9" step="any" value={highHz} onChange={event => setHighHz(event.target.value)} />
+          <label className="field-label" htmlFor="filter-order">Filter order</label><input id="filter-order" type="number" min="1" max="8" step="1" value={filterOrder} onChange={event => setFilterOrder(event.target.value)} />
+          <small className="field-hint">Defaults: 100–7000 Hz, order 4. Cutoffs must satisfy 0 &lt; low &lt; high &lt; 8000 Hz. Both preprocessing options are off by default.</small>
+          <label className="profile-decoding-check"><input type="checkbox" checked={denoiseEnabled} onChange={event => setDenoiseEnabled(event.target.checked)} /><span>Enable stationary-noise denoising</span></label>
+          <small className="field-hint">Select up to 8 finalized WAVs that contain noise only. Noise is copied and prepared at the workflow start, so the run keeps working if a recording is later deleted. <Link to="/noise-filtering">Open Noise filtering</Link> · <Link to="/model-tuning">Open Model tuning</Link></small>
+          {recordingLoadError && <small className="field-hint" role="alert">{recordingLoadError}</small>}
+          {recordings.filter(item => ['completed', 'failed'].includes(item.status) && item.filename?.toLowerCase().endsWith('.wav')).length ? <div className="profile-noise-recordings" aria-label="Noise-only WAV recordings">{recordings.filter(item => ['completed', 'failed'].includes(item.status) && item.filename?.toLowerCase().endsWith('.wav')).map(item => <label key={item.recording_id} className="profile-decoding-check"><input type="checkbox" checked={noiseRecordingIds.includes(item.recording_id)} disabled={!noiseRecordingIds.includes(item.recording_id) && noiseRecordingIds.length >= 8} onChange={event => setNoiseRecordingIds(current => event.target.checked ? [...current, item.recording_id] : current.filter(id => id !== item.recording_id))} /><span>{item.filename} · {item.duration_seconds.toFixed(1)} s</span></label>)}</div> : <small className="field-hint">No finalized WAV recordings are available. Import or record a noise-only WAV in Model tuning.</small>}
+          {noiseRecordingIds.some(id => !recordings.some(item => item.recording_id === id)) && <div className="profile-noise-missing"><small className="field-hint">Some saved noise sources were deleted.</small><button type="button" className="button button-outline" onClick={() => setNoiseRecordingIds(current => current.filter(id => recordings.some(item => item.recording_id === id)))}>Remove unavailable sources</button></div>}
+        </section>
         <section className="form-section"><div className="form-section-title"><span className="section-symbol">05</span><div><h2>Language</h2><p>Choose the language used for recognition.</p></div></div><label className="field-label" htmlFor="profile-language">Language</label><select id="profile-language" value={language} onChange={event => setLanguage(event.target.value as Language)}>{(['th', 'en', 'auto'] as const).map(value => <option key={value} value={value}>{LANGUAGE_LABELS[value]}</option>)}</select><small className="field-hint">Auto detect allows runtime language detection but does not guarantee recognition of code switching. Language support depends on the model. Changes apply on the next start.</small></section>
         <section className="form-section"><div className="form-section-title"><span className="section-symbol">05</span><div><h2>Transcription model</h2><p>Choose the model this profile loads for each workflow.</p></div></div><label className="field-label" htmlFor="profile-model">Model</label><select id="profile-model" value={model} onChange={e => { const nextModel = models.find(item => item.key === e.target.value); setModel(e.target.value); if (nextModel && !nextModel.runtimes.some(item => item.key === runtime && item.compatible)) { const preferred = nextModel.runtimes.find(item => item.key === runtime && item.compatible) || nextModel.runtimes.find(item => item.key === 'openvino-gpu' && item.compatible) || nextModel.runtimes.find(item => item.compatible); if (preferred) setRuntime(preferred.key) } }}>{models.map(m => <option key={m.key} value={m.key}>{m.display_name} ({m.key}){m.ready ? '' : m.installed ? ' · installed, runtime unavailable' : ' · not installed'}</option>)}{!models.some(m => m.key === model) && <option value={model}>{model}</option>}</select><small className="field-hint">Model downloads are not managed here.</small></section>
         <section className="form-section"><div className="form-section-title"><span className="section-symbol">06</span><div><h2>Model runtime</h2><p>Choose a runtime supported by the selected model.</p></div></div><label className="field-label" htmlFor="profile-runtime">Runtime</label><select id="profile-runtime" value={runtime} onChange={e => setRuntime(e.target.value as RuntimeChoice['key'])}>{runtimeChoices.map(option => <option key={option.key} value={option.key}>{option.key}{option.ready ? ' · ready' : ' · unavailable'}</option>)}{!runtimeChoices.some(option => option.key === runtime) && <option value={runtime}>{runtime} · unsupported for this model</option>}</select><small className="field-hint">{selectedRuntime?.ready ? 'This runtime and model are ready on the backend host.' : selectedRuntime?.reason || 'Runtime readiness is checked on the backend host.'}</small></section>

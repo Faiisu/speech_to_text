@@ -12,6 +12,7 @@ from pathlib import Path
 
 from speech_to_text.workflows.transcribe_match_forward import (
     normalize_profile_decoding_options,
+    normalize_noise_filter,
 )
 from .profile_credentials import ProfileCredentialCipher, ProfileCredentialError
 
@@ -19,6 +20,10 @@ _DEFAULT_DECODING_OPTIONS_JSON = (
     # Frozen additive migration default for old profiles and rollback-safe databases.
     "'{\"beam_size\":1,\"temperature\":0.0,\"condition_on_previous_text\":false,"
     "\"no_repeat_ngram_size\":3,\"repetition_penalty\":1.0}'"
+)
+_DEFAULT_NOISE_FILTER_JSON = (
+    "'{\"bandpass_enabled\":false,\"low_hz\":100.0,\"high_hz\":7000.0,"
+    "\"order\":4,\"denoise_enabled\":false,\"noise_recording_ids\":[]}'"
 )
 
 
@@ -91,6 +96,7 @@ class SQLiteProfileStore:
                     model TEXT NOT NULL DEFAULT 'turbo',
                     runtime TEXT NOT NULL DEFAULT 'openvino-gpu',
                     decoding_options_json TEXT NOT NULL DEFAULT {_DEFAULT_DECODING_OPTIONS_JSON},
+                    noise_filter_json TEXT NOT NULL DEFAULT {_DEFAULT_NOISE_FILTER_JSON},
                     language TEXT NOT NULL DEFAULT 'th',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -183,6 +189,16 @@ class SQLiteProfileStore:
                 except sqlite3.OperationalError as exc:
                     if "duplicate column name" not in str(exc).lower():
                         raise
+            if "noise_filter_json" not in columns:
+                try:
+                    connection.execute(
+                        "ALTER TABLE workflow_profiles ADD COLUMN "
+                        "noise_filter_json TEXT NOT NULL DEFAULT "
+                        f"{_DEFAULT_NOISE_FILTER_JSON}"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             connection.commit()
             self._connection = connection
         return self._connection
@@ -207,6 +223,7 @@ class SQLiteProfileStore:
             "runtime": row["runtime"],
             "destination_id": row["destination_id"],
             "decoding_options": json.loads(row["decoding_options_json"]),
+            "noise_filter": json.loads(row["noise_filter_json"]),
             "language": row["language"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -251,6 +268,7 @@ class SQLiteProfileStore:
     def create_profile(self, profile: dict):
         now = _utc_now()
         decoding_options = normalize_profile_decoding_options(profile.get("decoding_options"))
+        noise_filter = normalize_noise_filter(profile.get("noise_filter"))
         with self._lock:
             connection = self._db()
             try:
@@ -265,9 +283,9 @@ class SQLiteProfileStore:
                          (profile_id, name, source_type, device, rtsp_url, rtsp_url_secret_ref,
                          rtsp_username, rtsp_password_encrypted,
                          execution_mode, keywords_json,
-                         silence_threshold, model, runtime, destination_id, decoding_options_json, language,
+                         silence_threshold, model, runtime, destination_id, decoding_options_json, noise_filter_json, language,
                          created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         profile["profile_id"],
@@ -285,6 +303,7 @@ class SQLiteProfileStore:
                         profile["runtime"],
                         profile.get("destination_id"),
                         json.dumps(decoding_options),
+                        json.dumps(noise_filter),
                         profile.get("language", "th"),
                         now,
                         now,
@@ -302,6 +321,7 @@ class SQLiteProfileStore:
 
     def update_profile(self, profile_id: str, profile: dict):
         decoding_options = normalize_profile_decoding_options(profile.get("decoding_options"))
+        noise_filter = normalize_noise_filter(profile.get("noise_filter"))
         with self._lock:
             connection = self._db()
             try:
@@ -331,6 +351,7 @@ class SQLiteProfileStore:
                         rtsp_url_secret_ref = ?, rtsp_username = ?, rtsp_password_encrypted = ?, execution_mode = ?, keywords_json = ?,
                         silence_threshold = ?, model = ?, runtime = ?, destination_id = ?,
                         decoding_options_json = ?,
+                        noise_filter_json = ?,
                         language = ?,
                         updated_at = ?
                     WHERE profile_id = ?
@@ -350,6 +371,7 @@ class SQLiteProfileStore:
                         profile["runtime"],
                         profile.get("destination_id"),
                         json.dumps(decoding_options),
+                        json.dumps(noise_filter),
                         profile.get("language", "th"),
                         _utc_now(),
                         profile_id,

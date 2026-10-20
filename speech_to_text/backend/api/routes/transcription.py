@@ -2,6 +2,7 @@
 
 import json
 import math
+import asyncio
 import tempfile
 import threading
 import uuid
@@ -26,6 +27,11 @@ from speech_to_text.backend.dependencies import (
     events_after,
     run_snapshot,
 )
+from speech_to_text.workflows.audio_recording import (
+    RecordingConflictError,
+    RecordingInvalidAudioError,
+    RecordingUnavailableError,
+)
 from speech_to_text.workflows.transcribe_match_forward.destinations import (
     DestinationConfigurationError,
     DestinationUnavailableError,
@@ -33,11 +39,28 @@ from speech_to_text.workflows.transcribe_match_forward.destinations import (
 from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowConfigurationError,
     WorkflowUnavailableError,
+    normalize_noise_filter,
     normalize_profile_decoding_options,
+    prepare_audio_preprocessor,
     prepare_rtsp_configuration,
 )
 
 router = APIRouter(prefix="/transcriptions")
+
+
+def _prepare_noise_filter(runtime, value):
+    try:
+        config = normalize_noise_filter(value)
+        preprocessor = prepare_audio_preprocessor(config, runtime.recording_service)
+        return config, preprocessor
+    except WorkflowConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RecordingConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (RecordingInvalidAudioError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RecordingUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _accepts_keyword_argument(callable_, name):
@@ -57,7 +80,8 @@ def _accepts_keyword_argument(callable_, name):
 
 
 def _clip_worker(
-    runtime, record, clip, flow_config, model, selected_runtime, forwarder=None
+    runtime, record, clip, flow_config, model, selected_runtime, forwarder=None,
+    audio_preprocessor=None,
 ):
     with record.lock:
         record.status = "running"
@@ -82,6 +106,12 @@ def _clip_worker(
             transcription_options["model"] = model
         if _accepts_keyword_argument(transcribe_clip, "runtime"):
             transcription_options["runtime"] = selected_runtime
+        if audio_preprocessor is not None:
+            if not _accepts_keyword_argument(transcribe_clip, "audio_preprocessor"):
+                raise WorkflowUnavailableError(
+                    "The configured workflow service cannot apply audio preprocessing"
+                )
+            transcription_options["audio_preprocessor"] = audio_preprocessor
         result = transcribe_clip(
             clip,
             record.keywords,
@@ -209,6 +239,7 @@ async def transcribe_clip(
     runtime_name: str | None = Form(default=None, alias="runtime"),
     silence_threshold: float | None = Form(default=None),
     decoding_options: str | None = Form(default=None),
+    noise_filter: str | None = Form(default=None),
 ):
     clip_path = None
     runtime = request.app.state.backend_runtime
@@ -269,10 +300,32 @@ async def transcribe_clip(
                 raise WorkflowConfigurationError(
                     "silence_threshold must be finite and in [0, 1)"
                 )
+            if noise_filter is None:
+                submitted_noise_filter = {}
+            else:
+                try:
+                    submitted_noise_filter = json.loads(noise_filter)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    raise WorkflowConfigurationError(
+                        "noise_filter must be a JSON object"
+                    ) from exc
+                if not isinstance(submitted_noise_filter, dict):
+                    raise WorkflowConfigurationError(
+                        "noise_filter must be a JSON object"
+                    )
+            effective_noise_filter = normalize_noise_filter(submitted_noise_filter)
         except WorkflowConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except WorkflowUnavailableError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        try:
+            effective_noise_filter, audio_preprocessor = await asyncio.to_thread(
+                _prepare_noise_filter, runtime, effective_noise_filter
+            )
+        except HTTPException:
+            raise
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as clip_file:
             clip_path = clip_file.name
             has_content = False
@@ -297,6 +350,13 @@ async def transcribe_clip(
         language=language,
         silence_threshold=effective_silence_threshold,
         decoding_options=dict(effective_decoding_options),
+        noise_filter=(
+            {**dict(audio_preprocessor.settings), "noise_sources": [dict(source) for source in audio_preprocessor.noise_sources]}
+            if audio_preprocessor is not None and audio_preprocessor.noise_sources
+            else dict(audio_preprocessor.settings) if audio_preprocessor is not None
+            else dict(effective_noise_filter)
+        ),
+        audio_preprocessor=audio_preprocessor,
         model=effective_model,
         runtime=effective_runtime,
         destination_id=destination_id,
@@ -336,6 +396,7 @@ async def transcribe_clip(
                 effective_model,
                 effective_runtime,
                 forwarder,
+                audio_preprocessor,
             )
             record.first_queued_at = _utc_now()
     except Exception:
@@ -351,6 +412,7 @@ async def transcribe_clip(
         "runtime": effective_runtime,
         "silence_threshold": effective_silence_threshold,
         "decoding_options": dict(effective_decoding_options),
+        "noise_filter": run_snapshot(record)["noise_filter"],
     }
 
 
@@ -358,6 +420,7 @@ async def transcribe_clip(
 def start_microphone(request: Request, body: MicrophoneTranscriptionRequest):
     runtime = request.app.state.backend_runtime
     keywords = validate_keywords(runtime.workflow_service, body.keywords)
+    noise_filter, audio_preprocessor = _prepare_noise_filter(runtime, body.noise_filter)
     device = body.device
     if device is not None and not device.strip():
         raise HTTPException(
@@ -373,6 +436,8 @@ def start_microphone(request: Request, body: MicrophoneTranscriptionRequest):
         destination_id=body.destination_id,
         forwarder=forwarder,
         language=body.language,
+        noise_filter=noise_filter,
+        audio_preprocessor=audio_preprocessor,
     )
 
 
@@ -389,6 +454,7 @@ def start_rtsp(request: Request, body: RTSPTranscriptionRequest):
     except WorkflowUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     forwarder = _resolve_forwarder(runtime, body.destination_id)
+    noise_filter, audio_preprocessor = _prepare_noise_filter(runtime, body.noise_filter)
     return start_microphone_workflow(
         request,
         keywords=keywords,
@@ -403,6 +469,8 @@ def start_rtsp(request: Request, body: RTSPTranscriptionRequest):
         rtsp_username=source_config.rtsp_username,
         rtsp_has_password=source_config.rtsp_has_password,
         audio_source_factory=source_config.audio_source_factory,
+        noise_filter=noise_filter,
+        audio_preprocessor=audio_preprocessor,
     )
 
 

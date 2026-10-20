@@ -322,6 +322,7 @@ class TranscriptionService:
         flow_config,
         forwarder=None,
         audio_source_factory=None,
+        audio_preprocessor=None,
     ):
         holder = {"workflow": None}
 
@@ -339,6 +340,12 @@ class TranscriptionService:
                     "The configured workflow adapter cannot start an RTSP audio source"
                 )
             source_options["audio_source_factory"] = audio_source_factory
+        if audio_preprocessor is not None:
+            if not self._supports_keyword(start_microphone_and_forward, "audio_preprocessor"):
+                raise WorkflowUnavailableError(
+                    "The configured workflow adapter cannot apply audio preprocessing"
+                )
+            source_options["audio_preprocessor"] = audio_preprocessor
 
         if self._supports_keyword(start_microphone_and_forward, "on_finished"):
             workflow = start_microphone_and_forward(
@@ -408,6 +415,7 @@ class TranscriptionService:
         runtime=None,
         measurement_callback=None,
         forwarder=None,
+        audio_preprocessor=None,
     ):
         """Transcribe and match one clip, with optional configured output."""
         flow_config = {} if flow_config is None else dict(flow_config)
@@ -423,6 +431,11 @@ class TranscriptionService:
                 matching,
                 flow_config,
                 measurement_callback=measurement_callback,
+                **(
+                    {"audio_preprocessor": audio_preprocessor}
+                    if audio_preprocessor is not None
+                    else {}
+                ),
             )
         except (ConfigurationError, WordMatchingError, TypeError) as exc:
             raise WorkflowConfigurationError(str(exc)) from exc
@@ -455,6 +468,7 @@ class TranscriptionService:
         runtime=None,
         forwarder=None,
         audio_source_factory=None,
+        audio_preprocessor=None,
     ):
         """Start one microphone workflow in shared or child-process mode."""
         flow_config = {} if flow_config is None else dict(flow_config)
@@ -481,6 +495,7 @@ class TranscriptionService:
                             flow_config,
                             forwarder,
                             audio_source_factory,
+                            audio_preprocessor,
                         )
                     except Exception:
                         lease.release()
@@ -495,6 +510,11 @@ class TranscriptionService:
                     **(
                         {"audio_source_factory": audio_source_factory}
                         if audio_source_factory is not None
+                        else {}
+                    ),
+                    **(
+                        {"audio_preprocessor": audio_preprocessor}
+                        if audio_preprocessor is not None
                         else {}
                     ),
                 )

@@ -24,13 +24,13 @@ This document is the source of truth for where project files belong. Follow it w
 │   │       ├── routes/
 │   │       └── schemas/
 │   ├── features/               # Callable feature modules
-│   │   ├── model_deployment/
+│   │   ├── model_deployment/       # Capture/inference adapters and generic chunk preprocessing seam
 │   │   ├── noise_filtering/     # Band-pass filtering and optional stationary-noise denoising
 │   │   └── word_matching/
 │   └── workflows/              # Use cases and their output behavior
 │       ├── audio_recording/
 │       ├── audio_input_test/      # Bounded no-model microphone signal diagnostics
-│       ├── transcribe_match_forward/
+│       ├── transcribe_match_forward/ # Transcription orchestration and audio preprocessing snapshots
 │       ├── file_replay_stress/
 │       ├── model_management/     # Bounded download/conversion jobs and preparation lifecycle
 │       └── noise_filtering/      # Standalone WAV filtering and output behavior
@@ -106,7 +106,7 @@ The model-deployment feature also owns IP camera audio capture in `model_deploym
 
 `backend/profile_credentials.py` owns saved camera password encryption and the private `<profile database filename>.key` file beside the configured SQLite database. `profile_store.py` persists encrypted passwords and exposes sanitized profile responses plus a private workflow-start credential boundary. That key is runtime deployment state in the existing persistent profile directory, not application source. The [credential contract](../.scratch/ipcam-rtsp/spec.md#saved-profiles) owns key lifecycle and response/edit behavior.
 
-The transcribe-match-forward workflow owns destination configuration and validation in `destinations.py`, and outbound JSON/HTTP transport in `http_output.py` and MQTT publication in `mqtt_output.py`. The backend's destination routes manage stored definitions through the existing profile store and call the workflow's public sender for synthetic tests. Destination credentials remain deployment-managed references, not database secret values. The [workflow output specification](../.scratch/transcript-matching-forwarding/spec.md) owns their configuration contract.
+The transcribe-match-forward workflow owns destination configuration and validation in `destinations.py`, outbound JSON/HTTP transport in `http_output.py`, MQTT publication in `mqtt_output.py`, and its run-scoped audio preprocessing snapshot in `audio_preprocessing.py`. It calls the public noise-filtering feature interface while preparing saved noise WAVs, then passes one immutable callable to model deployment for each inference chunk. The model-deployment feature owns the generic callback validation and application seam, not noise-filter settings or algorithms. The backend's destination routes manage stored definitions through the existing profile store and call the workflow's public sender for synthetic tests. Destination credentials remain deployment-managed references, not database secret values. The [workflow output specification](../.scratch/transcript-matching-forwarding/spec.md) owns destination configuration, while the [noise-filtering specification](../.scratch/noise-filtering/spec.md) owns preprocessing settings and behavior.
 
 The audio-input-test workflow owns one bounded, process-local microphone signal diagnostic session and its transient RMS/peak/frame measurements. It opens a source through Feature 01's model-free microphone-source boundary, retains only the latest status, and never stores audio. The microphone routes expose its start/status/stop API. The [microphone diagnostic specification](../.scratch/live-audio/spec.md) owns the duration and lifecycle contract; the [backend API specification](../.scratch/backend-transcription-api/spec.md#microphone-input-test-endpoints) owns the HTTP response shape.
 

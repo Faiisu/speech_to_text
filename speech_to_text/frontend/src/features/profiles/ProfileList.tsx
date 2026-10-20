@@ -142,6 +142,7 @@ export default function ProfileList() {
             <span className="profile-field-label">MODEL / RUNTIME</span>
             <strong>Model: {profile.model} · {profile.runtime}</strong>
             <small className="profile-threshold">RMS floor {profile.silence_threshold}</small>
+            <small className="profile-threshold">{profile.noise_filter?.bandpass_enabled || profile.noise_filter?.denoise_enabled ? `Preprocessing · ${profile.noise_filter.bandpass_enabled ? 'band-pass' : ''}${profile.noise_filter.bandpass_enabled && profile.noise_filter.denoise_enabled ? ' + ' : ''}${profile.noise_filter.denoise_enabled ? 'denoising' : ''}` : 'Preprocessing off'}</small>
           </div>
           <div className="profile-record-mode">
             <span className="profile-field-label">EXECUTION MODE</span>

@@ -108,6 +108,45 @@ test('IPCAM profiles stay usable when microphone discovery is unavailable', asyn
   await page.request.delete(`/api/v1/profiles/${duplicate.profile_id}`)
 })
 
+test('profile noise settings save, display saved WAV choices and copy on duplicate', async ({ page }) => {
+  await page.route('**/api/v1/recordings', route => route.fulfill({ json: { recordings: [
+    { recording_id: 'noise-a', status: 'completed', duration_seconds: 4, sample_rate: 48000, channels: 2, device: null, source: 'upload', filename: 'fan-noise.wav', error: null, created_at: '2026-10-20T00:00:00Z' },
+    { recording_id: 'noise-b', status: 'completed', duration_seconds: 3, sample_rate: 16000, channels: 1, device: null, source: 'upload', filename: 'room-tone.wav', error: null, created_at: '2026-10-20T00:01:00Z' },
+  ] } }))
+
+  await page.goto('/profiles/new')
+  await page.getByLabel('Name', { exact: true }).fill('Noise-filter profile')
+  await page.getByLabel('One keyword per line').fill('สวัสดี')
+  await page.getByLabel('Enable band-pass filter').check()
+  await page.getByLabel('Low cutoff (Hz)').fill('120')
+  await page.getByLabel('High cutoff (Hz)').fill('6800')
+  await page.getByLabel('Filter order').fill('3')
+  await page.getByLabel('Enable stationary-noise denoising').check()
+  await page.getByLabel(/fan-noise\.wav/).check()
+  await page.getByLabel(/room-tone\.wav/).check()
+  await expect(page.getByText(/Select up to 8 finalized WAVs/)).toBeVisible()
+  await page.locator('.form-section').filter({ has: page.getByRole('heading', { name: 'Audio preprocessing', exact: true }) }).screenshot({ path: '/tmp/stt-noise-filter-settings.png' })
+  await page.getByRole('button', { name: /Save profile/ }).click()
+
+  await expect(page).toHaveURL(/\/profiles$/)
+  const profile = await page.request.get('/api/v1/profiles').then(async response => {
+    const payload = await response.json()
+    return payload.profiles.find((item: { name: string }) => item.name === 'Noise-filter profile')
+  })
+  expect(profile.noise_filter).toEqual({
+    bandpass_enabled: true, low_hz: 120, high_hz: 6800, order: 3,
+    denoise_enabled: true, noise_recording_ids: ['noise-a', 'noise-b'],
+  })
+  await expect(page.locator('.profile-record').filter({ hasText: 'Noise-filter profile' })).toContainText('band-pass + denoising')
+
+  await page.goto(`/profiles/new?duplicate=${profile.profile_id}`)
+  await expect(page.getByLabel('Enable band-pass filter')).toBeChecked()
+  await expect(page.getByLabel('Enable stationary-noise denoising')).toBeChecked()
+  await expect(page.getByLabel('Low cutoff (Hz)')).toHaveValue('120')
+  await expect(page.getByLabel(/fan-noise\.wav/)).toBeChecked()
+  await expect(page.getByLabel(/room-tone\.wav/)).toBeChecked()
+})
+
 test('RTSP secret references can be created, edited, and reloaded without exposing the resolved URL', async ({ page }) => {
   const resolvedUrl = 'rtsp://camera-e2e-user:camera-e2e-password@camera.example/secret'
   await page.goto('/profiles/new')

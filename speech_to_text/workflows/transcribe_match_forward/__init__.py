@@ -1,5 +1,6 @@
 """Compose transcription, keyword matching, and workflow-owned outputs."""
 
+from .audio_preprocessing import normalize_noise_filter, prepare_audio_preprocessor
 from .api import (
     PipelineResult,
     SessionWorkflow,
@@ -63,6 +64,8 @@ __all__ = [
     "forward_session",
     "list_available_microphones",
     "normalize_profile_decoding_options",
+    "normalize_noise_filter",
+    "prepare_audio_preprocessor",
     "prepare_rtsp_source",
     "prepare_rtsp_configuration",
     "start_microphone_and_forward",
