@@ -122,6 +122,14 @@ class OpenVINOAdapter:
             "repetition_penalty": decoding_options["repetition_penalty"],
         }
         kwargs["task"] = "transcribe"
+        speech_filter = decoding_options.get("openvino_speech_filter", {})
+        if speech_filter.get("enabled", False):
+            kwargs.update(
+                return_timestamps=True,
+                no_speech_threshold=speech_filter["no_speech_threshold"],
+                logprob_threshold=speech_filter["logprob_threshold"],
+                return_dict_in_generate=False,
+            )
         if language != "auto":
             kwargs["language"] = language
         elif getattr(self.model, "generation_config", None) is not None:
@@ -130,7 +138,32 @@ class OpenVINOAdapter:
             generation_config.language = None
             generation_config.forced_decoder_ids = None
             kwargs["generation_config"] = generation_config
-        ids = self.model.generate(features, **kwargs)
+        prepare_inputs = None
+        local_prepare_inputs = None
+        had_local_prepare_inputs = False
+        if speech_filter.get("enabled", False):
+            prepare_inputs = self.model.prepare_inputs_for_generation
+            model_attributes = getattr(self.model, "__dict__", {})
+            had_local_prepare_inputs = "prepare_inputs_for_generation" in model_attributes
+            if had_local_prepare_inputs:
+                local_prepare_inputs = model_attributes["prepare_inputs_for_generation"]
+
+            def prepare_whisper_inputs(*args, **kwargs):
+                # Transformers' Whisper scorer calls this with `input_ids`,
+                # while Optimum OpenVINO requires `decoder_input_ids`.
+                if "decoder_input_ids" not in kwargs and "input_ids" in kwargs:
+                    kwargs["decoder_input_ids"] = kwargs["input_ids"]
+                return prepare_inputs(*args, **kwargs)
+
+            self.model.prepare_inputs_for_generation = prepare_whisper_inputs
+        try:
+            ids = self.model.generate(features, **kwargs)
+        finally:
+            if speech_filter.get("enabled", False):
+                if had_local_prepare_inputs:
+                    self.model.prepare_inputs_for_generation = local_prepare_inputs
+                else:
+                    del self.model.__dict__["prepare_inputs_for_generation"]
         return self.processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
 
     def _max_new_tokens(self, language):

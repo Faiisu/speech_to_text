@@ -234,7 +234,9 @@ class SQLiteProfileStore:
             "model": row["model"],
             "runtime": row["runtime"],
             "destination_id": row["destination_id"],
-            "decoding_options": json.loads(row["decoding_options_json"]),
+            "decoding_options": normalize_profile_decoding_options(
+                json.loads(row["decoding_options_json"])
+            ),
             "vad": json.loads(row["vad_json"]),
             "noise_filter": json.loads(row["noise_filter_json"]),
             "language": row["language"],

@@ -460,6 +460,7 @@ def start_microphone(request: Request, body: MicrophoneTranscriptionRequest):
         destination_id=body.destination_id,
         forwarder=forwarder,
         language=body.language,
+        decoding_options=body.decoding_options.dict(),
         noise_filter=noise_filter,
         audio_preprocessor=audio_preprocessor,
     )
@@ -489,6 +490,7 @@ def start_rtsp(request: Request, body: RTSPTranscriptionRequest):
         destination_id=body.destination_id,
         forwarder=forwarder,
         language=body.language,
+        decoding_options=body.decoding_options.dict(),
         source_type="rtsp",
         rtsp_url=source_config.rtsp_url,
         rtsp_url_secret_ref=body.rtsp_url_secret_ref,

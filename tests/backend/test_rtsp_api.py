@@ -191,9 +191,18 @@ def test_direct_rtsp_endpoint_validates_source_and_redacts_resolved_value(
         started = client.post(
             "/api/v1/transcriptions/rtsp",
             json={"keywords": ["สวัสดี"], "rtsp_url_secret_ref": "CAMERA_AUDIO_URL",
-                  "vad": {"enabled": True, "threshold": 0.7}, "silence_threshold": 0.22},
+                  "vad": {"enabled": True, "threshold": 0.7}, "silence_threshold": 0.22,
+                  "decoding_options": {"openvino_speech_filter": {
+                      "enabled": True, "no_speech_threshold": 0.33,
+                      "logprob_threshold": -0.4,
+                  }}},
         )
         assert started.status_code == 202
+        assert started.json()["decoding_options"]["openvino_speech_filter"] == {
+            "enabled": True,
+            "no_speech_threshold": 0.33,
+            "logprob_threshold": -0.4,
+        }
         status = client.get(f"/api/v1/transcriptions/{started.json()['workflow_id']}").json()
         assert status["vad"] == {
             "enabled": True, "threshold": 0.7, "min_speech_duration_ms": 250
@@ -201,6 +210,14 @@ def test_direct_rtsp_endpoint_validates_source_and_redacts_resolved_value(
         assert status["silence_threshold"] == 0.22
         assert service.started[-1]["flow_config"]["vad"] == status["vad"]
         assert service.started[-1]["flow_config"]["silence_threshold"] == 0.22
+        assert status["decoding_options"]["openvino_speech_filter"] == {
+            "enabled": True,
+            "no_speech_threshold": 0.33,
+            "logprob_threshold": -0.4,
+        }
+        assert service.started[-1]["flow_config"]["decoding_options"] == status[
+            "decoding_options"
+        ]
         assert service.started[0]["device"] is None
         assert service.started[0]["audio_source_factory"] is not None
         run = client.get(

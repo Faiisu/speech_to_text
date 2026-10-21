@@ -168,6 +168,11 @@ def test_profiles_can_be_created_listed_replaced_and_deleted(api):
         "condition_on_previous_text": False,
         "no_repeat_ngram_size": 3,
         "repetition_penalty": 1.0,
+        "openvino_speech_filter": {
+            "enabled": False,
+            "no_speech_threshold": 0.6,
+            "logprob_threshold": -1.0,
+        },
     }
     assert profile["noise_filter"] == {
         "bandpass_enabled": False,
@@ -446,6 +451,14 @@ def test_profile_vad_survives_store_reopen(tmp_path):
         {"no_repeat_ngram_size": False}, {"no_repeat_ngram_size": 21},
         {"repetition_penalty": True}, {"repetition_penalty": 2.1},
         {"unexpected": 1},
+        {"openvino_speech_filter": None},
+        {"openvino_speech_filter": {"enabled": 1}},
+        {"openvino_speech_filter": {"enabled": "true"}},
+        {"openvino_speech_filter": {"no_speech_threshold": True}},
+        {"openvino_speech_filter": {"no_speech_threshold": "0.5"}},
+        {"openvino_speech_filter": {"no_speech_threshold": 1.1}},
+        {"openvino_speech_filter": {"logprob_threshold": 0.1}},
+        {"openvino_speech_filter": {"unknown": 1}},
     ],
 )
 def test_profile_decoding_options_reject_invalid_values(api, options):
@@ -536,6 +549,11 @@ def test_profile_decoding_options_normalize_partial_values_and_round_trip(api):
         "beam_size": 3, "temperature": 0.0,
         "condition_on_previous_text": False, "no_repeat_ngram_size": 3,
         "repetition_penalty": 1.0,
+        "openvino_speech_filter": {
+            "enabled": False,
+            "no_speech_threshold": 0.6,
+            "logprob_threshold": -1.0,
+        },
     }
     assert client.get(f"/api/v1/profiles/{profile['profile_id']}").json() == profile
     store = client.app.state.backend_runtime.profile_store
@@ -577,6 +595,11 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
                 "beam_size": 4, "temperature": 0.3,
                 "condition_on_previous_text": True,
                 "no_repeat_ngram_size": 5, "repetition_penalty": 1.2,
+                "openvino_speech_filter": {
+                    "enabled": True,
+                    "no_speech_threshold": 0.42,
+                    "logprob_threshold": -0.7,
+                },
             },
             vad={"enabled": True, "threshold": 0.3, "min_speech_duration_ms": 500},
         )
@@ -602,6 +625,11 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
             "condition_on_previous_text": True,
             "no_repeat_ngram_size": 5,
             "repetition_penalty": 1.2,
+            "openvino_speech_filter": {
+                "enabled": True,
+                "no_speech_threshold": 0.42,
+                "logprob_threshold": -0.7,
+            },
         },
         "vad": {
             "enabled": True,
@@ -636,6 +664,11 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
         "condition_on_previous_text": False,
         "no_repeat_ngram_size": 3,
         "repetition_penalty": 1.0,
+        "openvino_speech_filter": {
+            "enabled": False,
+            "no_speech_threshold": 0.6,
+            "logprob_threshold": -1.0,
+        },
     }
     deleted = client.delete(f"/api/v1/profiles/{profile['profile_id']}")
     assert deleted.status_code == 204
@@ -701,9 +734,21 @@ def test_profile_survives_a_new_app_and_runtime_lifecycle(tmp_path):
     first_client, _ = make_client(database_path)
 
     with first_client:
-        created = first_client.post("/api/v1/profiles", json=profile_body(language="auto"))
+        expected_filter = {
+            "enabled": True,
+            "no_speech_threshold": 0.27,
+            "logprob_threshold": -0.55,
+        }
+        created = first_client.post(
+            "/api/v1/profiles",
+            json=profile_body(
+                language="auto",
+                decoding_options={"openvino_speech_filter": expected_filter},
+            ),
+        )
         assert created.status_code == 201
         profile = created.json()
+        assert profile["decoding_options"]["openvino_speech_filter"] == expected_filter
 
     second_client, _ = make_client(database_path)
     with second_client:
@@ -715,6 +760,7 @@ def test_profile_survives_a_new_app_and_runtime_lifecycle(tmp_path):
     assert retrieved.json() == profile
     assert listed.status_code == 200
     assert listed.json() == {"profiles": [profile]}
+    assert retrieved.json()["decoding_options"]["openvino_speech_filter"] == expected_filter
 
 
 def test_profile_store_migrates_existing_table_without_losing_profiles(
@@ -800,6 +846,11 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
         "condition_on_previous_text": False,
         "no_repeat_ngram_size": 3,
         "repetition_penalty": 1.0,
+        "openvino_speech_filter": {
+            "enabled": False,
+            "no_speech_threshold": 0.6,
+            "logprob_threshold": -1.0,
+        },
     }
     assert profiles[0]["noise_filter"] == {
         "bandpass_enabled": False,

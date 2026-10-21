@@ -2,11 +2,13 @@
 
 Research snapshot: 2026-10-22. This note records model/runtime capability and the current application's integration. It does not change requirements or demonstrate recognition quality on project recordings.
 
+Implementation update on 2026-10-22: the application now has a shared pre-inference [VAD gate](../new-speech-to-text/spec.md#voice-activity-detection) and configurable [OpenVINO decoder speech filtering](../new-speech-to-text/spec.md#openvino-speech-filtering). Those contracts are authoritative for current behavior. The table and recommendations below preserve the research snapshot before these implementations. In particular, timestamp decoding can use the long-form generation logic for short chunks; the versioned [Transformers source](https://github.com/huggingface/transformers/blob/v4.57.6/src/transformers/models/whisper/generation_whisper.py) clarifies the earlier documentation's long-form caveat. Device verification is recorded in the [implementation issue](../new-speech-to-text/issues/15-openvino-speech-filter.md).
+
 ## Model identity
 
 The built-in `turbo` key maps to `typhoon-ai/typhoon-whisper-turbo` in [the catalog](../../speech_to_text/features/model_deployment/catalog.py). The local catalog inspected for this research also maps `typhoon-large` to `typhoon-ai/typhoon-whisper-large-v3`; local registration does not prove which model an active workflow uses. Both belong to the Whisper family: the official cards identify the [Turbo base as Whisper Large v3 Turbo](https://huggingface.co/typhoon-ai/typhoon-whisper-turbo) and the [full model as Whisper Large v3](https://huggingface.co/typhoon-ai/typhoon-whisper-large-v3).
 
-## Capability and current behavior
+## Capability and application behavior before implementation
 
 | Mechanism | Upstream capability | Current application |
 | --- | --- | --- |

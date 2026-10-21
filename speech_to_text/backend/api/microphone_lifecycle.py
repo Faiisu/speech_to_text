@@ -50,6 +50,22 @@ def _utc_now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def microphone_start_snapshot(record):
+    with record.lock:
+        return {
+            "workflow_id": record.workflow_id,
+            "status": record.status,
+            "first_queued_at": record.first_queued_at,
+            "last_response_at": record.last_response_at,
+            "language": record.language,
+            "silence_threshold": record.silence_threshold,
+            "decoding_options": deepcopy(record.decoding_options),
+            "vad": deepcopy(record.vad),
+            "model": record.model,
+            "runtime": record.runtime,
+        }
+
+
 def _noise_filter_snapshot(noise_filter, audio_preprocessor):
     if audio_preprocessor is not None:
         snapshot = dict(audio_preprocessor.settings)
@@ -100,12 +116,7 @@ def start_microphone_workflow(
             if existing is not None:
                 with existing.lock:
                     if existing.status in {"starting", "recording", "stopping"}:
-                        return {
-                            "workflow_id": existing.workflow_id,
-                            "status": existing.status,
-                            "first_queued_at": existing.first_queued_at,
-                            "last_response_at": existing.last_response_at,
-                        }
+                        return microphone_start_snapshot(existing)
             return _start_microphone_workflow(
                 request,
                 keywords=keywords,
@@ -247,8 +258,7 @@ def _start_microphone_workflow(
         }
         if silence_threshold is not None:
             flow_config["silence_threshold"] = silence_threshold
-        if decoding_options is not None:
-            flow_config["decoding_options"] = deepcopy(record.decoding_options)
+        flow_config["decoding_options"] = deepcopy(record.decoding_options)
         flow_config["vad"] = deepcopy(record.vad)
         start_options = {"execution_mode": execution_mode, "model": effective_model}
         if audio_source_factory is not None:
@@ -307,15 +317,7 @@ def _start_microphone_workflow(
     with record.lock:
         record.controller_thread = controller
     controller.start()
-    with record.lock:
-        first_queued_at = record.first_queued_at
-        last_response_at = record.last_response_at
-    return {
-        "workflow_id": workflow_id,
-        "status": "recording",
-        "first_queued_at": first_queued_at,
-        "last_response_at": last_response_at,
-    }
+    return microphone_start_snapshot(record)
 
 
 def _pump_microphone(runtime, record, workflow):
@@ -492,8 +494,7 @@ def _pump_microphone(runtime, record, workflow):
             }
             if record.silence_threshold is not None:
                 flow_config["silence_threshold"] = record.silence_threshold
-            if record.profile_id is not None:
-                flow_config["decoding_options"] = deepcopy(record.decoding_options)
+            flow_config["decoding_options"] = deepcopy(record.decoding_options)
             flow_config["vad"] = deepcopy(record.vad)
             start_options = {"execution_mode": record.execution_mode, "model": record.model}
             if record.audio_source_factory is not None:

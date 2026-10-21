@@ -27,6 +27,10 @@ Operational decision (2026-10-17): HTTP and MQTT are real-time destinations for 
 
 Callable clip/live workflows pass normalized VAD and adjustable RMS settings to model deployment; the [Feature 01 contract](../new-speech-to-text/spec.md#voice-activity-detection) owns their behavior. Gate settings are copied into run configuration and retained through capture recovery. VAD-only skip measurements are forwarded without producing transcript/keyword events. `latest_rtf` reflects the latest measured chunk, including a VAD-only skip; no measurements means null. Run aggregates retain these real costs under the [backend API contract](../backend-transcription-api/spec.md#speech-gate-configuration).
 
+### OpenVINO decoder configuration
+
+The existing workflow `flow_config.decoding_options` carries the [OpenVINO speech filter](../new-speech-to-text/spec.md#openvino-speech-filtering). Normalize through the public model-deployment helper and deep-copy the nested settings at workflow admission. Preserve the snapshot for shared/isolated clips, microphone/RTSP starts, and recovery. A decoder-filtered empty result produces no live transcript/keyword forwarding event; its processing measurement still contributes to RTF. The [backend settings contract](../backend-transcription-api/spec.md#openvino-speech-filter-settings) owns persistence and transport.
+
 ## Forwarding contract
 
 The HTTP forwarder accepts a required HTTP(S) endpoint URL, optional bearer token, timeout, and retry settings through a configuration object. Defaults are a 5-second request timeout and 3 total attempts. Retry network failures, HTTP 429, and HTTP 5xx responses with bounded backoff; report other non-2xx responses as `ForwardingError` without retrying. No persistent queue is included; after retries are exhausted, return the failure to the caller.

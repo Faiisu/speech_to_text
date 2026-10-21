@@ -177,6 +177,13 @@ export type DecodingOptions = {
   condition_on_previous_text: boolean
   no_repeat_ngram_size: number
   repetition_penalty: number
+  openvino_speech_filter?: OpenVinoSpeechFilter
+}
+
+export type OpenVinoSpeechFilter = {
+  enabled: boolean
+  no_speech_threshold: number
+  logprob_threshold: number
 }
 
 export type DeliveryStatus = {

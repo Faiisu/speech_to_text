@@ -33,6 +33,11 @@ FLOW_DEFAULTS = {
         "condition_on_previous_text": False,
         "no_repeat_ngram_size": 3,
         "repetition_penalty": 1.0,
+        "openvino_speech_filter": {
+            "enabled": False,
+            "no_speech_threshold": 0.6,
+            "logprob_threshold": -1.0,
+        },
     },
 }
 FLOW_KEYS = frozenset(
@@ -74,6 +79,68 @@ def normalize_vad_options(value=None):
     result["threshold"] = float(threshold)
     return result
 DECODING_DEFAULTS = FLOW_DEFAULTS["decoding_options"]
+OPENVINO_SPEECH_FILTER_DEFAULTS = DECODING_DEFAULTS["openvino_speech_filter"]
+OPENVINO_SPEECH_FILTER_KEYS = frozenset(OPENVINO_SPEECH_FILTER_DEFAULTS)
+
+
+def _is_finite_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def normalize_openvino_speech_filter(value=None):
+    """Validate OpenVINO speech filtering settings and return a detached mapping."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ConfigurationError("openvino_speech_filter must be a mapping")
+    unknown = set(value) - OPENVINO_SPEECH_FILTER_KEYS
+    if unknown:
+        keys = ", ".join(map(str, sorted(unknown, key=str)))
+        raise ConfigurationError(f"Unknown OpenVINO speech filter options: {keys}")
+    result = {**OPENVINO_SPEECH_FILTER_DEFAULTS, **deepcopy(value)}
+    if not isinstance(result["enabled"], bool):
+        raise ConfigurationError("openvino_speech_filter.enabled must be a boolean")
+    no_speech_threshold = result["no_speech_threshold"]
+    if (
+        not _is_finite_number(no_speech_threshold)
+        or not 0 <= no_speech_threshold <= 1
+    ):
+        raise ConfigurationError(
+            "openvino_speech_filter.no_speech_threshold must be finite and in [0, 1]"
+        )
+    logprob_threshold = result["logprob_threshold"]
+    if (
+        not _is_finite_number(logprob_threshold)
+        or logprob_threshold > 0
+    ):
+        raise ConfigurationError(
+            "openvino_speech_filter.logprob_threshold must be a finite number <= 0"
+        )
+    result["no_speech_threshold"] = float(no_speech_threshold)
+    result["logprob_threshold"] = float(logprob_threshold)
+    return result
+
+
+def _normalize_decoding_options(value):
+    if not isinstance(value, dict):
+        raise ConfigurationError("decoding_options must be a mapping")
+    if "openvino_speech_filter" in value and value["openvino_speech_filter"] is None:
+        raise ConfigurationError("openvino_speech_filter must be a mapping")
+    unknown = set(value) - set(DECODING_DEFAULTS)
+    if unknown:
+        raise ConfigurationError(
+            f"Unsupported decoding options: {', '.join(map(str, sorted(unknown, key=str)))}"
+        )
+    options = {**DECODING_DEFAULTS, **deepcopy(value)}
+    options["openvino_speech_filter"] = normalize_openvino_speech_filter(
+        options["openvino_speech_filter"]
+    )
+    return options
 
 
 def model_config(value):
@@ -169,17 +236,7 @@ def flow_config(value):
     language = result["language"]
     if not isinstance(language, str) or not language.strip():
         raise ConfigurationError("language must be a non-empty language code or 'auto'")
-    options = result["decoding_options"]
-    if not isinstance(options, dict) or set(options) - set(DECODING_DEFAULTS):
-        unknown_options = (
-            set(options) - set(DECODING_DEFAULTS)
-            if isinstance(options, dict)
-            else set()
-        )
-        raise ConfigurationError(
-            f"Unsupported decoding options: {', '.join(sorted(unknown_options)) or 'expected a mapping'}"
-        )
-    options = {**DECODING_DEFAULTS, **options}
+    options = _normalize_decoding_options(result["decoding_options"])
     beam = options["beam_size"]
     if isinstance(beam, bool) or not isinstance(beam, int) or not 1 <= beam <= 10:
         raise ConfigurationError("beam_size must be an integer in [1, 10]")

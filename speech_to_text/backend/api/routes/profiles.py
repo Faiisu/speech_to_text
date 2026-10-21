@@ -6,6 +6,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
 from speech_to_text.backend.api.microphone_lifecycle import (
+    microphone_start_snapshot,
     start_microphone_workflow,
     validate_keywords,
 )
@@ -198,13 +199,7 @@ def start_profile_run(profile_id: str, request: Request):
     with runtime.profile_run_start_lock:
         existing = runtime.get_active_profile_run(profile_id)
         if existing is not None:
-            with existing.lock:
-                return {
-                    "workflow_id": existing.workflow_id,
-                    "status": existing.status,
-                    "first_queued_at": existing.first_queued_at,
-                    "last_response_at": existing.last_response_at,
-                }
+            return microphone_start_snapshot(existing)
         return _start_profile_run_from_snapshot(request, profile, keywords)
 
 

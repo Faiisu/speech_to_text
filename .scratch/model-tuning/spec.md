@@ -62,6 +62,10 @@ The user can select a discovered host input device or configure an IPCAM RTSP so
 
 The tuning form exposes adjustable RMS silence threshold plus VAD enablement, speech probability threshold, and minimum speech duration. Defaults and accepted values remain owned by the [Feature 01 VAD contract](../new-speech-to-text/spec.md#voice-activity-detection). Submit VAD as a JSON object through the [clip API](../backend-transcription-api/spec.md#speech-gate-configuration). Each trial retains its effective speech-gate settings independently of later form edits. Display detector-rejected chunks as no-speech skips, including their measured cost; distinguish them from RMS skips that never produce measurements. Processing time and RTF include VAD whenever enabled, including VAD-only skips. Existing capture-only recording keeps all audio so the same noise/speech sample can be compared with different gates.
 
+### OpenVINO speech filter trials
+
+The Profile editor and Model tuning expose the OpenVINO speech filter enable switch, no-speech threshold, and log-probability threshold under decoding settings. The [Feature 01 contract](../new-speech-to-text/spec.md#openvino-speech-filtering) owns their defaults and ranges. Controls apply to either OpenVINO runtime; selecting CTranslate2 disables them with an explanation while preserving their values for a later runtime switch. Submit the nested group in existing multipart `decoding_options` JSON. Each trial displays its effective filter settings independently of subsequent form edits and keeps the existing per-chunk RTF, including decoder filtering time. Empty decoder output remains a successful processed chunk, distinct from VAD skips that bypass the model.
+
 ## Boundaries
 
 The [clip API contract](../backend-transcription-api/spec.md#post-transcriptionsclips) owns per-run settings validation. Trial cards retain their recording identity and configuration snapshot while the page remains open. Trials run one at a time from the page and do not select an output destination. Production microphone workflows are not stopped by recording or tuning controls.

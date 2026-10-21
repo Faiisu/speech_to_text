@@ -9,14 +9,31 @@ Feature and workflow capabilities are available as Python callables. The previou
 The public interface provides model discovery, model loading, finite clip transcription, model-backed microphone sessions, and a model-free microphone source factory for diagnostic capture. See the [Feature 01 callable contract](../.scratch/new-speech-to-text/spec.md#callable-interface) for inputs, outputs, configuration, errors, session events, and process deployment.
 
 ```python
-from speech_to_text.features.model_deployment import load_model, transcribe_clip
+from speech_to_text.features.model_deployment import (
+    load_model,
+    normalize_openvino_speech_filter,
+    transcribe_clip,
+)
 
 model = load_model({"model": "turbo", "runtime": "openvino-gpu"})
 try:
-    transcript = transcribe_clip("sample.wav", model, {"language": "th"})
+    transcript = transcribe_clip(
+        "sample.wav",
+        model,
+        {
+            "language": "th",
+            "decoding_options": {
+                "openvino_speech_filter": normalize_openvino_speech_filter(
+                    {"enabled": True}
+                )
+            },
+        },
+    )
 finally:
     model.close()
 ```
+
+The same nested decoding configuration is accepted by transcription workflow callables and clip/profile/live HTTP requests. The [OpenVINO filter contract](../.scratch/new-speech-to-text/spec.md#openvino-speech-filtering) owns defaults, ranges, and runtime applicability; the helper performs validation without loading model weights.
 
 ## Model management
 

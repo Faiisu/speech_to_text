@@ -30,6 +30,10 @@ In the Profile editor or Model tuning, enable **VAD** to reject chunks without d
 
 The [Feature 01 VAD contract](../.scratch/new-speech-to-text/spec.md#voice-activity-detection) defines defaults, validation, and timing. Existing profiles keep VAD disabled until enabled explicitly. Save and restart a profile to apply changes; active/recovering runs keep their initial snapshot. Model tuning retains each trial's effective settings and reports RTF including VAD work, including a measured skip when VAD rejects a chunk. Model downloads and conversion do not fix these flow-specific settings into model weights.
 
+### OpenVINO decoder speech filter
+
+In Profile or Model tuning, select an OpenVINO runtime and enable **OpenVINO speech filter** under decoding settings. This adds Whisper's joint no-speech/confidence check after audio reaches the decoder and can be combined with the separate VAD and RMS gates. Defaults, ranges, and the public `normalize_openvino_speech_filter()` callable are defined in the [Feature 01 contract](../.scratch/new-speech-to-text/spec.md#openvino-speech-filtering). The filter starts disabled for existing behavior; save and restart a profile to apply changes. Model tuning retains each trial's effective settings for comparison. The settings remain saved but inactive with CTranslate2, whose native filter is independent.
+
 ## Local environment variables
 
 | Variable | Default | Purpose |

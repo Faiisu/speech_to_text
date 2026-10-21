@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiRequestError, api } from '../../shared/api'
-import { LANGUAGE_LABELS, type DecodingOptions, type Language, type Microphone, type MicrophoneTest, type ModelChoice, type Recording, type RuntimeChoice, type Transcription, type VadConfig } from '../../shared/types'
+import { LANGUAGE_LABELS, type DecodingOptions, type Language, type Microphone, type MicrophoneTest, type ModelChoice, type OpenVinoSpeechFilter, type Recording, type RuntimeChoice, type Transcription, type VadConfig } from '../../shared/types'
 
 type Settings = {
   model: string
@@ -72,6 +72,9 @@ export default function ModelTuning() {
   const [conditionOnPreviousText, setConditionOnPreviousText] = useState(false)
   const [noRepeatNgramSize, setNoRepeatNgramSize] = useState('3')
   const [repetitionPenalty, setRepetitionPenalty] = useState('1')
+  const [openvinoSpeechFilterEnabled, setOpenvinoSpeechFilterEnabled] = useState(false)
+  const [openvinoNoSpeechThreshold, setOpenvinoNoSpeechThreshold] = useState('0.6')
+  const [openvinoLogprobThreshold, setOpenvinoLogprobThreshold] = useState('-1')
   const [keywords, setKeywords] = useState('สวัสดี')
   const [trials, setTrials] = useState<Trial[]>([])
   const [error, setError] = useState('')
@@ -295,13 +298,17 @@ export default function ModelTuning() {
     const speechThreshold = Number(vadThreshold)
     const minimumSpeech = Number(minSpeechDuration)
     const beam = Number(beamSize), temp = Number(temperature), noRepeat = Number(noRepeatNgramSize), penalty = Number(repetitionPenalty)
+    const noSpeechThreshold = Number(openvinoNoSpeechThreshold), logprobThreshold = Number(openvinoLogprobThreshold)
     if (!words.length || new Set(words).size !== words.length) { setError('Enter at least one unique keyword.'); return }
     if (!Number.isFinite(threshold) || threshold < 0 || threshold >= 1) { setError('Noise floor must be at least 0 and less than 1.'); return }
     if (!Number.isFinite(speechThreshold) || speechThreshold <= 0 || speechThreshold >= 1) { setError('Speech probability threshold must be greater than 0 and less than 1.'); return }
     if (!Number.isInteger(minimumSpeech) || minimumSpeech < 0 || minimumSpeech > 30000) { setError('Minimum speech duration must be an integer from 0 to 30000 ms.'); return }
     if (!Number.isInteger(beam) || beam < 1 || beam > 10 || !Number.isFinite(temp) || temp < 0 || temp > 1 || !Number.isInteger(noRepeat) || noRepeat < 0 || noRepeat > 20 || !Number.isFinite(penalty) || penalty < 1 || penalty > 2) { setError('Check the decoding settings and their allowed ranges.'); return }
+    if (!openvinoNoSpeechThreshold.trim() || !Number.isFinite(noSpeechThreshold) || noSpeechThreshold < 0 || noSpeechThreshold > 1) { setError('No speech threshold must be from 0 to 1.'); return }
+    if (!openvinoLogprobThreshold.trim() || !Number.isFinite(logprobThreshold) || logprobThreshold > 0) { setError('Log probability threshold must be a finite number less than or equal to 0.'); return }
     if (!selectedModel || !selectedRuntime?.compatible) { setError('Choose a model and compatible runtime.'); return }
-    const settings: Settings = { model, runtime: runtime as RuntimeChoice['key'], language, silence_threshold: threshold, vad: { enabled: vadEnabled, threshold: speechThreshold, min_speech_duration_ms: minimumSpeech }, keywords: words, decoding_options: { beam_size: beam, temperature: temp, condition_on_previous_text: conditionOnPreviousText, no_repeat_ngram_size: noRepeat, repetition_penalty: penalty } }
+    const openvinoSpeechFilter: OpenVinoSpeechFilter = { enabled: openvinoSpeechFilterEnabled, no_speech_threshold: noSpeechThreshold, logprob_threshold: logprobThreshold }
+    const settings: Settings = { model, runtime: runtime as RuntimeChoice['key'], language, silence_threshold: threshold, vad: { enabled: vadEnabled, threshold: speechThreshold, min_speech_duration_ms: minimumSpeech }, keywords: words, decoding_options: { beam_size: beam, temperature: temp, condition_on_previous_text: conditionOnPreviousText, no_repeat_ngram_size: noRepeat, repetition_penalty: penalty, openvino_speech_filter: openvinoSpeechFilter } }
     setTuningBusy(true); setError('')
     try {
       const blob = await api.recordingAudio(selectedRecording.recording_id)
@@ -401,6 +408,7 @@ export default function ModelTuning() {
         <label>Temperature<input type="number" min="0" max="1" step="any" value={temperature} onChange={event => setTemperature(event.target.value)} /><small>Variation from 0 to 1. Default: 0.</small></label>
         <label>No-repeat n-gram size<input type="number" min="0" max="20" step="1" value={noRepeatNgramSize} onChange={event => setNoRepeatNgramSize(event.target.value)} /><small>0 disables this constraint. Default: 3.</small></label>
         <label>Repetition penalty<input type="number" min="1" max="2" step="any" value={repetitionPenalty} onChange={event => setRepetitionPenalty(event.target.value)} /><small>Values above 1 discourage repeats. Default: 1.</small></label>
+        <div className="tuning-openvino-filter"><h3>OpenVINO speech filter</h3><label className="tuning-check"><input aria-label="Enable OpenVINO speech filter" type="checkbox" checked={openvinoSpeechFilterEnabled} disabled={runtime === 'ctranslate2'} onChange={event => setOpenvinoSpeechFilterEnabled(event.target.checked)} />Enable OpenVINO speech filter</label><label>No speech threshold<input aria-label="No speech threshold" type="number" min="0" max="1" step="any" value={openvinoNoSpeechThreshold} disabled={runtime === 'ctranslate2'} onChange={event => setOpenvinoNoSpeechThreshold(event.target.value)} /></label><label>Log probability threshold<input aria-label="Log probability threshold" type="number" max="0" step="any" value={openvinoLogprobThreshold} disabled={runtime === 'ctranslate2'} onChange={event => setOpenvinoLogprobThreshold(event.target.value)} /></label><small>Defaults: disabled, 0.6, and −1. OpenVINO CPU/GPU only. With CTranslate2 selected, these saved choices stay dormant; its native filter remains independent.</small></div>
       </div>
       <label className="tuning-check"><input type="checkbox" checked={conditionOnPreviousText} onChange={event => setConditionOnPreviousText(event.target.checked)} />Condition on previous text <small>Default: off.</small></label>
       <div className="tuning-config-footer"><span>{trialRunning ? 'Wait for the current trial to finish before starting another.' : hasAudio(selectedRecording) ? `Using saved WAV · ${selectedRecording!.recording_id.slice(0, 8)}` : 'Record and save a clip before starting a trial.'}</span><button className="button button-dark" onClick={() => void runTrial()} disabled={tuningBusy || trialRunning || !canTranscribe(selectedRecording) || !ready || Boolean(activeRecording)}>{trialRunning ? 'Trial in progress' : tuningBusy ? 'Preparing audio…' : 'Run tuning trial'} <span>↗</span></button></div>
@@ -423,7 +431,11 @@ function TrialCard({ trial, index }: { trial: Trial; index: number }) {
     silence_threshold: snapshot?.silence_threshold ?? trial.settings.silence_threshold,
     vad: snapshot?.vad ?? trial.settings.vad,
     keywords: snapshot?.keywords ?? trial.settings.keywords,
-    decoding_options: snapshot?.decoding_options ?? trial.settings.decoding_options,
+    decoding_options: {
+      ...trial.settings.decoding_options,
+      ...(snapshot?.decoding_options ?? {}),
+      openvino_speech_filter: snapshot?.decoding_options?.openvino_speech_filter ?? trial.settings.decoding_options.openvino_speech_filter,
+    },
   }
   const counts = snapshot?.matches ?? []
   return <article className="tuning-trial-card">
@@ -436,7 +448,7 @@ function TrialCard({ trial, index }: { trial: Trial; index: number }) {
       <h3>Chunk RTF</h3>
       {trial.measurements.length === 0 ? <p>{trial.status === 'completed' ? 'No chunks reached inference.' : trial.status === 'failed' ? 'No chunk measurements were reported.' : 'Waiting for the first chunk measurement.'}</p> : <>{trial.status === 'completed' && trial.measurements.every(measurement => measurement.skip_reason === 'no_speech') && <p role="status">All audio chunks were skipped because VAD found no speech; no model inference ran.</p>}<div className="trial-measurements-scroll"><table><thead><tr><th scope="col">Chunk</th><th scope="col">Audio</th><th scope="col">Queue wait</th><th scope="col">{config.vad.enabled ? 'Processing (VAD + inference)' : 'Inference'}</th><th scope="col">RTF</th><th scope="col">Status</th></tr></thead><tbody>{trial.measurements.map(measurement => <tr key={measurement.sequence}><th scope="row">{measurement.sequence + 1}</th><td>{measurement.audio_seconds.toFixed(2)} s</td><td>{measurement.queue_wait_seconds.toFixed(3)} s</td><td>{measurement.inference_seconds.toFixed(3)} s</td><td>{typeof measurement.rtf === 'number' && Number.isFinite(measurement.rtf) ? measurement.rtf.toFixed(3) : '—'}</td><td>{measurement.skip_reason === 'no_speech' ? 'No speech · VAD' : measurement.status}{measurement.error ? ` · ${measurement.error}` : ''}</td></tr>)}</tbody></table></div></>}
     </section>
-    <details className="trial-settings"><summary>Settings snapshot</summary><div className="trial-setting-values"><span>Model <b>{config.model}</b></span><span>Runtime <b>{config.runtime}</b></span><span>Language <b>{LANGUAGE_LABELS[config.language]}</b></span><span>RMS silence threshold <b>{config.silence_threshold}</b></span><span>VAD <b>{config.vad.enabled ? 'on' : 'off'}</b></span><span>Speech probability threshold <b>{config.vad.threshold}</b></span><span>Minimum speech duration <b>{config.vad.min_speech_duration_ms} ms</b></span><span>Keywords <b>{config.keywords.join(', ')}</b></span>{Object.entries(config.decoding_options).map(([key, value]) => <span key={key}>{key.replaceAll('_', ' ')} <b>{String(value)}</b></span>)}</div></details>
+    <details className="trial-settings"><summary>Settings snapshot</summary><div className="trial-setting-values"><span>Model <b>{config.model}</b></span><span>Runtime <b>{config.runtime}</b></span><span>Language <b>{LANGUAGE_LABELS[config.language]}</b></span><span>RMS silence threshold <b>{config.silence_threshold}</b></span><span>VAD <b>{config.vad.enabled ? 'on' : 'off'}</b></span><span>Speech probability threshold <b>{config.vad.threshold}</b></span><span>Minimum speech duration <b>{config.vad.min_speech_duration_ms} ms</b></span><span>Keywords <b>{config.keywords.join(', ')}</b></span>{Object.entries(config.decoding_options).filter(([key]) => key !== 'openvino_speech_filter').map(([key, value]) => <span key={key}>{key.replaceAll('_', ' ')} <b>{String(value)}</b></span>)}<span>OpenVINO speech filter <b>{config.decoding_options.openvino_speech_filter?.enabled ? 'on' : 'off'}</b></span><span>No speech threshold <b>{config.decoding_options.openvino_speech_filter?.no_speech_threshold ?? 0.6}</b></span><span>Log probability threshold <b>{config.decoding_options.openvino_speech_filter?.logprob_threshold ?? -1}</b></span></div></details>
   </article>
 }
 

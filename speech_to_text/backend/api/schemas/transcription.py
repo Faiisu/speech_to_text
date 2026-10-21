@@ -10,6 +10,30 @@ from speech_to_text.workflows.transcribe_match_forward import (
 _DEFAULT_DECODING_OPTIONS = normalize_profile_decoding_options()
 
 
+class OpenVINOSpeechFilterDefinition(BaseModel):
+    class Config:
+        extra = "forbid"
+
+    enabled: StrictBool = _DEFAULT_DECODING_OPTIONS["openvino_speech_filter"]["enabled"]
+    no_speech_threshold: float = Field(
+        default=_DEFAULT_DECODING_OPTIONS["openvino_speech_filter"]["no_speech_threshold"],
+        ge=0.0,
+        le=1.0,
+        allow_inf_nan=False,
+    )
+    logprob_threshold: float = Field(
+        default=_DEFAULT_DECODING_OPTIONS["openvino_speech_filter"]["logprob_threshold"],
+        le=0.0,
+        allow_inf_nan=False,
+    )
+
+    @validator("no_speech_threshold", "logprob_threshold", pre=True)
+    def reject_non_numeric_filter_values(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("speech filter settings must be numbers")
+        return value
+
+
 class DecodingOptionsDefinition(BaseModel):
     class Config:
         extra = "forbid"
@@ -23,6 +47,11 @@ class DecodingOptionsDefinition(BaseModel):
         "no_repeat_ngram_size"
     ]
     repetition_penalty: float = _DEFAULT_DECODING_OPTIONS["repetition_penalty"]
+    openvino_speech_filter: OpenVINOSpeechFilterDefinition = Field(
+        default_factory=lambda: OpenVINOSpeechFilterDefinition(
+            **_DEFAULT_DECODING_OPTIONS["openvino_speech_filter"]
+        )
+    )
 
     @validator("temperature", "repetition_penalty", pre=True)
     def reject_non_numeric_decoding_values(cls, value):
@@ -43,6 +72,9 @@ class MicrophoneTranscriptionRequest(BaseModel):
     silence_threshold: float | None = Field(default=None, ge=0.0, lt=1.0, allow_inf_nan=False)
     vad: dict = Field(default_factory=dict)
     noise_filter: dict = Field(default_factory=dict)
+    decoding_options: DecodingOptionsDefinition = Field(
+        default_factory=DecodingOptionsDefinition
+    )
 
     @validator("silence_threshold", pre=True)
     def reject_boolean_microphone_silence_threshold(cls, value):
@@ -66,6 +98,9 @@ class RTSPTranscriptionRequest(BaseModel):
     silence_threshold: float | None = Field(default=None, ge=0.0, lt=1.0, allow_inf_nan=False)
     vad: dict = Field(default_factory=dict)
     noise_filter: dict = Field(default_factory=dict)
+    decoding_options: DecodingOptionsDefinition = Field(
+        default_factory=DecodingOptionsDefinition
+    )
 
     @validator("silence_threshold", pre=True)
     def reject_boolean_rtsp_silence_threshold(cls, value):

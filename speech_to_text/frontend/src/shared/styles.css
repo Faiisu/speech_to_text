@@ -146,3 +146,4 @@
 .live-audio-panel h2 { margin: 0 0 6px; }
 .live-audio-panel p { margin: 0; }
 .live-audio-panel > small, .live-audio-panel > p { flex-basis: 100%; }
+.openvino-speech-filter{margin-top:15px;padding:12px;border:1px solid #dbe4da;background:#fafcf8}.openvino-speech-filter h3{margin:0 0 9px;color:#526b55;font:500 13px var(--display)}.openvino-speech-filter input:disabled{opacity:.55}

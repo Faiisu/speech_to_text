@@ -17,6 +17,7 @@ function pcm16Wav(seconds = 1) {
 
 test('records a reusable WAV and compares real clip API trials with immutable settings', async ({ page }) => {
   const vadRequests: { enabled: boolean; threshold: number; min_speech_duration_ms: number }[] = []
+  const decodingRequests: { openvino_speech_filter?: { enabled: boolean; no_speech_threshold: number; logprob_threshold: number } }[] = []
   await page.route('**/api/v1/transcriptions/clips', async route => {
     const body = route.request().postDataBuffer()?.toString() ?? ''
     expect(body).toContain('name="execution_mode"')
@@ -24,6 +25,9 @@ test('records a reusable WAV and compares real clip API trials with immutable se
     const vad = body.match(/name="vad"\r\n\r\n([^\r\n]+)/)
     expect(vad).not.toBeNull()
     vadRequests.push(JSON.parse(vad![1]))
+    const decoding = body.match(/name="decoding_options"\r\n\r\n([^\r\n]+)/)
+    expect(decoding).not.toBeNull()
+    decodingRequests.push(JSON.parse(decoding![1]))
     await route.continue()
   })
   await page.goto('/model-tuning')
@@ -55,6 +59,9 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   await page.getByLabel('Condition on previous text').check()
   await page.getByLabel('No-repeat n-gram size').fill('6')
   await page.getByLabel('Repetition penalty').fill('1.3')
+  await page.getByLabel('Enable OpenVINO speech filter').check()
+  await page.getByLabel('No speech threshold').fill('0.74')
+  await page.getByLabel('Log probability threshold').fill('-2.1')
   await page.getByRole('button', { name: /Run tuning trial/ }).click()
   const first = page.locator('.tuning-trial-card').first()
   await expect(first).toContainText('completed', { timeout: 10_000 })
@@ -65,6 +72,10 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   await expect(first.locator('.trial-setting-values')).toContainText('0.12')
   await expect(first.locator('.trial-setting-values')).toContainText('0.63')
   await expect(first.locator('.trial-setting-values')).toContainText('420 ms')
+  await expect(first.locator('.trial-setting-values')).toContainText('OpenVINO speech filter')
+  await expect(first.locator('.trial-setting-values')).toContainText('on')
+  await expect(first.locator('.trial-setting-values')).toContainText('0.74')
+  await expect(first.locator('.trial-setting-values')).toContainText('-2.1')
   await expect(first.locator('.trial-result-grid')).toContainText('LATEST CHUNK RTF')
 
   await page.locator('.tuning-config-grid label').filter({ hasText: /^Runtime/ }).locator('select').selectOption('openvino-cpu')
@@ -100,6 +111,32 @@ test('records a reusable WAV and compares real clip API trials with immutable se
     { enabled: true, threshold: 0.63, min_speech_duration_ms: 420 },
     { enabled: true, threshold: 0.82, min_speech_duration_ms: 600 },
   ])
+  expect(decodingRequests[0].openvino_speech_filter).toEqual({ enabled: true, no_speech_threshold: 0.74, logprob_threshold: -2.1 })
+})
+
+test('OpenVINO filter controls stay disabled under CTranslate2 and keep their selected values', async ({ page }) => {
+  await page.goto('/model-tuning')
+  await page.screenshot({ path: '/tmp/stt-openvino-filter-desktop.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({ path: '/tmp/stt-openvino-filter-mobile.png', fullPage: true })
+  const enabled = page.getByLabel('Enable OpenVINO speech filter')
+  const noSpeech = page.getByLabel('No speech threshold')
+  const logprob = page.getByLabel('Log probability threshold')
+  await enabled.check()
+  await noSpeech.fill('0.82')
+  await logprob.fill('-3')
+  const runtime = page.locator('.tuning-config-grid label').filter({ hasText: /^Runtime/ }).locator('select')
+  await runtime.selectOption('ctranslate2')
+  await expect(enabled).toBeDisabled()
+  await expect(noSpeech).toBeDisabled()
+  await expect(logprob).toBeDisabled()
+  await expect(enabled).toBeChecked()
+  await expect(noSpeech).toHaveValue('0.82')
+  await expect(logprob).toHaveValue('-3')
+  await runtime.selectOption('openvino-cpu')
+  await expect(enabled).toBeEnabled()
+  await expect(noSpeech).toHaveValue('0.82')
+  await expect(logprob).toHaveValue('-3')
 })
 
 test('runs the microphone level diagnostic from Model tuning and stops it on navigation', async ({ page }) => {

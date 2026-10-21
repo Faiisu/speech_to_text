@@ -8,7 +8,11 @@ process and reuse that handle for clips or microphone flows.
 
 from .audio import convert_audio_to_wav, validate_wav
 from .catalog import list_models
-from .config import flow_config, normalize_vad_options
+from .config import (
+    flow_config,
+    normalize_openvino_speech_filter,
+    normalize_vad_options,
+)
 from .capture import create_microphone_source, list_input_devices
 from .errors import (
     AudioCodecUnavailableError,
@@ -113,6 +117,7 @@ __all__ = [
     "inspect_huggingface_model",
     "plan_local_model_deletion",
     "normalize_decoding_options",
+    "normalize_openvino_speech_filter",
     "normalize_vad_options",
     "prepare_huggingface_model",
     "list_microphone_devices",

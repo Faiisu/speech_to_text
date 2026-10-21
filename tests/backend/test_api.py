@@ -272,7 +272,7 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
         ("execution_mode", (None, "per_workflow_process")),
         ("silence_threshold", (None, "0.2")),
         ("vad", (None, '{"enabled":true,"threshold":0.42,"min_speech_duration_ms":400}')),
-        ("decoding_options", (None, '{"beam_size": 3}')),
+        ("decoding_options", (None, '{"beam_size": 3, "openvino_speech_filter": {"enabled": true, "no_speech_threshold": 0.4, "logprob_threshold": -0.8}}')),
         ("file", ("sample.wav", b"alpha alpha", "audio/wav")),
     ]
 
@@ -308,6 +308,11 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
                     "condition_on_previous_text": False,
                     "no_repeat_ngram_size": 3,
                     "repetition_penalty": 1.0,
+                "openvino_speech_filter": {
+                    "enabled": True,
+                    "no_speech_threshold": 0.4,
+                    "logprob_threshold": -0.8,
+                },
                 },
                 "vad": {
                     "enabled": True,
@@ -437,6 +442,8 @@ def test_invalid_language_is_rejected_before_workflow_starts(api, kind):
         {"vad": '{"extra":1}'},
         {"decoding_options": "[]"},
         {"decoding_options": '{"beam_size": true}'},
+        {"decoding_options": '{"openvino_speech_filter": {"enabled": "true"}}'},
+        {"decoding_options": '{"openvino_speech_filter": {"logprob_threshold": 0.1}}'},
     ],
 )
 def test_invalid_clip_settings_fail_before_run_is_queued(api, settings):
@@ -490,12 +497,21 @@ def test_microphone_can_start_and_stop_through_api(api):
     started = client.post(
         "/api/v1/transcriptions/microphones",
         json={"keywords": ["alpha"], "device": "Studio Mic", "silence_threshold": 0.2,
-              "vad": {"enabled": True}},
+              "vad": {"enabled": True},
+              "decoding_options": {"openvino_speech_filter": {
+                  "enabled": True, "no_speech_threshold": 0.35,
+                  "logprob_threshold": -0.6,
+              }}},
     )
 
     assert started.status_code == 202
     workflow_id = started.json()["workflow_id"]
     assert started.json()["status"] == "recording"
+    assert started.json()["decoding_options"]["openvino_speech_filter"] == {
+        "enabled": True,
+        "no_speech_threshold": 0.35,
+        "logprob_threshold": -0.6,
+    }
     stop_requested = client.post(f"/api/v1/transcriptions/{workflow_id}/stop")
     assert stop_requested.status_code == 202
     assert service.microphone_workflow.stop_called.wait(timeout=1)
@@ -509,6 +525,15 @@ def test_microphone_can_start_and_stop_through_api(api):
     }
     assert service.microphone_start_options[0][2]["silence_threshold"] == 0.2
     assert service.microphone_start_options[0][2]["vad"] == status["vad"]
+    expected_filter = {
+        "enabled": True,
+        "no_speech_threshold": 0.35,
+        "logprob_threshold": -0.6,
+    }
+    assert status["decoding_options"]["openvino_speech_filter"] == expected_filter
+    assert service.microphone_start_options[0][2]["decoding_options"][
+        "openvino_speech_filter"
+    ] == expected_filter
     event_types = [
         event["type"]
         for event in client.get(f"/api/v1/transcriptions/{workflow_id}/events").json()[
@@ -536,6 +561,31 @@ def test_microphone_rejects_invalid_vad_before_workflow_start(api, vad):
     response = client.post(
         "/api/v1/transcriptions/microphones",
         json={"keywords": ["alpha"], "vad": vad},
+    )
+    assert response.status_code == 422
+    assert service.microphone_start_options == []
+
+
+@pytest.mark.parametrize(
+    "speech_filter",
+    [
+        None,
+        {"enabled": 1},
+        {"enabled": "false"},
+        {"no_speech_threshold": True},
+        {"no_speech_threshold": 1.01},
+        {"logprob_threshold": 0.01},
+        {"extra": 1},
+    ],
+)
+def test_microphone_rejects_invalid_openvino_speech_filter(api, speech_filter):
+    client, service = api
+    response = client.post(
+        "/api/v1/transcriptions/microphones",
+        json={
+            "keywords": ["alpha"],
+            "decoding_options": {"openvino_speech_filter": speech_filter},
+        },
     )
     assert response.status_code == 422
     assert service.microphone_start_options == []

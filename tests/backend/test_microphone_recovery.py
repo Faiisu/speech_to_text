@@ -370,7 +370,10 @@ def test_profile_run_remains_deduplicated_during_recovery(tmp_path, execution_mo
                 "runtime": "openvino-cpu",
                 "keywords": ["ไทย"],
                 "silence_threshold": 0,
-                "decoding_options": {"beam_size": 2},
+                "decoding_options": {"beam_size": 2, "openvino_speech_filter": {
+                    "enabled": True, "no_speech_threshold": 0.24,
+                    "logprob_threshold": -0.9,
+                }},
                 "vad": {"enabled": True, "threshold": 0.31},
             },
         )
@@ -389,7 +392,10 @@ def test_profile_run_remains_deduplicated_during_recovery(tmp_path, execution_mo
                 "runtime": "openvino-cpu",
                 "keywords": ["ไทย"],
                 "silence_threshold": 0,
-                "decoding_options": {"beam_size": 8},
+                "decoding_options": {"beam_size": 8, "openvino_speech_filter": {
+                    "enabled": False, "no_speech_threshold": 0.8,
+                    "logprob_threshold": -0.2,
+                }},
                 "vad": {"enabled": False, "threshold": 0.77},
             },
         )
@@ -397,6 +403,11 @@ def test_profile_run_remains_deduplicated_during_recovery(tmp_path, execution_mo
         _wait_until(lambda: len(service.starts) == 2)
         assert service.starts[0]["decoding_options"]["beam_size"] == 2
         assert service.starts[1]["decoding_options"]["beam_size"] == 2
+        assert service.starts[1]["decoding_options"]["openvino_speech_filter"] == {
+            "enabled": True,
+            "no_speech_threshold": 0.24,
+            "logprob_threshold": -0.9,
+        }
         assert service.starts[0]["vad"] == {
             "enabled": True, "threshold": 0.31, "min_speech_duration_ms": 250
         }
