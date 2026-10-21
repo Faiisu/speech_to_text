@@ -66,6 +66,7 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   const first = page.locator('.tuning-trial-card').first()
   await expect(first).toContainText('completed', { timeout: 10_000 })
   await expect(first.locator('.trial-measurements')).toContainText('All audio chunks were skipped because VAD found no speech; no model inference ran.')
+  await expect(first.locator('.trial-rtf-summary b')).toHaveText('—')
   await first.locator('details').locator('summary').click()
   await expect(first.locator('.trial-setting-values')).toContainText('beam size')
   await expect(first.locator('.trial-setting-values')).toContainText('4')
@@ -104,6 +105,10 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   const clips = await page.request.get('/api/v1/transcriptions').then(response => response.json())
   const clipRuns = clips.transcriptions.filter((run: { kind: string }) => run.kind === 'clip')
   expect(clipRuns).toHaveLength(2)
+  for (const run of clipRuns) {
+    expect(run).toMatchObject({ rtf_min: null, rtf_avg: null, rtf_max: null, rtf_count: 0 })
+    expect(run.latest_rtf).not.toBeNull()
+  }
   expect(clipRuns[1]).toMatchObject({ model: 'turbo', runtime: 'openvino-gpu', language: 'th', silence_threshold: 0.12, vad: { enabled: true, threshold: 0.63, min_speech_duration_ms: 420 }, keywords: ['สวัสดี'], decoding_options: { beam_size: 4, temperature: 0.2, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.3 } })
   expect(clipRuns[0]).toMatchObject({ model: 'turbo', runtime: 'openvino-cpu', language: 'en', silence_threshold: 0.07, vad: { enabled: true, threshold: 0.82, min_speech_duration_ms: 600 }, decoding_options: { beam_size: 2 } })
   expect(clipRuns.map((run: { execution_mode: string }) => run.execution_mode)).toEqual(['per_workflow_process', 'per_workflow_process'])

@@ -230,6 +230,8 @@ The processing order is normalized chunk → optional caller preprocessing → R
 
 When VAD is enabled, `inference_seconds` includes detector processing plus model inference; `queue_wait_seconds` remains queue waiting only. `elapsed_seconds = queue_wait_seconds + inference_seconds`, and `rtf = elapsed_seconds / audio_seconds`, with `audio_seconds` based on the original chunk, including a shorter final chunk. Detector-only time is included even for rejected chunks: publish a measurement with `status: "skipped"` and `skip_reason: "no_speech"`, without generating transcript or keyword events. VAD-rejected chunks have unique source sequence numbers, so transcript sequence numbers may have gaps. Existing RMS-only skips remain unmeasured. A skipped measurement is successful filtering, not an inference failure or a dropped overload chunk; capacity summaries must account for its processing cost without counting it as failure.
 
+Run minimum/average/maximum RTF is a backend aggregation concern: the [backend API contract](../backend-transcription-api/spec.md#get-transcriptionsworkflow_id) excludes VAD-only no-speech skips while retaining these per-chunk measurements. This does not remove VAD time from chunks that reach the model or alter capacity telemetry.
+
 Acceptance requires deterministic proofs that noise rejection prevents inference, qualifying speech preserves frames, disabled VAD preserves previous behavior, invalid configuration fails, per-flow settings survive IPC, and injected VAD time increases reported RTF in each execution path. Real Silero checks must separately demonstrate rejection of noise and retention of speech; they do not establish recognition accuracy or target hardware throughput.
 
 ## Live input audio monitoring

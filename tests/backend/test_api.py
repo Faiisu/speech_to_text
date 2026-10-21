@@ -337,24 +337,25 @@ def test_clip_measurements_are_retained_as_ordered_events_and_isolated_per_run(a
     client, service = api
     service.clip_measurements = [
         {"sequence": 0, "audio_seconds": 30.0, "queue_wait_seconds": 0.01, "inference_seconds": 3.0, "rtf": 0.1003, "status": "completed", "error": None},
-        {"sequence": 1, "audio_seconds": 30.0, "queue_wait_seconds": 0.02, "inference_seconds": 4.0, "rtf": None, "status": "failed", "error": "decode error"},
-        {"sequence": 2, "audio_seconds": 1.0, "queue_wait_seconds": 0.03, "inference_seconds": 0.4, "rtf": 0.43, "status": "completed", "error": None},
+        {"sequence": 1, "audio_seconds": 30.0, "queue_wait_seconds": 0.02, "inference_seconds": 4.0, "rtf": 0.3, "status": "failed", "error": "decode error"},
+        {"sequence": 2, "audio_seconds": 1.0, "queue_wait_seconds": 0.03, "inference_seconds": 0.4, "rtf": 1000.0, "status": "skipped", "skip_reason": "no_speech"},
+        {"sequence": 3, "audio_seconds": 1.0, "queue_wait_seconds": 0.03, "inference_seconds": 0.4, "rtf": 0.43, "status": "completed", "error": None},
     ]
     first_id = upload_clip(client).json()["workflow_id"]
     snapshot = wait_for_status(client, first_id, "completed")
     first_events = client.get(f"/api/v1/transcriptions/{first_id}/events?after=0").json()
     measurements = [event for event in first_events["events"] if event["type"] == "measurement"]
 
-    assert [event["sequence"] for event in measurements] == [0, 1, 2]
-    assert [event["rtf"] for event in measurements] == [0.1003, None, 0.43]
-    assert [event["audio_seconds"] for event in measurements] == [30.0, 30.0, 1.0]
+    assert [event["sequence"] for event in measurements] == [0, 1, 2, 3]
+    assert [event["rtf"] for event in measurements] == [0.1003, 0.3, 1000.0, 0.43]
+    assert [event["audio_seconds"] for event in measurements] == [30.0, 30.0, 1.0, 1.0]
     assert measurements[1]["error"] == "decode error"
     assert snapshot["latest_rtf"] == 0.43
     assert snapshot["rtf_min"] == 0.1003
     assert snapshot["rtf_max"] == 0.43
-    assert snapshot["rtf_avg"] == pytest.approx((0.1003 + 0.43) / 2)
-    assert snapshot["rtf_count"] == 2
-    assert client.get("/api/v1/transcriptions").json()["transcriptions"][0]["rtf_count"] == 2
+    assert snapshot["rtf_avg"] == pytest.approx((0.1003 + 0.3 + 0.43) / 3)
+    assert snapshot["rtf_count"] == 3
+    assert client.get("/api/v1/transcriptions").json()["transcriptions"][0]["rtf_count"] == 3
     assert client.get(f"/api/v1/transcriptions/{first_id}/events?after=0").json() == first_events
 
     service.clip_measurements = []
@@ -398,11 +399,12 @@ def test_rtf_aggregate_rejects_invalid_values_and_counts_zero():
     record = RunRecord("test", "clip", "running", ())
     for value in (None, True, -0.1, float("nan"), float("inf"), 0):
         record.record_rtf(value)
+    record.record_rtf(1, status="skipped", skip_reason="other")
 
     assert record.rtf_min == 0
-    assert record.rtf_max == 0
-    assert record.rtf_avg == 0
-    assert record.rtf_count == 1
+    assert record.rtf_max == 1
+    assert record.rtf_avg == 0.5
+    assert record.rtf_count == 2
 
 
 @pytest.mark.parametrize("kind", ["clip", "microphone"])
@@ -624,8 +626,11 @@ def test_clip_vad_skip_reaches_api_rtf_and_measurement_snapshot(monkeypatch):
         assert created.status_code == 202
         status = wait_for_status(client, created.json()["workflow_id"], "completed")
         assert status["transcript"] == ""
-        assert status["latest_rtf"] == pytest.approx(status["rtf_avg"])
-        assert status["rtf_count"] == 1
+        assert status["latest_rtf"] is not None
+        assert status["rtf_min"] is None
+        assert status["rtf_avg"] is None
+        assert status["rtf_max"] is None
+        assert status["rtf_count"] == 0
         measurements = [
             event
             for event in client.get(
@@ -637,6 +642,46 @@ def test_clip_vad_skip_reaches_api_rtf_and_measurement_snapshot(monkeypatch):
         assert measurements[0]["status"] == "skipped"
         assert measurements[0]["skip_reason"] == "no_speech"
         assert measurements[0]["rtf"] == pytest.approx(status["latest_rtf"])
+
+
+def test_live_measurements_exclude_only_vad_no_speech_from_rtf_aggregates(api):
+    client, service = api
+    created = client.post(
+        "/api/v1/transcriptions/microphones", json={"keywords": ["alpha"]}
+    )
+    workflow_id = created.json()["workflow_id"]
+    workflow = service.microphone_workflow
+    measurements = [
+        {"sequence": 0, "rtf": 0.1, "status": "completed"},
+        {"sequence": 1, "rtf": 0.3, "status": "failed", "error": "decode error"},
+        {
+            "sequence": 2,
+            "rtf": 1000.0,
+            "status": "skipped",
+            "skip_reason": "no_speech",
+        },
+        {"sequence": 3, "rtf": 0.5, "status": "completed"},
+    ]
+    for measurement in measurements:
+        workflow.output_queue.put({"type": "measurement", **measurement})
+
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        status = client.get(f"/api/v1/transcriptions/{workflow_id}").json()
+        events = client.get(
+            f"/api/v1/transcriptions/{workflow_id}/events"
+        ).json()["events"]
+        retained = [event for event in events if event["type"] == "measurement"]
+        if status["latest_rtf"] == 0.5 and len(retained) == len(measurements):
+            break
+        time.sleep(0.01)
+
+    assert [event["rtf"] for event in retained] == [0.1, 0.3, 1000.0, 0.5]
+    assert status["latest_rtf"] == 0.5
+    assert status["rtf_min"] == 0.1
+    assert status["rtf_max"] == 0.5
+    assert status["rtf_avg"] == pytest.approx(0.3)
+    assert status["rtf_count"] == 3
 
 
 def test_failed_microphone_stop_does_not_leave_workflow_stopping(api):

@@ -92,7 +92,11 @@ def _clip_worker(
             with record.lock:
                 record.latest_rtf = measurement.get("rtf")
                 record.last_response_at = _as_utc_z(measurement.get("completed_at"))
-                record.record_rtf(measurement.get("rtf"))
+                record.record_rtf(
+                    measurement.get("rtf"),
+                    status=measurement.get("status"),
+                    skip_reason=measurement.get("skip_reason"),
+                )
             runtime.append_event(
                 record, {"type": "measurement", **measurement}
             )

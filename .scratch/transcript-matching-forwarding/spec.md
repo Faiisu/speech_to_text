@@ -25,7 +25,7 @@ Operational decision (2026-10-17): HTTP and MQTT are real-time destinations for 
 
 ### Speech gate settings and timing
 
-Callable clip/live workflows pass normalized VAD and adjustable RMS settings to model deployment; the [Feature 01 contract](../new-speech-to-text/spec.md#voice-activity-detection) owns their behavior. Gate settings are copied into run configuration and retained through capture recovery. VAD-only skip measurements are forwarded without producing transcript/keyword events. `latest_rtf` reflects the latest measured chunk, including a VAD-only skip; no measurements means null. Run aggregates retain these real costs under the [backend API contract](../backend-transcription-api/spec.md#speech-gate-configuration).
+Callable clip/live workflows pass normalized VAD and adjustable RMS settings to model deployment; the [Feature 01 contract](../new-speech-to-text/spec.md#voice-activity-detection) owns their behavior. Gate settings are copied into run configuration and retained through capture recovery. VAD-only skip measurements are forwarded without producing transcript/keyword events. `latest_rtf` reflects the latest measured chunk, including a VAD-only skip; no measurements means null. Per-chunk events retain these real costs; the [backend API contract](../backend-transcription-api/spec.md#get-transcriptionsworkflow_id) defines their exclusion from run minimum/average/maximum RTF and count while preserving latest RTF.
 
 ### OpenVINO decoder configuration
 

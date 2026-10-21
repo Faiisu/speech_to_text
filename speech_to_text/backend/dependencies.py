@@ -85,7 +85,9 @@ class RunRecord:
     stop_complete: threading.Event = field(default_factory=threading.Event)
     controller_thread: threading.Thread | None = None
 
-    def record_rtf(self, value):
+    def record_rtf(self, value, *, status=None, skip_reason=None):
+        if status == "skipped" and skip_reason == "no_speech":
+            return
         if (
             not isinstance(value, (int, float))
             or isinstance(value, bool)
