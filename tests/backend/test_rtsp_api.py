@@ -68,6 +68,7 @@ class _Service:
                 "execution_mode": execution_mode,
                 "model": model,
                 "runtime": runtime,
+                "flow_config": dict(flow_config or {}),
                 "audio_source_factory": audio_source_factory,
             }
         )
@@ -166,21 +167,40 @@ def test_direct_rtsp_endpoint_validates_source_and_redacts_resolved_value(
         assert invalid.status_code == 422
         assert "user:pass" not in invalid.text
 
+        invalid_vad = client.post(
+            "/api/v1/transcriptions/rtsp",
+            json={"keywords": ["สวัสดี"], "rtsp_url_secret_ref": "CAMERA_AUDIO_URL",
+                  "vad": {"enabled": True, "min_speech_duration_ms": 2.5}},
+        )
+        assert invalid_vad.status_code == 422
+        assert service.started == []
+
         authenticated = client.post(
             "/api/v1/transcriptions/rtsp",
             json={"keywords": ["สวัสดี"], "rtsp_url": "rtsp://camera:554/live", "rtsp_username": "operator", "rtsp_password": "p@ss:/%#"},
         )
         assert authenticated.status_code == 202
         auth_run = client.get(f"/api/v1/transcriptions/{authenticated.json()['workflow_id']}").json()
+        assert auth_run["vad"] == {
+            "enabled": False, "threshold": 0.5, "min_speech_duration_ms": 250
+        }
         factory = service.started[-1]["audio_source_factory"]
         assert factory._url == "rtsp://operator:p%40ss%3A%2F%25%23@camera:554/live"
         assert "p@ss" not in repr(factory) + authenticated.text + str(auth_run)
 
         started = client.post(
             "/api/v1/transcriptions/rtsp",
-            json={"keywords": ["สวัสดี"], "rtsp_url_secret_ref": "CAMERA_AUDIO_URL"},
+            json={"keywords": ["สวัสดี"], "rtsp_url_secret_ref": "CAMERA_AUDIO_URL",
+                  "vad": {"enabled": True, "threshold": 0.7}, "silence_threshold": 0.22},
         )
         assert started.status_code == 202
+        status = client.get(f"/api/v1/transcriptions/{started.json()['workflow_id']}").json()
+        assert status["vad"] == {
+            "enabled": True, "threshold": 0.7, "min_speech_duration_ms": 250
+        }
+        assert status["silence_threshold"] == 0.22
+        assert service.started[-1]["flow_config"]["vad"] == status["vad"]
+        assert service.started[-1]["flow_config"]["silence_threshold"] == 0.22
         assert service.started[0]["device"] is None
         assert service.started[0]["audio_source_factory"] is not None
         run = client.get(

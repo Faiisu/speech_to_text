@@ -381,6 +381,9 @@ test('profile Play starts its saved snapshot and opens the workflow', async ({ p
   await page.getByLabel('Runtime').selectOption('ctranslate2')
   await page.getByLabel('One keyword per line').fill('สวัสดี\nประชุม')
   await page.getByLabel('Noise floor (RMS silence threshold)').fill('0.17')
+  await page.getByLabel('Enable voice activity detection (VAD)').check()
+  await page.getByLabel('Speech probability threshold').fill('0.72')
+  await page.getByLabel('Minimum speech duration (ms)').fill('480')
   await page.getByLabel('Beam size').fill('4')
   await page.getByLabel('Temperature').fill('0.25')
   await page.getByLabel('Condition on previous text').check()
@@ -390,6 +393,7 @@ test('profile Play starts its saved snapshot and opens the workflow', async ({ p
   await page.getByRole('button', { name: /Save profile/ }).click()
 
   await expect(page).toHaveURL(/\/profiles$/)
+  await expect(page.locator('.profile-record').filter({ hasText: 'Play snapshot profile' })).toContainText('VAD on · probability 0.72 · minimum 480 ms')
   await page.getByRole('button', { name: 'Start workflow Play snapshot profile' }).click()
   await expect(page).toHaveURL(/\/runs\/[a-f0-9]+$/)
   const workflowId = page.url().split('/').at(-1)!
@@ -402,10 +406,12 @@ test('profile Play starts its saved snapshot and opens the workflow', async ({ p
     runtime: 'ctranslate2',
     keywords: ['สวัสดี', 'ประชุม'],
     silence_threshold: 0.17,
+    vad: { enabled: true, threshold: 0.72, min_speech_duration_ms: 480 },
   })
   await expect(page.locator('.run-kpis')).toContainText('small')
   await expect(page.locator('.run-kpis')).toContainText('ctranslate2')
   await expect(page.locator('.run-kpis')).toContainText('Separate process')
+  await expect(page.locator('[aria-label="Speech detection settings"]')).toContainText('RMS gate 0.17 · VAD on · probability 0.72 · minimum 480 ms')
   await expect(page.getByRole('heading', { name: 'Play snapshot profile' })).toBeVisible()
   await expect(page.locator('.match-list')).toContainText('สวัสดี')
 })
@@ -461,6 +467,9 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await page.getByLabel('Language').selectOption('en')
   await page.getByLabel('One keyword per line').fill('สวัสดี\nประชุม')
   await page.getByLabel('Noise floor (RMS silence threshold)').fill('0.17')
+  await page.getByLabel('Enable voice activity detection (VAD)').check()
+  await page.getByLabel('Speech probability threshold').fill('0.72')
+  await page.getByLabel('Minimum speech duration (ms)').fill('480')
   await page.getByLabel('Separate process').check()
   await page.getByRole('button', { name: /Save profile/ }).click()
 
@@ -502,6 +511,9 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await expect(page.getByLabel('Language')).toHaveValue('en')
   await expect(page.getByLabel('One keyword per line')).toHaveValue('สวัสดี\nประชุม')
   await expect(page.getByLabel('Noise floor (RMS silence threshold)')).toHaveValue('0.17')
+  await expect(page.getByLabel('Enable voice activity detection (VAD)')).toBeChecked()
+  await expect(page.getByLabel('Speech probability threshold')).toHaveValue('0.72')
+  await expect(page.getByLabel('Minimum speech duration (ms)')).toHaveValue('480')
   await expect(page.getByLabel('Beam size')).toHaveValue('4')
   await expect(page.getByLabel('Temperature')).toHaveValue('0.25')
   await expect(page.getByLabel('Condition on previous text')).toBeChecked()
@@ -545,13 +557,14 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
     language: 'en',
     keywords: originalBefore.keywords,
     silence_threshold: originalBefore.silence_threshold,
+    vad: { enabled: true, threshold: 0.72, min_speech_duration_ms: 480 },
     decoding_options: { beam_size: 4, temperature: 0.25, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.4 },
   })
   await page.getByRole('button', { name: 'Start workflow Copied profile' }).click()
   await expect(page).toHaveURL(/\/runs\/[a-f0-9]+$/)
   const copiedWorkflowId = page.url().split('/').at(-1)!
   await expect(page.locator('.run-kpis')).toContainText('English')
-  await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${copiedWorkflowId}`).then(response => response.json())).toMatchObject({ language: 'en', decoding_options: copy.decoding_options })
+  await expect.poll(async () => page.request.get(`/api/v1/transcriptions/${copiedWorkflowId}`).then(response => response.json())).toMatchObject({ language: 'en', decoding_options: copy.decoding_options, silence_threshold: 0.17, vad: { enabled: true, threshold: 0.72, min_speech_duration_ms: 480 } })
   const updateResponse = await page.request.put(`/api/v1/profiles/${copy.profile_id}`, { data: {
     name: copy.name,
     device: copy.device,

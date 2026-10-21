@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import io
+import multiprocessing
+import os
 import queue
+import wave
 
 import pytest
+import numpy as np
 
 from speech_to_text.features.word_matching import WordMatchingConfig, WordMatchingError
 from speech_to_text.workflows import transcribe_match_forward as workflow
@@ -19,6 +24,60 @@ class FakeSession:
 
     def stop(self, *, timeout=None):
         self.stop_calls.append(timeout)
+
+
+class _IsolatedRuntime:
+    def __init__(self, marker, transcript):
+        self.marker = marker
+        self.transcript = transcript
+
+    def transcribe(self, audio, *, language, decoding_options):
+        if isinstance(self.transcript, Exception):
+            raise self.transcript
+        return self.transcript
+
+    def close(self):
+        with open(self.marker, "w", encoding="utf-8") as marker:
+            marker.write(str(os.getpid()))
+
+
+class _IsolatedRuntimeFactory:
+    def __init__(self, marker, transcript):
+        self.marker = str(marker)
+        self.transcript = transcript
+
+    def __call__(self, _config):
+        return _IsolatedRuntime(self.marker, self.transcript)
+
+
+class _VADUnavailableRuntime:
+    def transcribe(self, *_args, **_kwargs):
+        pytest.fail("VAD should fail before runtime inference")
+
+    def close(self):
+        pass
+
+
+class _VADUnavailableRuntimeFactory:
+    def __call__(self, _config):
+        from speech_to_text.features.model_deployment import model as model_module
+        from speech_to_text.features.model_deployment import VADUnavailableError
+
+        def fail_detection(_samples, _options):
+            raise VADUnavailableError("Silero VAD is unavailable")
+
+        model_module.detect_speech = fail_detection
+        return _VADUnavailableRuntime()
+
+
+def _wav_bytes(samples):
+    output = io.BytesIO()
+    with wave.open(output, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(np.asarray(samples, dtype="<i2").tobytes())
+    return output.getvalue()
 
 
 def drain_events(workflow_session):
@@ -90,6 +149,181 @@ def test_clip_workflow_returns_matches_and_forwards_one_completed_record(monkeyp
         "status": "completed",
     }
     assert receipts[0]["completed_at"].endswith("Z")
+
+
+def test_isolated_clip_returns_only_after_spawned_model_process_exits(tmp_path):
+    from speech_to_text.workflows.transcribe_match_forward.service import (
+        TranscriptionService,
+    )
+
+    marker = tmp_path / "child-closed"
+    transcript = "isolated result " + "x" * (1024 * 1024)
+    measurements = []
+    service = TranscriptionService(
+        runtime_factory=_IsolatedRuntimeFactory(marker, transcript)
+    )
+
+    result = service.transcribe_clip(
+        _wav_bytes(np.full(1600, 10000, dtype=np.int16)),
+        ["isolated"],
+        {"source_id": "isolated-clip", "language": "en", "chunk_seconds": 0.1},
+        model="turbo",
+        runtime="openvino-gpu",
+        execution_mode="per_workflow_process",
+        measurement_callback=measurements.append,
+    )
+
+    child_pid = int(marker.read_text(encoding="utf-8"))
+    assert child_pid != os.getpid()
+    assert not any(child.pid == child_pid and child.is_alive() for child in multiprocessing.active_children())
+    assert result.transcript == transcript
+    assert [(item.keyword, item.count) for item in result.matches] == [("isolated", 1)]
+    assert result.latest_rtf == measurements[-1]["rtf"]
+    assert measurements
+    service.close()
+    with pytest.raises(workflow.WorkflowUnavailableError, match="service is closing"):
+        service.transcribe_clip(
+            _wav_bytes(np.full(1600, 10000, dtype=np.int16)),
+            ["isolated"],
+            {"source_id": "after-close", "language": "en"},
+            execution_mode="per_workflow_process",
+        )
+
+
+def test_isolated_clip_relays_failed_measurement_and_closes_child(tmp_path):
+    from speech_to_text.workflows.transcribe_match_forward.service import (
+        TranscriptionService,
+    )
+
+    marker = tmp_path / "child-closed-on-error"
+    measurements = []
+    service = TranscriptionService(
+        runtime_factory=_IsolatedRuntimeFactory(
+            marker, RuntimeError("fake inference failure")
+        )
+    )
+
+    result = service.transcribe_clip(
+        _wav_bytes(np.full(1600, 10000, dtype=np.int16)),
+        ["isolated"],
+        {"source_id": "failed-isolated-clip", "language": "en", "chunk_seconds": 0.1},
+        model="turbo",
+        runtime="openvino-gpu",
+        execution_mode="per_workflow_process",
+        measurement_callback=measurements.append,
+    )
+
+    child_pid = int(marker.read_text(encoding="utf-8"))
+    assert child_pid != os.getpid()
+    assert not any(child.pid == child_pid and child.is_alive() for child in multiprocessing.active_children())
+    assert result.transcript == ""
+    assert measurements[0]["status"] == "failed"
+    assert "fake inference failure" in measurements[0]["error"]
+
+
+@pytest.mark.parametrize("execution_mode", ["shared", "per_workflow_process"])
+def test_vad_unavailable_maps_to_workflow_unavailable(execution_mode, monkeypatch):
+    from speech_to_text.features.model_deployment import model as model_module
+    from speech_to_text.features.model_deployment import VADUnavailableError
+    from speech_to_text.workflows.transcribe_match_forward import service as service_module
+    from speech_to_text.workflows.transcribe_match_forward.service import (
+        TranscriptionService,
+    )
+
+    def fail_detection(_samples, _options):
+        raise VADUnavailableError("Silero VAD is unavailable")
+
+    monkeypatch.setattr(model_module, "detect_speech", fail_detection)
+    if execution_mode == "per_workflow_process":
+        class FakeQueue(queue.Queue):
+            def close(self):
+                pass
+
+            def join_thread(self):
+                pass
+
+        class FakeProcess:
+            def __init__(self, target, args):
+                self.target = target
+                self.args = args
+                self.pid = None
+                self.exitcode = None
+
+            def start(self):
+                self.pid = 1
+                self.target(*self.args)
+                self.exitcode = 0
+
+            def is_alive(self):
+                return False
+
+            def join(self):
+                pass
+
+            def close(self):
+                pass
+
+        class FakeContext:
+            def Queue(self):
+                return FakeQueue()
+
+            def Process(self, *, target, args, name):
+                return FakeProcess(target, args)
+
+        monkeypatch.setattr(service_module.mp, "get_context", lambda _method: FakeContext())
+    service = TranscriptionService(runtime_factory=_VADUnavailableRuntimeFactory())
+    with pytest.raises(workflow.WorkflowUnavailableError, match="Silero VAD is unavailable"):
+        service.transcribe_clip(
+            _wav_bytes(np.full(1600, 10000, dtype=np.int16)),
+            ["isolated"],
+            {"source_id": "vad-unavailable", "language": "en", "vad": {"enabled": True}},
+            model="turbo",
+            runtime="openvino-gpu",
+            execution_mode=execution_mode,
+        )
+    service.close()
+
+
+class _HardExitRuntime:
+    def __init__(self, marker):
+        self.marker = marker
+
+    def transcribe(self, audio, *, language, decoding_options):
+        with open(self.marker, "w", encoding="utf-8") as marker:
+            marker.write(str(os.getpid()))
+        os._exit(17)
+
+    def close(self):
+        pass
+
+
+class _HardExitRuntimeFactory:
+    def __init__(self, marker):
+        self.marker = str(marker)
+
+    def __call__(self, _config):
+        return _HardExitRuntime(self.marker)
+
+
+def test_isolated_clip_reports_child_crash_without_leaving_a_process(tmp_path):
+    from speech_to_text.workflows.transcribe_match_forward.service import (
+        TranscriptionService,
+    )
+
+    marker = tmp_path / "crashed-child"
+    service = TranscriptionService(runtime_factory=_HardExitRuntimeFactory(marker))
+    with pytest.raises(workflow.WorkflowUnavailableError, match="exited with code 17"):
+        service.transcribe_clip(
+            _wav_bytes(np.full(1600, 10000, dtype=np.int16)),
+            ["isolated"],
+            {"source_id": "crashed-isolated-clip", "language": "en", "chunk_seconds": 0.1},
+            model="turbo",
+            runtime="openvino-gpu",
+            execution_mode="per_workflow_process",
+        )
+    child_pid = int(marker.read_text(encoding="utf-8"))
+    assert child_pid != os.getpid()
+    assert not any(child.pid == child_pid and child.is_alive() for child in multiprocessing.active_children())
 
 
 @pytest.mark.parametrize("language", ["en", "auto"])
@@ -662,7 +896,16 @@ def test_service_defaults_to_shared_microphone_mode(monkeypatch):
     )
     result.wait(timeout=1)
 
-    assert calls == [("USB mic", handle, None, {"source_id": "shared-1", "language": "auto"})]
+    assert calls == [
+        (
+            "USB mic", handle, None,
+            {
+                "source_id": "shared-1",
+                "language": "auto",
+                "vad": {"enabled": False, "threshold": 0.5, "min_speech_duration_ms": 250},
+            },
+        )
+    ]
     assert next(event for event in drain_events(result) if event["type"] == "match_results")["language"] == "auto"
     assert handle.close_calls == 1
     assert service_instance._model_handles == {}
@@ -701,6 +944,7 @@ def test_service_clip_uses_selected_language_and_flow_snapshot(monkeypatch, lang
             "source_id": "clip-1",
             "silence_threshold": 0.2,
             "decoding_options": {"beam_size": 3},
+            "vad": {"enabled": True, "threshold": 0.35},
         },
         model="tiny",
         runtime="ctranslate2",
@@ -726,10 +970,45 @@ def test_service_clip_uses_selected_language_and_flow_snapshot(monkeypatch, lang
                 "source_id": "clip-1",
                 "silence_threshold": 0.2,
                 "decoding_options": {"beam_size": 3},
+                "vad": {
+                    "enabled": True,
+                    "threshold": 0.35,
+                    "min_speech_duration_ms": 250,
+                },
             },
             {"measurement_callback": None},
         )
     ]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"enabled": 1},
+        {"threshold": True},
+        {"threshold": 0},
+        {"threshold": 1},
+        {"threshold": float("nan")},
+        {"min_speech_duration_ms": False},
+        {"min_speech_duration_ms": 30001},
+        {"extra": 1},
+        [],
+    ],
+)
+def test_workflow_vad_normalizer_rejects_invalid_settings(value):
+    with pytest.raises(workflow.WorkflowConfigurationError):
+        workflow.normalize_vad_options(value)
+
+
+def test_workflow_vad_normalizer_returns_complete_detached_defaults():
+    vad = workflow.normalize_vad_options({"enabled": True})
+    assert vad == {
+        "enabled": True,
+        "threshold": 0.5,
+        "min_speech_duration_ms": 250,
+    }
+    vad["threshold"] = 0.9
+    assert workflow.normalize_vad_options()["threshold"] == 0.5
 
 
 @pytest.mark.parametrize("execution_mode", ["processes", []])
@@ -797,7 +1076,11 @@ def test_per_workflow_process_mode_owns_group_through_natural_completion(monkeyp
                 "enqueue_timeout_seconds": 30.0,
             },
             "topology": "per-input-model",
-            "flow_configs": [{"source_id": "process-1", "language": "en"}],
+            "flow_configs": [{
+                "source_id": "process-1",
+                "language": "en",
+                "vad": {"enabled": False, "threshold": 0.5, "min_speech_duration_ms": 250},
+            }],
         }
     ]
     events = drain_events(wrapped)

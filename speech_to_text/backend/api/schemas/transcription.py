@@ -40,7 +40,15 @@ class MicrophoneTranscriptionRequest(BaseModel):
     execution_mode: Literal["shared", "per_workflow_process"] = "shared"
     destination_id: StrictStr | None = None
     language: Literal["th", "en", "auto"] = "th"
+    silence_threshold: float | None = Field(default=None, ge=0.0, lt=1.0, allow_inf_nan=False)
+    vad: dict = Field(default_factory=dict)
     noise_filter: dict = Field(default_factory=dict)
+
+    @validator("silence_threshold", pre=True)
+    def reject_boolean_microphone_silence_threshold(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("silence_threshold must be a number")
+        return value
 
 
 class RTSPTranscriptionRequest(BaseModel):
@@ -55,7 +63,15 @@ class RTSPTranscriptionRequest(BaseModel):
     execution_mode: Literal["shared", "per_workflow_process"] = "shared"
     destination_id: StrictStr | None = None
     language: Literal["th", "en", "auto"] = "th"
+    silence_threshold: float | None = Field(default=None, ge=0.0, lt=1.0, allow_inf_nan=False)
+    vad: dict = Field(default_factory=dict)
     noise_filter: dict = Field(default_factory=dict)
+
+    @validator("silence_threshold", pre=True)
+    def reject_boolean_rtsp_silence_threshold(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("silence_threshold must be a number")
+        return value
 
 
 class MicrophoneProfileDefinition(BaseModel):
@@ -81,6 +97,7 @@ class MicrophoneProfileDefinition(BaseModel):
     decoding_options: DecodingOptionsDefinition = Field(
         default_factory=DecodingOptionsDefinition
     )
+    vad: dict = Field(default_factory=dict)
     noise_filter: dict = Field(default_factory=dict)
 
     @validator("silence_threshold", pre=True)

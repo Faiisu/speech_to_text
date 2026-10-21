@@ -8,7 +8,7 @@ process and reuse that handle for clips or microphone flows.
 
 from .audio import convert_audio_to_wav, validate_wav
 from .catalog import list_models
-from .config import flow_config
+from .config import flow_config, normalize_vad_options
 from .capture import create_microphone_source, list_input_devices
 from .errors import (
     AudioCodecUnavailableError,
@@ -18,6 +18,7 @@ from .errors import (
     ConfigurationError,
     ModelClosedError,
     ModelLoadError,
+    VADUnavailableError,
 )
 from .model import ModelHandle, load_model, transcribe_clip
 from .model_management import (
@@ -97,6 +98,7 @@ __all__ = [
     "ModelClosedError",
     "ModelHandle",
     "ModelLoadError",
+    "VADUnavailableError",
     "ModelPreparationError",
     "ModelPreparationUnavailableError",
     "delete_local_model",
@@ -111,6 +113,7 @@ __all__ = [
     "inspect_huggingface_model",
     "plan_local_model_deletion",
     "normalize_decoding_options",
+    "normalize_vad_options",
     "prepare_huggingface_model",
     "list_microphone_devices",
     "create_microphone_source",

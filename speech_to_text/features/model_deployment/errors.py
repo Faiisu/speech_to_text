@@ -9,6 +9,10 @@ class ModelLoadError(RuntimeError):
     """A selected model runtime could not be initialized."""
 
 
+class VADUnavailableError(RuntimeError):
+    """Enabled Silero VAD could not load or process an audio chunk."""
+
+
 class ModelClosedError(RuntimeError):
     """An operation was attempted with a closed model handle."""
 

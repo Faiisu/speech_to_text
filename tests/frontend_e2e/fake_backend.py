@@ -30,8 +30,13 @@ class FakeDecoderRuntime:
         pass
 
 
-transcription_service_module.load_model = lambda config: load_model(
-    config, runtime_factory=lambda _config: FakeDecoderRuntime()
+class FakeDecoderRuntimeFactory:
+    def __call__(self, _config):
+        return FakeDecoderRuntime()
+
+
+transcription_service_module.load_model = lambda config, runtime_factory=None: load_model(
+    config, runtime_factory=runtime_factory or FakeDecoderRuntimeFactory()
 )
 
 
@@ -105,7 +110,7 @@ class FakeWorkflowService(TranscriptionService):
         ]
 
     def __init__(self):
-        super().__init__()
+        super().__init__(runtime_factory=FakeDecoderRuntimeFactory())
 
     def list_models(self):
         return {

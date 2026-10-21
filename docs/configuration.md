@@ -24,6 +24,12 @@ The frontend Profile editor also saves those decoding options for microphone run
 
 The Profile editor and Model tuning page also offer **Thai**, **English**, and **Auto detect** language selection. Existing profiles keep Thai by default. Save and restart a profile to apply its language; a tuning trial captures the selection when it starts. Auto delegates language detection to the runtime and does not guarantee accurate recognition of speech that switches languages within a sentence. See the [backend API contract](../.scratch/backend-transcription-api/spec.md) for validation, persistence, and run snapshots.
 
+### Speech detection and noise-only input
+
+In the Profile editor or Model tuning, enable **VAD** to reject chunks without detected speech before transcription. Adjust the RMS silence threshold separately: it measures signal level, while VAD estimates speech presence. A high RMS floor can reject quiet speech before VAD sees it. Start with the VAD defaults, compare a noise-only recording and a quiet-speech recording in Model tuning, and check both rejected chunks and retained speech before applying settings to a live profile. VAD reduces noise-triggered transcription but does not guarantee that all hallucinations disappear.
+
+The [Feature 01 VAD contract](../.scratch/new-speech-to-text/spec.md#voice-activity-detection) defines defaults, validation, and timing. Existing profiles keep VAD disabled until enabled explicitly. Save and restart a profile to apply changes; active/recovering runs keep their initial snapshot. Model tuning retains each trial's effective settings and reports RTF including VAD work, including a measured skip when VAD rejects a chunk. Model downloads and conversion do not fix these flow-specific settings into model weights.
+
 ## Local environment variables
 
 | Variable | Default | Purpose |

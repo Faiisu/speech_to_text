@@ -41,6 +41,7 @@ from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowUnavailableError,
     normalize_noise_filter,
     normalize_profile_decoding_options,
+    normalize_vad_options,
     prepare_audio_preprocessor,
     prepare_rtsp_configuration,
 )
@@ -106,6 +107,8 @@ def _clip_worker(
             transcription_options["model"] = model
         if _accepts_keyword_argument(transcribe_clip, "runtime"):
             transcription_options["runtime"] = selected_runtime
+        if _accepts_keyword_argument(transcribe_clip, "execution_mode"):
+            transcription_options["execution_mode"] = record.execution_mode or "shared"
         if audio_preprocessor is not None:
             if not _accepts_keyword_argument(transcribe_clip, "audio_preprocessor"):
                 raise WorkflowUnavailableError(
@@ -237,7 +240,9 @@ async def transcribe_clip(
     language: Literal["th", "en", "auto"] = Form(default="th"),
     model: str | None = Form(default=None),
     runtime_name: str | None = Form(default=None, alias="runtime"),
+    execution_mode: Literal["shared", "per_workflow_process"] = Form(default="shared"),
     silence_threshold: float | None = Form(default=None),
+    vad: str | None = Form(default=None),
     decoding_options: str | None = Form(default=None),
     noise_filter: str | None = Form(default=None),
 ):
@@ -245,6 +250,11 @@ async def transcribe_clip(
     runtime = request.app.state.backend_runtime
     forwarder = _resolve_clip_forwarder(runtime, destination_id)
     try:
+        if execution_mode == "per_workflow_process" and forwarder is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="per_workflow_process clip transcription does not support output destinations",
+            )
         if not file.filename or not file.filename.lower().endswith(".wav"):
             raise HTTPException(status_code=422, detail="file must be a WAV file")
         validated_keywords = validate_keywords(runtime.workflow_service, keywords)
@@ -300,6 +310,14 @@ async def transcribe_clip(
                 raise WorkflowConfigurationError(
                     "silence_threshold must be finite and in [0, 1)"
                 )
+            if vad is None:
+                submitted_vad = None
+            else:
+                try:
+                    submitted_vad = json.loads(vad)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    raise WorkflowConfigurationError("vad must be a JSON object") from exc
+            effective_vad = normalize_vad_options(submitted_vad)
             if noise_filter is None:
                 submitted_noise_filter = {}
             else:
@@ -350,6 +368,7 @@ async def transcribe_clip(
         language=language,
         silence_threshold=effective_silence_threshold,
         decoding_options=dict(effective_decoding_options),
+        vad=dict(effective_vad),
         noise_filter=(
             {**dict(audio_preprocessor.settings), "noise_sources": [dict(source) for source in audio_preprocessor.noise_sources]}
             if audio_preprocessor is not None and audio_preprocessor.noise_sources
@@ -359,6 +378,7 @@ async def transcribe_clip(
         audio_preprocessor=audio_preprocessor,
         model=effective_model,
         runtime=effective_runtime,
+        execution_mode=execution_mode,
         destination_id=destination_id,
         delivery={
             "status": "pending" if forwarder is not None else "disabled",
@@ -386,6 +406,7 @@ async def transcribe_clip(
                 "source_id": workflow_id,
                 "silence_threshold": effective_silence_threshold,
                 "decoding_options": dict(effective_decoding_options),
+                "vad": dict(effective_vad),
             }
             runtime.executor.submit(
                 _clip_worker,
@@ -412,6 +433,7 @@ async def transcribe_clip(
         "runtime": effective_runtime,
         "silence_threshold": effective_silence_threshold,
         "decoding_options": dict(effective_decoding_options),
+        "vad": dict(effective_vad),
         "noise_filter": run_snapshot(record)["noise_filter"],
     }
 
@@ -433,6 +455,8 @@ def start_microphone(request: Request, body: MicrophoneTranscriptionRequest):
         keywords=keywords,
         device=device,
         execution_mode=body.execution_mode,
+        silence_threshold=body.silence_threshold,
+        vad=body.vad,
         destination_id=body.destination_id,
         forwarder=forwarder,
         language=body.language,
@@ -460,6 +484,8 @@ def start_rtsp(request: Request, body: RTSPTranscriptionRequest):
         keywords=keywords,
         device=None,
         execution_mode=body.execution_mode,
+        silence_threshold=body.silence_threshold,
+        vad=body.vad,
         destination_id=body.destination_id,
         forwarder=forwarder,
         language=body.language,

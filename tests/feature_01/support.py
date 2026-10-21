@@ -109,7 +109,7 @@ def collect_until_completed(session, *, timeout=3):
         elif event["type"] == "measurement":
             assert {"completed_at", "pid", "sequence", "source_id", "audio_seconds",
                     "inference_seconds", "rtf", "status"} <= event.keys()
-            assert event["status"] in {"completed", "failed"}
+            assert event["status"] in {"completed", "failed", "skipped"}
         elif event["type"] == "transcript":
             assert isinstance(event["sequence"], int)
             assert isinstance(event["text"], str)

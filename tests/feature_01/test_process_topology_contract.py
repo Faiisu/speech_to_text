@@ -7,7 +7,7 @@ import time
 import pytest
 
 from .support import collect_until_completed, texts
-from queue import Empty
+from queue import Empty, Queue
 
 
 def test_multiprocess_device_argument_must_be_a_list_or_tuple(api):
@@ -91,6 +91,181 @@ def test_spawned_capture_and_model_processes_route_ordered_partial_chunks(api):
             [record["elapsed_seconds"] / record["audio_seconds"] for record in measurements]
         )
         assert events.index(measurements[-1]) < next(i for i, event in enumerate(events) if event["type"] == "completed")
+
+
+def test_vad_options_propagate_to_both_process_topologies_and_account_cost(api):
+    for topology in ("shared-model", "per-input-model"):
+        group = api.start_multiprocess_microphone_flows(
+            ["vad-process-test"],
+            model_config={},
+            flow_config={
+                "chunk_seconds": 0.1,
+                "silence_threshold": 0,
+                "vad": {"enabled": False, "threshold": 0.5},
+            },
+            flow_configs=[{"vad": {"enabled": True}}],
+            topology=topology,
+            runtime_factory=ProcessRuntimeFactory(),
+            audio_source_factory=ProcessAudioSource,
+        )
+        session, = group.sessions
+        try:
+            group.stop(timeout=15)
+            events = collect_until_completed(session, timeout=3)
+            measurements = [event for event in events if event["type"] == "measurement"]
+            assert measurements, (topology, events)
+            assert all(record["status"] == "skipped" for record in measurements)
+            assert all(record["skip_reason"] == "no_speech" for record in measurements)
+            assert all(record["inference_seconds"] >= 0 for record in measurements)
+            assert [record["audio_seconds"] for record in measurements] == pytest.approx([0.1, 0.025])
+            assert all(record["elapsed_seconds"] == pytest.approx(record["queue_wait_seconds"] + record["inference_seconds"]) for record in measurements)
+            assert all(record["rtf"] == pytest.approx(record["elapsed_seconds"] / record["audio_seconds"]) for record in measurements)
+            assert all(record["pid"] == session.process.pid for record in measurements)
+            telemetry = []
+            while True:
+                try:
+                    telemetry.append(group.telemetry_queue.get_nowait())
+                except Empty:
+                    break
+            assert len(telemetry) == len(measurements)
+            assert all(item["model_inference_seconds"] == 0 for item in telemetry)
+            assert texts(events) == []
+        finally:
+            if group._manager is not None:
+                group.stop(timeout=15)
+
+
+def test_shared_vad_failure_retires_accepted_work_before_terminal(api, monkeypatch):
+    topology_module = __import__(
+        "speech_to_text.features.model_deployment.process_topology",
+        fromlist=["_capture_chunks", "_BoundedFIFO"],
+    )
+    decisions = iter([True, RuntimeError("detector failed")])
+
+    def detect(_audio, _options):
+        result = next(decisions)
+        if isinstance(result, Exception):
+            raise result
+        return result, 0.01
+
+    monkeypatch.setattr(topology_module, "detect_speech", detect)
+
+    class TwoChunkSource:
+        sample_rate = 16000
+        channels = 1
+
+        def __init__(self, *, device, on_audio, on_error):
+            self.on_audio = on_audio
+            self.finished = False
+
+        def start(self):
+            self.on_audio(np.full(3200, 0.3, dtype=np.float32))
+            self.finished = True
+
+        def stop(self):
+            pass
+
+    flow = api.flow_config(
+        {"chunk_seconds": 0.1, "silence_threshold": 0, "vad": {"enabled": True}}
+    )
+    input_queue = topology_module._BoundedFIFO(4)
+    model_control, output, ready, telemetry = Queue(), Queue(), Queue(), Queue()
+    topology_module._capture_chunks(
+        None,
+        "vad-failure-source",
+        flow,
+        {"enqueue_timeout_seconds": 0.1},
+        input_queue,
+        Queue(),
+        model_control,
+        output,
+        ready,
+        telemetry,
+        "shared-model",
+        audio_source_factory=TwoChunkSource,
+    )
+    events = []
+    while not output.empty():
+        events.append(output.get_nowait())
+    assert input_queue.qsize() == 0
+    assert "vad-failure-source" in input_queue.retired
+    assert model_control.get_nowait() == ("retire", "vad-failure-source")
+    error, = [event for event in events if event["type"] == "error"]
+    completed, = [event for event in events if event["type"] == "completed"]
+    assert error["code"] == "VAD_FAILED"
+    assert error["discarded_queued_chunks"] == 1
+    assert completed["status"] == "failed"
+    assert [event["type"] for event in events].count("completed") == 1
+
+
+@pytest.mark.parametrize("policy", ["drop", "fail"])
+def test_full_shared_queue_applies_overload_policy_to_vad_skip(api, monkeypatch, policy):
+    topology_module = __import__(
+        "speech_to_text.features.model_deployment.process_topology",
+        fromlist=["_capture_chunks", "_BoundedFIFO"],
+    )
+    monkeypatch.setattr(topology_module, "detect_speech", lambda *_args: (False, 0.01))
+
+    class FullForSkipFIFO(topology_module._BoundedFIFO):
+        def put(self, item, timeout=None):
+            if item[0] == "skip":
+                from queue import Full
+
+                raise Full
+            return super().put(item, timeout)
+
+    class OneChunkSource:
+        sample_rate = 16000
+        channels = 1
+
+        def __init__(self, *, device, on_audio, on_error):
+            self.on_audio = on_audio
+            self.finished = False
+
+        def start(self):
+            self.on_audio(np.full(1600, 0.3, dtype=np.float32))
+            self.finished = True
+
+        def stop(self):
+            pass
+
+    flow = api.flow_config(
+        {
+            "chunk_seconds": 0.1,
+            "silence_threshold": 0,
+            "overload_policy": policy,
+            "vad": {"enabled": True},
+        }
+    )
+    input_queue = FullForSkipFIFO(4)
+    model_control, output, ready, telemetry = Queue(), Queue(), Queue(), Queue()
+    topology_module._capture_chunks(
+        None,
+        "vad-full-source",
+        flow,
+        {"enqueue_timeout_seconds": 0.1},
+        input_queue,
+        Queue(),
+        model_control,
+        output,
+        ready,
+        telemetry,
+        "shared-model",
+        audio_source_factory=OneChunkSource,
+    )
+    events = []
+    while not output.empty():
+        events.append(output.get_nowait())
+    measurements = [event for event in events if event["type"] == "measurement"]
+    errors = [event for event in events if event["type"] == "error"]
+    assert measurements == []
+    assert errors[0]["code"] == "INPUT_QUEUE_TIMEOUT"
+    assert errors[0]["fatal"] is (policy == "fail")
+    if policy == "fail":
+        assert [event["status"] for event in events if event["type"] == "completed"] == ["failed"]
+        assert model_control.get_nowait() == ("retire", "vad-full-source")
+    else:
+        assert input_queue.items[0][0] == "complete"
 
 
 def test_input_overflow_is_recoverable_in_both_process_topologies(api):

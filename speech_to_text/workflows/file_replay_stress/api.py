@@ -253,7 +253,13 @@ def _run_trial(
     errors = [event for event in source_events if event.get("type") == "error"]
     terminals = [event for event in source_events if event.get("type") == "completed"]
     failed_chunks = [
-        item for item in measured_chunks if item.get("status") != "completed"
+        item
+        for item in measured_chunks
+        if not (
+            item.get("status") == "skipped"
+            and item.get("skip_reason") == "no_speech"
+        )
+        and item.get("status") != "completed"
     ]
     dropped = sum(
         int(event.get("rejected_chunks", 0))

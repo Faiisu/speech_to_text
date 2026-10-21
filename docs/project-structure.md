@@ -133,6 +133,8 @@ Reusable host commands include `scripts/run_macos.sh` for the macOS development 
 
 When a task introduces a lasting folder category or changes ownership boundaries, update this document in the same change. For documentation topics, first update their existing authoritative document and link to it rather than copying its content here.
 
+The model-deployment feature owns the runtime-independent Silero speech gate and its validated per-flow configuration. Gate implementation and packaged-weight loading belong under `features/model_deployment/`; workflow/API/profile persistence and frontend controls retain their existing owners. The [VAD contract](../.scratch/new-speech-to-text/spec.md#voice-activity-detection) owns processing order and timing, including VAD cost in RTF.
+
 ## Package discovery
 
 The installable package is discovered from `speech_to_text*` by the configuration in `pyproject.toml`. New application Python packages belong under `speech_to_text/`; tests, docs, scripts, and local assets remain outside that package.

@@ -28,6 +28,7 @@ from .config import (
 )
 from .errors import AudioInputError, ConfigurationError, ModelLoadError
 from .measurements import publish_inference_measurement
+from .vad import detect_speech
 
 
 class _BoundedFIFO:
@@ -274,6 +275,80 @@ def _capture_chunks(
             ):
                 return True
             sequence += 1
+            vad_elapsed = 0.0
+            if flow["vad"]["enabled"]:
+                try:
+                    has_speech, vad_elapsed = detect_speech(chunk, flow["vad"])
+                except Exception as exc:
+                    if model_control is not None:
+                        discarded = input_queue.retire_source(source_id)
+                        model_control.put(("retire", source_id))
+                    else:
+                        discarded = 0
+                    _put_event(
+                        output_queue,
+                        "error",
+                        source_id,
+                        code="VAD_FAILED",
+                        message=str(exc),
+                        sequence=sequence,
+                        fatal=True,
+                        discarded_queued_chunks=discarded,
+                    )
+                    _put_event(
+                        output_queue,
+                        "completed",
+                        source_id,
+                        status="failed",
+                        last_sequence=sequence,
+                    )
+                    return False
+                if not has_speech:
+                    duration = len(chunk) / TARGET_RATE
+                    queued_at = time.perf_counter()
+                    try:
+                        input_queue.put(
+                            ("skip", source_id, sequence, duration, queued_at, vad_elapsed, os.getpid()),
+                            timeout=(
+                                0
+                                if flow["overload_policy"] == "drop"
+                                else model_config["enqueue_timeout_seconds"]
+                            ),
+                        )
+                    except Full:
+                        if flow["overload_policy"] == "drop":
+                            _put_event(
+                                output_queue,
+                                "error",
+                                source_id,
+                                code="INPUT_QUEUE_TIMEOUT",
+                                message="Shared inference queue is full; chunk was dropped",
+                                sequence=sequence,
+                                fatal=False,
+                            )
+                            return True
+                        discarded = input_queue.retire_source(source_id)
+                        model_control.put(("retire", source_id))
+                        _put_event(
+                            output_queue,
+                            "error",
+                            source_id,
+                            code="INPUT_QUEUE_TIMEOUT",
+                            message=f"Shared inference queue remained full for {model_config['enqueue_timeout_seconds']} seconds",
+                            sequence=sequence,
+                            fatal=True,
+                            rejected_chunks=1,
+                            discarded_queued_chunks=discarded,
+                        )
+                        _put_event(
+                            output_queue,
+                            "completed",
+                            source_id,
+                            status="failed",
+                            last_sequence=sequence,
+                        )
+                        return False
+                    return True
             if handle is not None:
                 if first_queued_at is None:
                     first_queued_at = (
@@ -296,7 +371,7 @@ def _capture_chunks(
                         transcript = handle._transcribe(chunk, flow)
                     except Exception as exc:
                         inference_error = exc
-                    inference_seconds = max(
+                    inference_seconds = vad_elapsed + max(
                         0.0, time.perf_counter() - inference_started
                     )
                 if inference_error is None:
@@ -338,6 +413,10 @@ def _capture_chunks(
                         "queue_wait_seconds": queue_wait,
                         "elapsed_seconds": queue_wait + inference_seconds,
                         "inference_seconds": inference_seconds,
+                        "model_inference_seconds": max(
+                            0.0, inference_seconds - vad_elapsed
+                        ),
+                        "vad_processing_seconds": vad_elapsed,
                         "chunk_duration_seconds": len(chunk) / TARGET_RATE,
                         "rtf": (queue_wait + inference_seconds)
                         / max(len(chunk) / TARGET_RATE, 1e-9),
@@ -348,7 +427,7 @@ def _capture_chunks(
                 return True
             try:
                 input_queue.put(
-                    ("chunk", source_id, sequence, chunk, flow, time.perf_counter()),
+                    ("chunk", source_id, sequence, chunk, flow, time.perf_counter(), vad_elapsed),
                     timeout=(
                         0
                         if flow["overload_policy"] == "drop"
@@ -626,8 +705,44 @@ def _shared_model_worker(
                 item = input_queue.get(timeout=0.05)
             except Empty:
                 continue
+            if item[0] == "skip":
+                _, source_id, sequence, duration, queued_at, vad_elapsed, vad_pid = item
+                if source_id in retired:
+                    continue
+                queue_wait = max(0.0, time.perf_counter() - queued_at)
+                record = publish_inference_measurement(
+                    None,
+                    operation="microphone-process-group",
+                    source_id=source_id,
+                    sequence=sequence,
+                    audio_seconds=duration,
+                    inference_seconds=vad_elapsed,
+                    queue_wait_seconds=queue_wait,
+                    status="skipped",
+                    skip_reason="no_speech",
+                )
+                record["pid"] = vad_pid
+                input_queue.publish_model_event(record)
+                telemetry_queue.put(
+                    {
+                        "source_id": source_id,
+                        "sequence": sequence,
+                        "queue_wait_seconds": queue_wait,
+                        "elapsed_seconds": queue_wait + vad_elapsed,
+                        "inference_seconds": vad_elapsed,
+                        "model_inference_seconds": 0.0,
+                        "vad_processing_seconds": vad_elapsed,
+                        "chunk_duration_seconds": duration,
+                        "rtf": (queue_wait + vad_elapsed) / max(duration, 1e-9),
+                        "status": "skipped",
+                        "skip_reason": "no_speech",
+                        "discarded_inflight": False,
+                        "pid": vad_pid,
+                    }
+                )
+                continue
             if item[0] == "chunk":
-                _, source_id, sequence, audio, flow, queued_at = item
+                _, source_id, sequence, audio, flow, queued_at, vad_elapsed = item
                 if source_id in retired:
                     continue
                 inference_error = None
@@ -640,7 +755,7 @@ def _shared_model_worker(
                         text = handle._transcribe(audio, flow)
                     except Exception as exc:
                         inference_error = exc
-                    inference_seconds = max(
+                    inference_seconds = vad_elapsed + max(
                         0.0, time.perf_counter() - inference_started
                     )
                 if inference_error is None:
@@ -665,6 +780,10 @@ def _shared_model_worker(
                             "queue_wait_seconds": max(0, inference_started - queued_at),
                             "elapsed_seconds": queue_wait + inference_seconds,
                             "inference_seconds": inference_seconds,
+                            "model_inference_seconds": max(
+                                0.0, inference_seconds - vad_elapsed
+                            ),
+                            "vad_processing_seconds": vad_elapsed,
                             "chunk_duration_seconds": duration,
                             "rtf": (queue_wait + inference_seconds)
                             / max(duration, 1e-9),
@@ -1040,10 +1159,12 @@ def start_multiprocess_microphone_flows(
             )
         if any(not isinstance(override, dict) for override in flow_configs):
             raise ConfigurationError("Each flow_configs entry must be a mapping")
-        per_source_flows = [
-            validate_flow_config({**common_flow, **override})
-            for override in flow_configs
-        ]
+        per_source_flows = []
+        for override in flow_configs:
+            merged = {**common_flow, **override}
+            if isinstance(override.get("vad"), dict):
+                merged["vad"] = {**common_flow["vad"], **override["vad"]}
+            per_source_flows.append(validate_flow_config(merged))
     source_ids = [
         flow.get("source_id") for flow in per_source_flows if flow.get("source_id")
     ]

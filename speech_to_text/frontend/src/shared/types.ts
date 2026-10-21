@@ -98,6 +98,12 @@ export type RuntimeChoice = {
 export type Language = 'th' | 'en' | 'auto'
 export const LANGUAGE_LABELS: Record<Language, string> = { th: 'Thai', en: 'English', auto: 'Auto detect' }
 
+export type VadConfig = {
+  enabled: boolean
+  threshold: number
+  min_speech_duration_ms: number
+}
+
 export type Profile = {
   profile_id: string
   name: string
@@ -110,6 +116,7 @@ export type Profile = {
   execution_mode: 'shared' | 'per_workflow_process'
   keywords: string[]
   silence_threshold: number
+  vad?: VadConfig
   model: string
   runtime: RuntimeChoice['key']
   language?: Language
@@ -135,6 +142,7 @@ export type Transcription = {
   device: string | null
   execution_mode: 'shared' | 'per_workflow_process' | null
   silence_threshold: number | null
+  vad?: VadConfig | null
   decoding_options: DecodingOptions | null
   noise_filter?: NoiseFilterConfig | null
   model: string | null
@@ -372,4 +380,4 @@ export type StressEvent = {
   [key: string]: unknown
 }
 
-export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options' | 'noise_filter'> & { source_type?: 'microphone' | 'rtsp'; rtsp_url?: string | null; rtsp_url_secret_ref?: string | null; rtsp_username?: string | null; rtsp_password?: string; language: Language; destination_id?: string | null }
+export type ProfileDefinition = Pick<Profile, 'name' | 'device' | 'execution_mode' | 'keywords' | 'silence_threshold' | 'model' | 'runtime' | 'decoding_options' | 'noise_filter'> & { source_type?: 'microphone' | 'rtsp'; rtsp_url?: string | null; rtsp_url_secret_ref?: string | null; rtsp_username?: string | null; rtsp_password?: string; language: Language; destination_id?: string | null; vad?: VadConfig }

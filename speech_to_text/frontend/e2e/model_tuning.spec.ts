@@ -16,6 +16,16 @@ function pcm16Wav(seconds = 1) {
 }
 
 test('records a reusable WAV and compares real clip API trials with immutable settings', async ({ page }) => {
+  const vadRequests: { enabled: boolean; threshold: number; min_speech_duration_ms: number }[] = []
+  await page.route('**/api/v1/transcriptions/clips', async route => {
+    const body = route.request().postDataBuffer()?.toString() ?? ''
+    expect(body).toContain('name="execution_mode"')
+    expect(body).toContain('per_workflow_process')
+    const vad = body.match(/name="vad"\r\n\r\n([^\r\n]+)/)
+    expect(vad).not.toBeNull()
+    vadRequests.push(JSON.parse(vad![1]))
+    await route.continue()
+  })
   await page.goto('/model-tuning')
   await expect(page.getByRole('heading', { name: 'Model tuning' })).toBeVisible()
   await expect(page.getByText('MODEL READY', { exact: true })).toBeVisible()
@@ -37,6 +47,9 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   await page.getByLabel('Keywords').fill('สวัสดี')
   await expect(page.getByLabel('Language')).toHaveValue('th')
   await page.getByLabel('Noise floor (RMS silence threshold)').fill('0.12')
+  await page.getByLabel('Enable voice activity detection (VAD)').check()
+  await page.getByLabel('Speech probability threshold').fill('0.63')
+  await page.getByLabel('Minimum speech duration (ms)').fill('420')
   await page.getByLabel('Beam size').fill('4')
   await page.getByLabel('Temperature').fill('0.2')
   await page.getByLabel('Condition on previous text').check()
@@ -45,16 +58,20 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   await page.getByRole('button', { name: /Run tuning trial/ }).click()
   const first = page.locator('.tuning-trial-card').first()
   await expect(first).toContainText('completed', { timeout: 10_000 })
-  await expect(first.locator('.trial-transcript')).toContainText('สวัสดีครับ')
+  await expect(first.locator('.trial-measurements')).toContainText('All audio chunks were skipped because VAD found no speech; no model inference ran.')
   await first.locator('details').locator('summary').click()
   await expect(first.locator('.trial-setting-values')).toContainText('beam size')
   await expect(first.locator('.trial-setting-values')).toContainText('4')
   await expect(first.locator('.trial-setting-values')).toContainText('0.12')
+  await expect(first.locator('.trial-setting-values')).toContainText('0.63')
+  await expect(first.locator('.trial-setting-values')).toContainText('420 ms')
   await expect(first.locator('.trial-result-grid')).toContainText('LATEST CHUNK RTF')
 
   await page.locator('.tuning-config-grid label').filter({ hasText: /^Runtime/ }).locator('select').selectOption('openvino-cpu')
   await page.getByLabel('Language').selectOption('en')
   await page.getByLabel('Noise floor (RMS silence threshold)').fill('0.07')
+  await page.getByLabel('Speech probability threshold').fill('0.82')
+  await page.getByLabel('Minimum speech duration (ms)').fill('600')
   await page.getByLabel('Beam size').fill('2')
   await page.getByRole('button', { name: /Run tuning trial/ }).click()
   await expect(page.locator('.tuning-trial-card').first()).toContainText('completed', { timeout: 10_000 })
@@ -62,18 +79,27 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   await second.locator('details').locator('summary').click()
   await expect(second.locator('.trial-setting-values')).toContainText('openvino-cpu')
   await expect(second.locator('.trial-setting-values')).toContainText('English')
-  await expect(second.locator('.trial-transcript')).toContainText('Hello there')
+  await expect(second.locator('.trial-measurements')).toContainText('All audio chunks were skipped because VAD found no speech; no model inference ran.')
   await expect(second.locator('.trial-setting-values')).toContainText('0.07')
   await expect(second.locator('.trial-setting-values')).toContainText('2')
+  await expect(second.locator('.trial-setting-values')).toContainText('0.82')
+  await expect(second.locator('.trial-setting-values')).toContainText('600 ms')
   await expect(page.locator('.tuning-trial-card').nth(1).locator('.trial-setting-values')).toContainText('turbo')
   await expect(page.locator('.tuning-trial-card').nth(1).locator('.trial-setting-values')).toContainText('Thai')
   await expect(page.locator('.tuning-trial-card').nth(1).locator('.trial-setting-values')).toContainText('4')
+  await expect(page.locator('.tuning-trial-card').nth(1).locator('.trial-setting-values')).toContainText('0.63')
+  await expect(page.locator('.tuning-trial-card').nth(1).locator('.trial-setting-values')).toContainText('420 ms')
 
   const clips = await page.request.get('/api/v1/transcriptions').then(response => response.json())
   const clipRuns = clips.transcriptions.filter((run: { kind: string }) => run.kind === 'clip')
   expect(clipRuns).toHaveLength(2)
-  expect(clipRuns[1]).toMatchObject({ model: 'turbo', runtime: 'openvino-gpu', language: 'th', silence_threshold: 0.12, keywords: ['สวัสดี'], decoding_options: { beam_size: 4, temperature: 0.2, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.3 } })
-  expect(clipRuns[0]).toMatchObject({ model: 'turbo', runtime: 'openvino-cpu', language: 'en', silence_threshold: 0.07, decoding_options: { beam_size: 2 } })
+  expect(clipRuns[1]).toMatchObject({ model: 'turbo', runtime: 'openvino-gpu', language: 'th', silence_threshold: 0.12, vad: { enabled: true, threshold: 0.63, min_speech_duration_ms: 420 }, keywords: ['สวัสดี'], decoding_options: { beam_size: 4, temperature: 0.2, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.3 } })
+  expect(clipRuns[0]).toMatchObject({ model: 'turbo', runtime: 'openvino-cpu', language: 'en', silence_threshold: 0.07, vad: { enabled: true, threshold: 0.82, min_speech_duration_ms: 600 }, decoding_options: { beam_size: 2 } })
+  expect(clipRuns.map((run: { execution_mode: string }) => run.execution_mode)).toEqual(['per_workflow_process', 'per_workflow_process'])
+  expect(vadRequests).toEqual([
+    { enabled: true, threshold: 0.63, min_speech_duration_ms: 420 },
+    { enabled: true, threshold: 0.82, min_speech_duration_ms: 600 },
+  ])
 })
 
 test('runs the microphone level diagnostic from Model tuning and stops it on navigation', async ({ page }) => {

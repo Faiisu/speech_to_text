@@ -20,6 +20,7 @@ from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowInputError,
     WorkflowUnavailableError,
     normalize_profile_decoding_options,
+    normalize_vad_options,
 )
 
 
@@ -73,6 +74,7 @@ def start_microphone_workflow(
     device,
     execution_mode,
     silence_threshold=None,
+    vad=None,
     model=None,
     selected_runtime=None,
     profile_id=None,
@@ -110,6 +112,7 @@ def start_microphone_workflow(
                 device=device,
                 execution_mode=execution_mode,
                 silence_threshold=silence_threshold,
+                vad=vad,
                 model=model,
                 selected_runtime=selected_runtime,
                 profile_id=profile_id,
@@ -133,6 +136,7 @@ def start_microphone_workflow(
         device=device,
         execution_mode=execution_mode,
         silence_threshold=silence_threshold,
+        vad=vad,
         model=model,
         selected_runtime=selected_runtime,
         profile_id=profile_id,
@@ -159,6 +163,7 @@ def _start_microphone_workflow(
     device,
     execution_mode,
     silence_threshold=None,
+    vad=None,
     model=None,
     selected_runtime=None,
     profile_id=None,
@@ -184,6 +189,10 @@ def _start_microphone_workflow(
     if effective_runtime is None:
         effective_runtime = getattr(runtime.workflow_service, "default_runtime", None)
     workflow_id = uuid.uuid4().hex
+    try:
+        effective_vad = normalize_vad_options(vad)
+    except WorkflowConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     record = RunRecord(
         workflow_id,
         "microphone",
@@ -206,6 +215,7 @@ def _start_microphone_workflow(
         decoding_options=deepcopy(
             normalize_profile_decoding_options(decoding_options)
         ),
+        vad=deepcopy(effective_vad),
         noise_filter=_noise_filter_snapshot(noise_filter, audio_preprocessor),
         audio_preprocessor=audio_preprocessor,
         destination_id=destination_id,
@@ -239,6 +249,7 @@ def _start_microphone_workflow(
             flow_config["silence_threshold"] = silence_threshold
         if decoding_options is not None:
             flow_config["decoding_options"] = deepcopy(record.decoding_options)
+        flow_config["vad"] = deepcopy(record.vad)
         start_options = {"execution_mode": execution_mode, "model": effective_model}
         if audio_source_factory is not None:
             if not _accepts_keyword_argument(
@@ -483,6 +494,7 @@ def _pump_microphone(runtime, record, workflow):
                 flow_config["silence_threshold"] = record.silence_threshold
             if record.profile_id is not None:
                 flow_config["decoding_options"] = deepcopy(record.decoding_options)
+            flow_config["vad"] = deepcopy(record.vad)
             start_options = {"execution_mode": record.execution_mode, "model": record.model}
             if record.audio_source_factory is not None:
                 start_options["audio_source_factory"] = record.audio_source_factory

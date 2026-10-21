@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import queue
 import multiprocessing
+import io
 import os
 import threading
 import time
 import unicodedata
+import wave
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -81,10 +83,10 @@ class FakeTranscriptionService:
 
     def transcribe_clip(
         self, clip, keywords, flow_config=None, *, model=None, runtime=None,
-        measurement_callback=None,
+        measurement_callback=None, execution_mode="shared",
     ):
         self.clip_calls.append(
-            (dict(flow_config or {}), model, runtime)
+            (dict(flow_config or {}), model, runtime, execution_mode)
         )
         self.transcription_started.set()
         if self.transcription_gate is not None:
@@ -267,7 +269,9 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
         ("language", (None, "en")),
         ("model", (None, "tiny")),
         ("runtime", (None, "ctranslate2")),
+        ("execution_mode", (None, "per_workflow_process")),
         ("silence_threshold", (None, "0.2")),
+        ("vad", (None, '{"enabled":true,"threshold":0.42,"min_speech_duration_ms":400}')),
         ("decoding_options", (None, '{"beam_size": 3}')),
         ("file", ("sample.wav", b"alpha alpha", "audio/wav")),
     ]
@@ -279,11 +283,18 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
     assert created.json()["model"] == "tiny"
     assert created.json()["runtime"] == "ctranslate2"
     assert created.json()["silence_threshold"] == 0.2
+    assert created.json()["vad"] == {
+        "enabled": True,
+        "threshold": 0.42,
+        "min_speech_duration_ms": 400,
+    }
     assert created.json()["decoding_options"]["beam_size"] == 3
     status = wait_for_status(client, workflow_id, "completed")
     assert status["model"] == "tiny"
     assert status["runtime"] == "ctranslate2"
+    assert status["execution_mode"] == "per_workflow_process"
     assert status["silence_threshold"] == 0.2
+    assert status["vad"] == created.json()["vad"]
     assert status["decoding_options"]["beam_size"] == 3
     assert service.clip_calls == [
         (
@@ -298,9 +309,15 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
                     "no_repeat_ngram_size": 3,
                     "repetition_penalty": 1.0,
                 },
+                "vad": {
+                    "enabled": True,
+                    "threshold": 0.42,
+                    "min_speech_duration_ms": 400,
+                },
             },
             "tiny",
             "ctranslate2",
+            "per_workflow_process",
         )
     ]
     assert status["language"] == "en"
@@ -412,6 +429,12 @@ def test_invalid_language_is_rejected_before_workflow_starts(api, kind):
     [
         {"silence_threshold": "1"},
         {"silence_threshold": "nan"},
+        {"vad": "[]"},
+        {"vad": '{"enabled":1}'},
+        {"vad": '{"threshold":true}'},
+        {"vad": '{"threshold":0}'},
+        {"vad": '{"min_speech_duration_ms":1.5}'},
+        {"vad": '{"extra":1}'},
         {"decoding_options": "[]"},
         {"decoding_options": '{"beam_size": true}'},
     ],
@@ -466,7 +489,8 @@ def test_microphone_can_start_and_stop_through_api(api):
 
     started = client.post(
         "/api/v1/transcriptions/microphones",
-        json={"keywords": ["alpha"], "device": "Studio Mic"},
+        json={"keywords": ["alpha"], "device": "Studio Mic", "silence_threshold": 0.2,
+              "vad": {"enabled": True}},
     )
 
     assert started.status_code == 202
@@ -477,6 +501,14 @@ def test_microphone_can_start_and_stop_through_api(api):
     assert service.microphone_workflow.stop_called.wait(timeout=1)
     status = wait_for_status(client, workflow_id, "stopped")
     assert status["kind"] == "microphone"
+    assert status["silence_threshold"] == 0.2
+    assert status["vad"] == {
+        "enabled": True,
+        "threshold": 0.5,
+        "min_speech_duration_ms": 250,
+    }
+    assert service.microphone_start_options[0][2]["silence_threshold"] == 0.2
+    assert service.microphone_start_options[0][2]["vad"] == status["vad"]
     event_types = [
         event["type"]
         for event in client.get(f"/api/v1/transcriptions/{workflow_id}/events").json()[
@@ -486,6 +518,75 @@ def test_microphone_can_start_and_stop_through_api(api):
     assert "started" in event_types
     assert "stopping" in event_types
     assert "completed" in event_types
+
+
+@pytest.mark.parametrize(
+    "vad",
+    [
+        {"enabled": 1},
+        {"threshold": True},
+        {"threshold": 1.0},
+        {"min_speech_duration_ms": False},
+        {"min_speech_duration_ms": 30001},
+        {"unknown": True},
+    ],
+)
+def test_microphone_rejects_invalid_vad_before_workflow_start(api, vad):
+    client, service = api
+    response = client.post(
+        "/api/v1/transcriptions/microphones",
+        json={"keywords": ["alpha"], "vad": vad},
+    )
+    assert response.status_code == 422
+    assert service.microphone_start_options == []
+
+
+def test_clip_vad_skip_reaches_api_rtf_and_measurement_snapshot(monkeypatch):
+    from speech_to_text.features.model_deployment import model as model_module
+
+    class Runtime:
+        def transcribe(self, *_args, **_kwargs):
+            pytest.fail("VAD rejected this chunk; inference must be skipped")
+
+        def close(self):
+            pass
+
+    service = TranscriptionService(runtime_factory=lambda _config: Runtime())
+    runtime = BackendRuntime(workflow_service=service)
+    client = TestClient(create_app(runtime=runtime))
+    monkeypatch.setattr(model_module, "detect_speech", lambda _samples, _options: (False, 0.025))
+    audio = io.BytesIO()
+    with wave.open(audio, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16000)
+        wav.writeframes(np.full(1600, 12000, dtype="<i2").tobytes())
+
+    with client:
+        created = client.post(
+            "/api/v1/transcriptions/clips",
+            files=[
+                ("keywords", (None, "alpha")),
+                ("vad", (None, '{"enabled":true}')),
+                ("file", ("speech.wav", audio.getvalue(), "audio/wav")),
+            ],
+        )
+        assert created.status_code == 202
+        status = wait_for_status(client, created.json()["workflow_id"], "completed")
+        assert status["transcript"] == ""
+        assert status["latest_rtf"] == pytest.approx(status["rtf_avg"])
+        assert status["rtf_count"] == 1
+        measurements = [
+            event
+            for event in client.get(
+                f"/api/v1/transcriptions/{status['workflow_id']}/events"
+            ).json()["events"]
+            if event["type"] == "measurement"
+        ]
+        assert len(measurements) == 1
+        assert measurements[0]["status"] == "skipped"
+        assert measurements[0]["skip_reason"] == "no_speech"
+        assert measurements[0]["rtf"] == pytest.approx(status["latest_rtf"])
 
 
 def test_failed_microphone_stop_does_not_leave_workflow_stopping(api):

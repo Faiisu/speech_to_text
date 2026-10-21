@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import multiprocessing as mp
 import os
 import threading
 from queue import Empty
@@ -12,15 +13,21 @@ from speech_to_text.features.model_deployment import (
     ConfigurationError,
     ModelLoadError,
     RTSPCaptureUnavailableError,
+    VADUnavailableError,
     list_available_models,
     load_model,
     normalize_decoding_options,
+    normalize_vad_options as normalize_feature_vad_options,
     start_multiprocess_microphone_flows,
     create_rtsp_secret_source_factory,
     normalize_rtsp_source,
     RTSPSourceConfiguration,
 )
-from speech_to_text.features.word_matching import WordMatchingConfig, WordMatchingError
+from speech_to_text.features.word_matching import (
+    KeywordMatch,
+    WordMatchingConfig,
+    WordMatchingError,
+)
 
 from .api import (
     forward_session,
@@ -44,6 +51,51 @@ class WorkflowInputError(WorkflowServiceError):
 
 class WorkflowUnavailableError(WorkflowServiceError):
     """A model or host audio dependency is unavailable."""
+
+
+def _isolated_clip_worker(
+    result_queue,
+    clip,
+    keywords,
+    flow_config,
+    model_config,
+    audio_preprocessor,
+    runtime_factory,
+):
+    service = TranscriptionService(
+        model_config=model_config, runtime_factory=runtime_factory
+    )
+
+    def record_measurement(measurement):
+        result_queue.put(("measurement", measurement))
+
+    try:
+        result = service.transcribe_clip(
+            clip,
+            keywords,
+            flow_config,
+            measurement_callback=record_measurement,
+            audio_preprocessor=audio_preprocessor,
+        )
+        outcome = {
+            "ok": True,
+            "transcript": result.transcript,
+            "matches": [
+                {"keyword": item.keyword, "count": item.count}
+                for item in result.matches
+            ],
+            "source_id": result.source_id,
+            "latest_rtf": result.latest_rtf,
+        }
+    except Exception as exc:
+        outcome = {"ok": False, "error": (type(exc).__name__, str(exc))}
+    finally:
+        try:
+            service.close()
+        except Exception as exc:
+            if "outcome" not in locals() or outcome.get("ok"):
+                outcome = {"ok": False, "error": (type(exc).__name__, str(exc))}
+    result_queue.put(("result", outcome))
 
 
 def prepare_rtsp_configuration(rtsp_url=None, rtsp_url_secret_ref=None, rtsp_username=None, rtsp_password=None):
@@ -85,6 +137,14 @@ def normalize_profile_decoding_options(options=None):
     """Validate and default saved profile decoding settings at the workflow boundary."""
     try:
         return normalize_decoding_options(options)
+    except ConfigurationError as exc:
+        raise WorkflowConfigurationError(str(exc)) from exc
+
+
+def normalize_vad_options(value=None):
+    """Validate and complete VAD settings at the workflow boundary."""
+    try:
+        return normalize_feature_vad_options(value)
     except ConfigurationError as exc:
         raise WorkflowConfigurationError(str(exc)) from exc
 
@@ -145,8 +205,9 @@ class _ModelLease:
 class TranscriptionService:
     """Lazily own one model handle for clip and microphone workflows."""
 
-    def __init__(self, model_config=None):
+    def __init__(self, model_config=None, *, runtime_factory=None):
         self._model_config = None if model_config is None else dict(model_config)
+        self._runtime_factory = runtime_factory
         self._model_handle = None
         self._model_handles = {}
         self._model_users = {}
@@ -158,6 +219,7 @@ class TranscriptionService:
         self._microphone_start_lock = threading.Lock()
         self._process_groups_lock = threading.Lock()
         self._process_groups = set()
+        self._isolated_processes = set()
         self._shared_workflows_lock = threading.Lock()
         self._shared_workflows = set()
 
@@ -259,7 +321,11 @@ class TranscriptionService:
             handle = self._model_handles.get(cache_key)
             if handle is None:
                 try:
-                    handle = load_model(config)
+                    handle = (
+                        load_model(config)
+                        if self._runtime_factory is None
+                        else load_model(config, runtime_factory=self._runtime_factory)
+                    )
                 except ConfigurationError as exc:
                     raise WorkflowConfigurationError(str(exc)) from exc
                 except ModelLoadError as exc:
@@ -416,10 +482,25 @@ class TranscriptionService:
         measurement_callback=None,
         forwarder=None,
         audio_preprocessor=None,
+        execution_mode="shared",
     ):
         """Transcribe and match one clip, with optional configured output."""
         flow_config = {} if flow_config is None else dict(flow_config)
+        flow_config["vad"] = normalize_vad_options(flow_config.get("vad"))
         matching = self._matching_config(keywords, flow_config.get("language", "th"))
+        if execution_mode not in ("shared", "per_workflow_process"):
+            raise WorkflowConfigurationError(
+                "execution_mode must be 'shared' or 'per_workflow_process'"
+            )
+        if execution_mode == "per_workflow_process":
+            if forwarder is not None:
+                raise WorkflowConfigurationError(
+                    "per_workflow_process clip transcription does not support output destinations"
+                )
+            return self._transcribe_clip_in_process(
+                clip, matching, flow_config, model, runtime, audio_preprocessor,
+                measurement_callback,
+            )
         try:
             lease = self._acquire_model_config(
                 self._effective_model_config(model, runtime)
@@ -441,11 +522,91 @@ class TranscriptionService:
             raise WorkflowConfigurationError(str(exc)) from exc
         except AudioInputError as exc:
             raise WorkflowInputError(str(exc)) from exc
+        except VADUnavailableError as exc:
+            raise WorkflowUnavailableError(str(exc)) from exc
         except ModelLoadError as exc:
             raise WorkflowUnavailableError(str(exc)) from exc
         finally:
             if "lease" in locals():
                 lease.release()
+
+    def _transcribe_clip_in_process(
+        self, clip, matching, flow_config, model, runtime, audio_preprocessor,
+        measurement_callback,
+    ):
+        from .api import PipelineResult
+
+        context = mp.get_context("spawn")
+        with self._model_users_changed:
+            if self._closing:
+                raise WorkflowUnavailableError("Transcription service is closing")
+            result_queue = context.Queue()
+            process = context.Process(
+                target=_isolated_clip_worker,
+                args=(
+                    result_queue,
+                    clip,
+                    matching.keywords,
+                    flow_config,
+                    self._effective_model_config(model, runtime),
+                    audio_preprocessor,
+                    self._runtime_factory,
+                ),
+                name=f"stt-clip-{flow_config.get('source_id', 'trial')}",
+            )
+            self._isolated_processes.add(process)
+        try:
+            process.start()
+            outcome = None
+            while outcome is None:
+                try:
+                    message_type, message = result_queue.get(timeout=0.1)
+                except Empty:
+                    if not process.is_alive():
+                        break
+                    continue
+                if message_type == "measurement":
+                    if measurement_callback is not None:
+                        measurement_callback(message)
+                else:
+                    outcome = message
+            process.join()
+            if process.exitcode != 0:
+                raise WorkflowUnavailableError(
+                    f"Isolated transcription process exited with code {process.exitcode}"
+                )
+            if outcome is None:
+                raise WorkflowUnavailableError(
+                    "Isolated transcription process exited without a result"
+                )
+            if not outcome["ok"]:
+                error_type, message = outcome["error"]
+                error_class = {
+                    "WorkflowConfigurationError": WorkflowConfigurationError,
+                    "WorkflowInputError": WorkflowInputError,
+                    "WorkflowUnavailableError": WorkflowUnavailableError,
+                }.get(error_type, WorkflowUnavailableError)
+                raise error_class(message)
+            matches = tuple(KeywordMatch(**item) for item in outcome["matches"])
+            return PipelineResult(
+                outcome["transcript"],
+                matches,
+                outcome["source_id"],
+                None,
+                None,
+                outcome["latest_rtf"],
+            )
+        finally:
+            if process.pid is not None:
+                if process.is_alive():
+                    process.terminate()
+                process.join()
+                process.close()
+            result_queue.close()
+            result_queue.join_thread()
+            with self._model_users_changed:
+                self._isolated_processes.discard(process)
+                self._model_users_changed.notify_all()
 
     @staticmethod
     def _audio_error(exc):
@@ -472,6 +633,7 @@ class TranscriptionService:
     ):
         """Start one microphone workflow in shared or child-process mode."""
         flow_config = {} if flow_config is None else dict(flow_config)
+        flow_config["vad"] = normalize_vad_options(flow_config.get("vad"))
         matching = self._matching_config(keywords, flow_config.get("language", "th"))
         if execution_mode not in ("shared", "per_workflow_process"):
             raise WorkflowConfigurationError(
@@ -627,7 +789,11 @@ class TranscriptionService:
                 with self._process_groups_lock:
                     self._process_groups.discard(owner)
         with self._model_users_changed:
-            while any(self._model_users.values()) or self._models_closing:
+            while (
+                any(self._model_users.values())
+                or self._models_closing
+                or self._isolated_processes
+            ):
                 self._model_users_changed.wait()
             handles = tuple(self._model_handles.values())
             self._model_handles.clear()

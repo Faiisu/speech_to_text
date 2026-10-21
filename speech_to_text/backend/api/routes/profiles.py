@@ -25,6 +25,7 @@ from speech_to_text.workflows.transcribe_match_forward import (
     WorkflowUnavailableError,
     normalize_noise_filter,
     normalize_profile_decoding_options,
+    normalize_vad_options,
     prepare_audio_preprocessor,
     prepare_rtsp_source,
     prepare_rtsp_configuration,
@@ -79,6 +80,9 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     try:
         noise_filter = normalize_noise_filter(body.noise_filter)
+        vad = normalize_vad_options(body.vad)
+    except WorkflowConfigurationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     destination_id = body.destination_id
@@ -113,6 +117,7 @@ def _profile_data(request: Request, body: MicrophoneProfileDefinition):
         "language": body.language,
         "decoding_options": decoding_options,
         "noise_filter": noise_filter,
+        "vad": vad,
     }
 
 
@@ -256,6 +261,7 @@ def _start_profile_run_from_snapshot(request: Request, profile: dict, keywords):
         destination_id=destination_id,
         forwarder=forwarder,
         decoding_options=profile.get("decoding_options"),
+        vad=profile.get("vad"),
         language=profile.get("language", "th"),
         source_type=profile.get("source_type", "microphone"),
         rtsp_url=profile.get("rtsp_url"),

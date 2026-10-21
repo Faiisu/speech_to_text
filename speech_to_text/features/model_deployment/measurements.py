@@ -14,6 +14,7 @@ def inference_measurement(
     queue_wait_seconds=0.0,
     status="completed",
     error=None,
+    skip_reason=None,
     clock=None,
 ):
     """Build one UTC-stamped RTF record for an inferred audio chunk."""
@@ -24,7 +25,7 @@ def inference_measurement(
     inference_seconds = float(inference_seconds)
     queue_wait_seconds = max(0.0, float(queue_wait_seconds))
     elapsed_seconds = queue_wait_seconds + inference_seconds
-    return {
+    record = {
         "type": "measurement",
         "feature_id": "feature-01-model-deployment",
         "operation": operation,
@@ -40,6 +41,9 @@ def inference_measurement(
         "status": status,
         "error": str(error) if error is not None else None,
     }
+    if skip_reason is not None:
+        record["skip_reason"] = skip_reason
+    return record
 
 
 def publish_inference_measurement(
@@ -53,6 +57,7 @@ def publish_inference_measurement(
     queue_wait_seconds=0.0,
     status="completed",
     error=None,
+    skip_reason=None,
     clock=None,
 ):
     """Build and best-effort invoke the optional measurement callback."""
@@ -65,6 +70,7 @@ def publish_inference_measurement(
         queue_wait_seconds=queue_wait_seconds,
         status=status,
         error=error,
+        skip_reason=skip_reason,
         clock=clock,
     )
     if sink is not None:

@@ -25,6 +25,7 @@ from .errors import (
     ModelLoadError,
 )
 from .measurements import publish_inference_measurement
+from .vad import detect_speech
 from .runtime import create_runtime
 
 
@@ -224,30 +225,53 @@ def transcribe_clip(
     transcripts = []
     source_id = source_id or uuid.uuid4().hex
     monotonic_clock = monotonic_clock or time.perf_counter
-    inferred_chunks = []
-    for sequence, start in enumerate(range(0, audio.size, frame_count)):
-        chunk = preprocess_chunk(audio[start : start + frame_count], audio_preprocessor)
-        if (
-            chunk.size
-            and float((chunk * chunk).mean() ** 0.5) >= flow["silence_threshold"]
-        ):
-            inferred_chunks.append((sequence, chunk))
-    if not inferred_chunks:
-        return ""
-
-    # Keep a clip's inferred chunks contiguous when other sessions share this handle.
-    queued_at = monotonic_clock()
-    with model_handle._inference_lock:
-        model_handle._check()
-        for index, (sequence, chunk) in enumerate(inferred_chunks):
-            inference_started = monotonic_clock()
-            queue_wait = (
-                max(0.0, inference_started - queued_at) if index == 0 else 0.0
+    inference_lock_held = False
+    first_inference = True
+    first_queue_wait = 0.0
+    try:
+        for sequence, start in enumerate(range(0, audio.size, frame_count)):
+            chunk = preprocess_chunk(
+                audio[start : start + frame_count], audio_preprocessor
             )
+            if (
+                not chunk.size
+                or float((chunk * chunk).mean() ** 0.5) < flow["silence_threshold"]
+            ):
+                continue
+            vad_elapsed = 0.0
+            if flow["vad"]["enabled"]:
+                has_speech, vad_elapsed = detect_speech(chunk, flow["vad"])
+                if not has_speech:
+                    publish_inference_measurement(
+                        measurement_sink,
+                        operation="finite-clip",
+                        source_id=source_id,
+                        sequence=sequence,
+                        audio_seconds=len(chunk) / TARGET_RATE,
+                        inference_seconds=vad_elapsed,
+                        status="skipped",
+                        skip_reason="no_speech",
+                        clock=measurement_clock,
+                    )
+                    continue
+            if not inference_lock_held:
+                queued_at = monotonic_clock()
+                model_handle._inference_lock.acquire()
+                inference_lock_held = True
+                model_handle._check()
+                inference_started = monotonic_clock()
+                first_queue_wait = max(0.0, inference_started - queued_at)
+            else:
+                inference_started = monotonic_clock()
+            queue_wait = first_queue_wait if first_inference else 0.0
+            first_inference = False
+            # Keep all inferred chunks from this clip contiguous on a shared handle.
             try:
                 text = model_handle._transcribe(chunk, flow)
             except Exception as exc:  # noqa: BLE001
-                inference_elapsed = max(0.0, monotonic_clock() - inference_started)
+                inference_elapsed = vad_elapsed + max(
+                    0.0, monotonic_clock() - inference_started
+                )
                 publish_inference_measurement(
                     measurement_sink,
                     operation="finite-clip",
@@ -266,7 +290,9 @@ def transcribe_clip(
                     stacklevel=2,
                 )
                 continue
-            inference_elapsed = max(0.0, monotonic_clock() - inference_started)
+            inference_elapsed = vad_elapsed + max(
+                0.0, monotonic_clock() - inference_started
+            )
             publish_inference_measurement(
                 measurement_sink,
                 operation="finite-clip",
@@ -280,4 +306,7 @@ def transcribe_clip(
             text = str(text).strip()
             if text:
                 transcripts.append(text)
+    finally:
+        if inference_lock_held:
+            model_handle._inference_lock.release()
     return " ".join(transcripts)

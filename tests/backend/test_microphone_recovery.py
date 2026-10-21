@@ -349,7 +349,8 @@ def test_stop_during_backoff_is_idempotent_and_prevents_restart():
         assert len(service.starts) == 1
 
 
-def test_profile_run_remains_deduplicated_during_recovery(tmp_path):
+@pytest.mark.parametrize("execution_mode", ["shared", "per_workflow_process"])
+def test_profile_run_remains_deduplicated_during_recovery(tmp_path, execution_mode):
     service = _RecoveryService()
     store = SQLiteProfileStore(tmp_path / "profiles.sqlite3")
     _runtime, client = _run_api(
@@ -364,12 +365,13 @@ def test_profile_run_remains_deduplicated_during_recovery(tmp_path):
             json={
                 "name": "Studio",
                 "device": "Studio Mic",
-                "execution_mode": "shared",
+                "execution_mode": execution_mode,
                 "model": "turbo",
                 "runtime": "openvino-cpu",
                 "keywords": ["ไทย"],
                 "silence_threshold": 0,
                 "decoding_options": {"beam_size": 2},
+                "vad": {"enabled": True, "threshold": 0.31},
             },
         )
         assert profile.status_code == 201, profile.text
@@ -382,21 +384,29 @@ def test_profile_run_remains_deduplicated_during_recovery(tmp_path):
             json={
                 "name": "Studio",
                 "device": "Studio Mic",
-                "execution_mode": "shared",
+                "execution_mode": "per_workflow_process" if execution_mode == "shared" else "shared",
                 "model": "turbo",
                 "runtime": "openvino-cpu",
                 "keywords": ["ไทย"],
                 "silence_threshold": 0,
                 "decoding_options": {"beam_size": 8},
+                "vad": {"enabled": False, "threshold": 0.77},
             },
         )
         assert edited.status_code == 200
         _wait_until(lambda: len(service.starts) == 2)
         assert service.starts[0]["decoding_options"]["beam_size"] == 2
         assert service.starts[1]["decoding_options"]["beam_size"] == 2
+        assert service.starts[0]["vad"] == {
+            "enabled": True, "threshold": 0.31, "min_speech_duration_ms": 250
+        }
+        assert service.starts[1]["vad"] == service.starts[0]["vad"]
+        assert service.options[0]["execution_mode"] == execution_mode
+        assert service.options[1]["execution_mode"] == execution_mode
         assert client.get(f"/api/v1/transcriptions/{workflow_id}").json()[
             "decoding_options"
         ]["beam_size"] == 2
+        assert client.get(f"/api/v1/transcriptions/{workflow_id}").json()["vad"] == service.starts[0]["vad"]
         repeated = client.post(run_url)
         assert repeated.json()["workflow_id"] == workflow_id
         assert len(service.starts) == 2

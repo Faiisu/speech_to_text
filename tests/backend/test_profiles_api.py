@@ -155,6 +155,11 @@ def test_profiles_can_be_created_listed_replaced_and_deleted(api):
     assert profile["execution_mode"] == "per_workflow_process"
     assert profile["keywords"] == ["สวัสดี", "ขอบคุณ"]
     assert profile["silence_threshold"] == 0.0
+    assert profile["vad"] == {
+        "enabled": False,
+        "threshold": 0.5,
+        "min_speech_duration_ms": 250,
+    }
     assert profile["model"] == "turbo"
     assert profile["runtime"] == "openvino-gpu"
     assert profile["decoding_options"] == {
@@ -375,6 +380,11 @@ def test_profile_list_is_alphabetical(api):
         profile_body(silence_threshold=1),
         profile_body(silence_threshold=False),
         profile_body(silence_threshold="NaN"),
+        profile_body(vad={"enabled": 1}),
+        profile_body(vad={"threshold": True}),
+        profile_body(vad={"threshold": 1.0}),
+        profile_body(vad={"min_speech_duration_ms": False}),
+        profile_body(vad={"unexpected": True}),
         profile_body(model="unknown-model"),
         profile_body(runtime="runtime-typo"),
         profile_body(model="small", runtime="unsupported-model-runtime"),
@@ -404,6 +414,27 @@ def test_profile_update_rejects_out_of_range_silence_threshold(api):
     assert (
         client.get(f"/api/v1/profiles/{profile['profile_id']}").json() == profile
     )
+
+
+def test_profile_vad_survives_store_reopen(tmp_path):
+    database_path = tmp_path / "profiles.sqlite3"
+    store = SQLiteProfileStore(database_path)
+    profile = profile_body(vad={"enabled": True, "threshold": 0.37})
+    profile.update(profile_id="vad-profile", silence_threshold=0.14, model="turbo", runtime="openvino-gpu")
+    created = store.create_profile(profile)
+    store.close()
+
+    reopened = SQLiteProfileStore(database_path)
+    loaded = reopened.get_profile("vad-profile")
+    reopened.close()
+
+    assert loaded["vad"] == {
+        "enabled": True,
+        "threshold": 0.37,
+        "min_speech_duration_ms": 250,
+    }
+    assert loaded["silence_threshold"] == 0.14
+    assert created["vad"] == loaded["vad"]
 
 
 @pytest.mark.parametrize(
@@ -547,6 +578,7 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
                 "condition_on_previous_text": True,
                 "no_repeat_ngram_size": 5, "repetition_penalty": 1.2,
             },
+            vad={"enabled": True, "threshold": 0.3, "min_speech_duration_ms": 500},
         )
     )
     assert created.status_code == 201
@@ -571,6 +603,11 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
             "no_repeat_ngram_size": 5,
             "repetition_penalty": 1.2,
         },
+        "vad": {
+            "enabled": True,
+            "threshold": 0.3,
+            "min_speech_duration_ms": 500,
+        },
     }
     assert service.microphone_start_options[0][3] == execution_mode
     assert service.microphone_start_options[0][4] == "small"
@@ -578,6 +615,7 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
     assert client.get(f"/api/v1/transcriptions/{run['workflow_id']}").json()[
         "decoding_options"
     ] == profile["decoding_options"]
+    assert client.get(f"/api/v1/transcriptions/{run['workflow_id']}").json()["vad"] == profile["vad"]
     assert client.get(f"/api/v1/transcriptions/{run['workflow_id']}").json()["language"] == "en"
 
     edited = client.put(
@@ -619,6 +657,7 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
     assert transcription["language"] == "en"
     assert transcription["silence_threshold"] == profile["silence_threshold"]
     assert transcription["decoding_options"] == profile["decoding_options"]
+    assert transcription["vad"] == profile["vad"]
     assert transcription["model"] == "small"
     assert transcription["runtime"] == "ctranslate2"
 
@@ -728,6 +767,7 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
     assert columns.count("model") == 1
     assert columns.count("decoding_options_json") == 1
     assert columns.count("noise_filter_json") == 1
+    assert columns.count("vad_json") == 1
     assert columns.count("language") == 1
     assert columns.count("source_type") == 1
     assert columns.count("rtsp_url") == 1
@@ -746,6 +786,11 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
     assert profiles[0]["created_at"] == "2026-01-01T00:00:00Z"
     assert profiles[0]["updated_at"] == "2026-01-01T00:00:00Z"
     assert profiles[0]["silence_threshold"] == 0.0
+    assert profiles[0]["vad"] == {
+        "enabled": False,
+        "threshold": 0.5,
+        "min_speech_duration_ms": 250,
+    }
     assert profiles[0]["model"] == "small"
     assert profiles[0]["runtime"] == "openvino-cpu"
     assert profiles[0]["language"] == "th"

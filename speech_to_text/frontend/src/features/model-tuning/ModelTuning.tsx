@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiRequestError, api } from '../../shared/api'
-import { LANGUAGE_LABELS, type DecodingOptions, type Language, type Microphone, type MicrophoneTest, type ModelChoice, type Recording, type RuntimeChoice, type Transcription } from '../../shared/types'
+import { LANGUAGE_LABELS, type DecodingOptions, type Language, type Microphone, type MicrophoneTest, type ModelChoice, type Recording, type RuntimeChoice, type Transcription, type VadConfig } from '../../shared/types'
 
 type Settings = {
   model: string
   runtime: RuntimeChoice['key']
   language: Language
   silence_threshold: number
+  vad: VadConfig
   keywords: string[]
   decoding_options: DecodingOptions
 }
@@ -30,6 +31,7 @@ type ChunkMeasurement = {
   inference_seconds: number
   rtf: number | null
   status: string
+  skip_reason?: string | null
   error?: string | null
 }
 
@@ -62,6 +64,9 @@ export default function ModelTuning() {
   const [runtime, setRuntime] = useState<RuntimeChoice['key'] | ''>('')
   const [language, setLanguage] = useState<Language>('th')
   const [silenceThreshold, setSilenceThreshold] = useState('0')
+  const [vadEnabled, setVadEnabled] = useState(false)
+  const [vadThreshold, setVadThreshold] = useState('0.5')
+  const [minSpeechDuration, setMinSpeechDuration] = useState('250')
   const [beamSize, setBeamSize] = useState('1')
   const [temperature, setTemperature] = useState('0')
   const [conditionOnPreviousText, setConditionOnPreviousText] = useState(false)
@@ -287,12 +292,16 @@ export default function ModelTuning() {
     if (!selectedRecording || !hasAudio(selectedRecording)) return
     const words = keywords.split(/[\n,]/).map(word => word.trim()).filter(Boolean)
     const threshold = Number(silenceThreshold)
+    const speechThreshold = Number(vadThreshold)
+    const minimumSpeech = Number(minSpeechDuration)
     const beam = Number(beamSize), temp = Number(temperature), noRepeat = Number(noRepeatNgramSize), penalty = Number(repetitionPenalty)
     if (!words.length || new Set(words).size !== words.length) { setError('Enter at least one unique keyword.'); return }
     if (!Number.isFinite(threshold) || threshold < 0 || threshold >= 1) { setError('Noise floor must be at least 0 and less than 1.'); return }
+    if (!Number.isFinite(speechThreshold) || speechThreshold <= 0 || speechThreshold >= 1) { setError('Speech probability threshold must be greater than 0 and less than 1.'); return }
+    if (!Number.isInteger(minimumSpeech) || minimumSpeech < 0 || minimumSpeech > 30000) { setError('Minimum speech duration must be an integer from 0 to 30000 ms.'); return }
     if (!Number.isInteger(beam) || beam < 1 || beam > 10 || !Number.isFinite(temp) || temp < 0 || temp > 1 || !Number.isInteger(noRepeat) || noRepeat < 0 || noRepeat > 20 || !Number.isFinite(penalty) || penalty < 1 || penalty > 2) { setError('Check the decoding settings and their allowed ranges.'); return }
     if (!selectedModel || !selectedRuntime?.compatible) { setError('Choose a model and compatible runtime.'); return }
-    const settings: Settings = { model, runtime: runtime as RuntimeChoice['key'], language, silence_threshold: threshold, keywords: words, decoding_options: { beam_size: beam, temperature: temp, condition_on_previous_text: conditionOnPreviousText, no_repeat_ngram_size: noRepeat, repetition_penalty: penalty } }
+    const settings: Settings = { model, runtime: runtime as RuntimeChoice['key'], language, silence_threshold: threshold, vad: { enabled: vadEnabled, threshold: speechThreshold, min_speech_duration_ms: minimumSpeech }, keywords: words, decoding_options: { beam_size: beam, temperature: temp, condition_on_previous_text: conditionOnPreviousText, no_repeat_ngram_size: noRepeat, repetition_penalty: penalty } }
     setTuningBusy(true); setError('')
     try {
       const blob = await api.recordingAudio(selectedRecording.recording_id)
@@ -302,8 +311,10 @@ export default function ModelTuning() {
       words.forEach(word => form.append('keywords', word))
       form.append('model', settings.model)
       form.append('runtime', settings.runtime)
+      form.append('execution_mode', 'per_workflow_process')
       form.append('language', settings.language)
       form.append('silence_threshold', String(settings.silence_threshold))
+      form.append('vad', JSON.stringify(settings.vad))
       form.append('decoding_options', JSON.stringify(settings.decoding_options))
       const started = await api.transcribeClip(form)
       const sourceLabel = selectedRecording.source === 'rtsp' ? 'IPCAM (RTSP) · ' : ''
@@ -383,6 +394,9 @@ export default function ModelTuning() {
         <label>Model<select value={model} onChange={event => { const next = models.find(item => item.key === event.target.value); setModel(event.target.value); if (!next?.runtimes.some(item => item.key === runtime && item.compatible)) setRuntime((next?.runtimes.find(item => item.compatible)?.key ?? 'openvino-gpu') as RuntimeChoice['key']) }}>{models.map(item => <option key={item.key} value={item.key}>{item.display_name} ({item.key}){!item.installed ? ' · not installed' : !item.ready ? ' · unavailable' : ''}</option>)}</select><small>{selectedModel?.ready ? 'Installed and available on this host.' : selectedModel?.installed ? 'Model is installed; a compatible runtime may be unavailable.' : 'Model is not installed on this host.'}</small></label>
         <label>Runtime<select value={runtime} onChange={event => setRuntime(event.target.value as RuntimeChoice['key'])}>{runtimes.map(item => <option key={item.key} value={item.key} disabled={!item.compatible}>{item.key}{!item.compatible ? ' · incompatible' : !item.ready ? ' · unavailable' : ' · ready'}</option>)}</select><small>{selectedRuntime?.reason || 'Choose a runtime supported by the selected model.'}</small></label>
         <label>Noise floor (RMS silence threshold)<input type="number" min="0" max="0.999999" step="any" value={silenceThreshold} onChange={event => setSilenceThreshold(event.target.value)} /><small>0 disables silence filtering. Range: 0 to less than 1.</small></label>
+        <label className="tuning-check"><input type="checkbox" checked={vadEnabled} onChange={event => setVadEnabled(event.target.checked)} />Enable voice activity detection (VAD)<small>Default: off.</small></label>
+        <label>Speech probability threshold<input type="number" min="0.000001" max="0.999999" step="any" value={vadThreshold} onChange={event => setVadThreshold(event.target.value)} /><small>VAD estimates speech probability; RMS only measures signal energy.</small></label>
+        <label>Minimum speech duration (ms)<input type="number" min="0" max="30000" step="1" value={minSpeechDuration} onChange={event => setMinSpeechDuration(event.target.value)} /><small>Default: 250 ms. Range: 0 to 30000.</small></label>
         <label>Beam size<input type="number" min="1" max="10" step="1" value={beamSize} onChange={event => setBeamSize(event.target.value)} /><small>Search width, 1 to 10. Default: 1.</small></label>
         <label>Temperature<input type="number" min="0" max="1" step="any" value={temperature} onChange={event => setTemperature(event.target.value)} /><small>Variation from 0 to 1. Default: 0.</small></label>
         <label>No-repeat n-gram size<input type="number" min="0" max="20" step="1" value={noRepeatNgramSize} onChange={event => setNoRepeatNgramSize(event.target.value)} /><small>0 disables this constraint. Default: 3.</small></label>
@@ -407,21 +421,22 @@ function TrialCard({ trial, index }: { trial: Trial; index: number }) {
     runtime: snapshot?.runtime ?? trial.settings.runtime,
     language: snapshot?.language ?? trial.settings.language,
     silence_threshold: snapshot?.silence_threshold ?? trial.settings.silence_threshold,
+    vad: snapshot?.vad ?? trial.settings.vad,
     keywords: snapshot?.keywords ?? trial.settings.keywords,
     decoding_options: snapshot?.decoding_options ?? trial.settings.decoding_options,
   }
   const counts = snapshot?.matches ?? []
   return <article className="tuning-trial-card">
-    <header><div className="trial-number">{String(index).padStart(2, '0')}</div><div className="trial-card-title"><b>Trial {index}</b><small>{trial.recordingLabel} · WAV {trial.recordingId.slice(0, 8)}</small><small>{config.model} · {config.runtime} · {LANGUAGE_LABELS[config.language]} · silence {config.silence_threshold}</small></div><span className={`trial-status ${trial.status}`}><i />{trial.status}</span></header>
+    <header><div className="trial-number">{String(index).padStart(2, '0')}</div><div className="trial-card-title"><b>Trial {index}</b><small>{trial.recordingLabel} · WAV {trial.recordingId.slice(0, 8)}</small><small>{config.model} · {config.runtime} · {LANGUAGE_LABELS[config.language]} · RMS {config.silence_threshold} · VAD {config.vad.enabled ? `on (${config.vad.threshold}, ${config.vad.min_speech_duration_ms} ms)` : 'off'}</small></div><span className={`trial-status ${trial.status}`}><i />{trial.status}</span></header>
     {trial.error && <p className="trial-error">{trial.error}</p>}
     {snapshot?.error && snapshot.error !== trial.error && <p className="trial-error">{snapshot.error}</p>}
     {snapshot?.transcript && <div className="trial-transcript"><small>TRANSCRIPT · {LANGUAGE_LABELS[config.language].toUpperCase()}</small><p>{snapshot.transcript}</p></div>}
     {snapshot?.status === 'completed' && <div className="trial-result-grid"><div><small>KEYWORD COUNTS</small>{counts.length ? counts.map(match => <span key={match.keyword}>{match.keyword}<b>{match.count}</b></span>) : <span>No matches</span>}</div><div><small>LATEST CHUNK RTF</small><b>{snapshot.latest_rtf == null ? '—' : snapshot.latest_rtf.toFixed(3)}</b></div><div className="trial-rtf-summary"><small>MIN / AVG / MAX RTF</small><b>{snapshot.rtf_count ? `${snapshot.rtf_min?.toFixed(3)} / ${snapshot.rtf_avg?.toFixed(3)} / ${snapshot.rtf_max?.toFixed(3)}` : '—'}</b></div></div>}
     <section className="trial-measurements" aria-label={`Chunk measurements for trial ${index}`}>
       <h3>Chunk RTF</h3>
-      {trial.measurements.length === 0 ? <p>{trial.status === 'completed' ? 'No chunks reached inference.' : trial.status === 'failed' ? 'No chunk measurements were reported.' : 'Waiting for the first chunk measurement.'}</p> : <div className="trial-measurements-scroll"><table><thead><tr><th scope="col">Chunk</th><th scope="col">Audio</th><th scope="col">Queue wait</th><th scope="col">Inference</th><th scope="col">RTF</th><th scope="col">Status</th></tr></thead><tbody>{trial.measurements.map(measurement => <tr key={measurement.sequence}><th scope="row">{measurement.sequence + 1}</th><td>{measurement.audio_seconds.toFixed(2)} s</td><td>{measurement.queue_wait_seconds.toFixed(3)} s</td><td>{measurement.inference_seconds.toFixed(3)} s</td><td>{typeof measurement.rtf === 'number' && Number.isFinite(measurement.rtf) ? measurement.rtf.toFixed(3) : '—'}</td><td>{measurement.status}{measurement.error ? ` · ${measurement.error}` : ''}</td></tr>)}</tbody></table></div>}
+      {trial.measurements.length === 0 ? <p>{trial.status === 'completed' ? 'No chunks reached inference.' : trial.status === 'failed' ? 'No chunk measurements were reported.' : 'Waiting for the first chunk measurement.'}</p> : <>{trial.status === 'completed' && trial.measurements.every(measurement => measurement.skip_reason === 'no_speech') && <p role="status">All audio chunks were skipped because VAD found no speech; no model inference ran.</p>}<div className="trial-measurements-scroll"><table><thead><tr><th scope="col">Chunk</th><th scope="col">Audio</th><th scope="col">Queue wait</th><th scope="col">{config.vad.enabled ? 'Processing (VAD + inference)' : 'Inference'}</th><th scope="col">RTF</th><th scope="col">Status</th></tr></thead><tbody>{trial.measurements.map(measurement => <tr key={measurement.sequence}><th scope="row">{measurement.sequence + 1}</th><td>{measurement.audio_seconds.toFixed(2)} s</td><td>{measurement.queue_wait_seconds.toFixed(3)} s</td><td>{measurement.inference_seconds.toFixed(3)} s</td><td>{typeof measurement.rtf === 'number' && Number.isFinite(measurement.rtf) ? measurement.rtf.toFixed(3) : '—'}</td><td>{measurement.skip_reason === 'no_speech' ? 'No speech · VAD' : measurement.status}{measurement.error ? ` · ${measurement.error}` : ''}</td></tr>)}</tbody></table></div></>}
     </section>
-    <details className="trial-settings"><summary>Settings snapshot</summary><div className="trial-setting-values"><span>Model <b>{config.model}</b></span><span>Runtime <b>{config.runtime}</b></span><span>Language <b>{LANGUAGE_LABELS[config.language]}</b></span><span>Silence threshold <b>{config.silence_threshold}</b></span><span>Keywords <b>{config.keywords.join(', ')}</b></span>{Object.entries(config.decoding_options).map(([key, value]) => <span key={key}>{key.replaceAll('_', ' ')} <b>{String(value)}</b></span>)}</div></details>
+    <details className="trial-settings"><summary>Settings snapshot</summary><div className="trial-setting-values"><span>Model <b>{config.model}</b></span><span>Runtime <b>{config.runtime}</b></span><span>Language <b>{LANGUAGE_LABELS[config.language]}</b></span><span>RMS silence threshold <b>{config.silence_threshold}</b></span><span>VAD <b>{config.vad.enabled ? 'on' : 'off'}</b></span><span>Speech probability threshold <b>{config.vad.threshold}</b></span><span>Minimum speech duration <b>{config.vad.min_speech_duration_ms} ms</b></span><span>Keywords <b>{config.keywords.join(', ')}</b></span>{Object.entries(config.decoding_options).map(([key, value]) => <span key={key}>{key.replaceAll('_', ' ')} <b>{String(value)}</b></span>)}</div></details>
   </article>
 }
 

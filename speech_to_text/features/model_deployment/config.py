@@ -21,6 +21,11 @@ FLOW_DEFAULTS = {
     "language": "th",
     "chunk_seconds": 30.0,
     "silence_threshold": 0.05,
+    "vad": {
+        "enabled": False,
+        "threshold": 0.5,
+        "min_speech_duration_ms": 250,
+    },
     "overload_policy": "fail",
     "decoding_options": {
         "beam_size": 1,
@@ -31,8 +36,43 @@ FLOW_DEFAULTS = {
     },
 }
 FLOW_KEYS = frozenset(
-    {"source_id", "language", "chunk_seconds", "silence_threshold", "overload_policy", "decoding_options"}
+    {"source_id", "language", "chunk_seconds", "silence_threshold", "overload_policy", "decoding_options", "vad"}
 )
+
+VAD_DEFAULTS = FLOW_DEFAULTS["vad"]
+VAD_KEYS = frozenset(VAD_DEFAULTS)
+
+
+def normalize_vad_options(value=None):
+    """Validate VAD settings and return a complete detached mapping."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ConfigurationError("vad must be a mapping")
+    unknown = set(value) - VAD_KEYS
+    if unknown:
+        keys = ", ".join(map(str, sorted(unknown, key=str)))
+        raise ConfigurationError(f"Unknown VAD options: {keys}")
+    result = {**VAD_DEFAULTS, **deepcopy(value)}
+    if not isinstance(result["enabled"], bool):
+        raise ConfigurationError("vad.enabled must be a boolean")
+    threshold = result["threshold"]
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not math.isfinite(threshold)
+        or not 0 < threshold < 1
+    ):
+        raise ConfigurationError("vad.threshold must be finite and in (0, 1)")
+    duration = result["min_speech_duration_ms"]
+    if (
+        isinstance(duration, bool)
+        or not isinstance(duration, int)
+        or not 0 <= duration <= 30000
+    ):
+        raise ConfigurationError("vad.min_speech_duration_ms must be an integer in [0, 30000]")
+    result["threshold"] = float(threshold)
+    return result
 DECODING_DEFAULTS = FLOW_DEFAULTS["decoding_options"]
 
 
@@ -101,6 +141,7 @@ def flow_config(value):
         "language": FLOW_DEFAULTS["language"],
         "chunk_seconds": FLOW_DEFAULTS["chunk_seconds"],
         "silence_threshold": FLOW_DEFAULTS["silence_threshold"],
+        "vad": deepcopy(VAD_DEFAULTS),
         "overload_policy": FLOW_DEFAULTS["overload_policy"],
         "decoding_options": deepcopy(DECODING_DEFAULTS),
         **deepcopy(value),
@@ -164,6 +205,7 @@ def flow_config(value):
     ):
         raise ConfigurationError("repetition_penalty must be finite and in [1, 2]")
     result["decoding_options"] = options
+    result["vad"] = normalize_vad_options(result["vad"])
     if "source_id" in result and (
         not isinstance(result["source_id"], str) or not result["source_id"].strip()
     ):

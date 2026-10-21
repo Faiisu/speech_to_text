@@ -161,7 +161,9 @@ def run_benchmark(
     capture_seconds = max(capture_stopped_at - run_started, 1e-9)
     per_source_inference = defaultdict(float)
     for item in telemetry:
-        per_source_inference[item["source_id"]] += item["inference_seconds"]
+        per_source_inference[item["source_id"]] += item.get(
+            "model_inference_seconds", item["inference_seconds"]
+        )
     per_source_audio_throughput = {
         session.source_id: per_source_audio[session.source_id] / capture_seconds
         for session in group.sessions

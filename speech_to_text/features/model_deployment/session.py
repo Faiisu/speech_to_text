@@ -20,6 +20,7 @@ from .capture import AudioInputOverflow, SoundDeviceSource
 from .config import flow_config
 from .errors import AudioInputError, ConfigurationError
 from .measurements import publish_inference_measurement
+from .vad import detect_speech
 
 
 def _event(kind, source_id, **fields):
@@ -188,7 +189,7 @@ class TranscriptionSession:
                     )
                     removed = len(q.queue) - len(retained)
                 else:
-                    retained = deque(item for item in q.queue if item[0] is not self)
+                    retained = deque(item for item in q.queue if item[1] is not self)
                     removed = len(q.queue) - len(retained)
                 q.queue.clear()
                 q.queue.extend(retained)
@@ -396,13 +397,50 @@ class TranscriptionSession:
 def model_worker(handle):
     while True:
         try:
-            session, sequence, audio, queued_at = handle._work_queue.get(timeout=0.1)
+            kind, session, sequence, audio, queued_at, vad_elapsed = handle._work_queue.get(timeout=0.1)
         except Empty:
             if handle.state != "ready":
                 return
             continue
         try:
             if session._active:
+                if kind == "skip":
+                    queue_wait = max(0.0, time.perf_counter() - queued_at)
+                    duration = len(audio) / TARGET_RATE
+                    record = publish_inference_measurement(
+                        getattr(handle, "_measurement_sink", None),
+                        operation=getattr(
+                            handle, "_measurement_operation", "microphone-session"
+                        ),
+                        source_id=session.source_id,
+                        sequence=sequence,
+                        audio_seconds=duration,
+                        inference_seconds=vad_elapsed,
+                        queue_wait_seconds=queue_wait,
+                        status="skipped",
+                        skip_reason="no_speech",
+                    )
+                    session.result_queue.put(record)
+                    telemetry_sink = getattr(handle, "_telemetry_sink", None)
+                    if telemetry_sink is not None:
+                        telemetry_sink.put(
+                            {
+                                "source_id": session.source_id,
+                                "sequence": sequence,
+                                "queue_wait_seconds": queue_wait,
+                                "elapsed_seconds": queue_wait + vad_elapsed,
+                                "inference_seconds": vad_elapsed,
+                                "model_inference_seconds": 0.0,
+                                "vad_processing_seconds": vad_elapsed,
+                                "chunk_duration_seconds": duration,
+                                "rtf": (queue_wait + vad_elapsed) / max(duration, 1e-9),
+                                "status": "skipped",
+                                "skip_reason": "no_speech",
+                                "pid": os.getpid(),
+                            }
+                        )
+                    session._complete_work(sequence)
+                    continue
                 inference_error = None
                 transcript = None
                 with handle._inference_lock:
@@ -413,7 +451,7 @@ def model_worker(handle):
                         transcript = handle._transcribe(audio, session.settings)
                     except Exception as exc:
                         inference_error = exc
-                    inference_elapsed = max(
+                    inference_elapsed = vad_elapsed + max(
                         0.0, time.perf_counter() - inference_started
                     )
                 if inference_error is None:
@@ -444,6 +482,10 @@ def model_worker(handle):
                             "queue_wait_seconds": queue_wait,
                             "elapsed_seconds": queue_wait + inference_elapsed,
                             "inference_seconds": inference_elapsed,
+                            "model_inference_seconds": max(
+                                0.0, inference_elapsed - vad_elapsed
+                            ),
+                            "vad_processing_seconds": vad_elapsed,
                             "chunk_duration_seconds": duration,
                             "rtf": (queue_wait + inference_elapsed)
                             / max(duration, 1e-9),
@@ -478,11 +520,26 @@ def ingress_worker(handle):
             with session._condition:
                 if not session._active:
                     continue
+            vad_elapsed = 0.0
+            chunk_kind = "chunk"
+            if session.settings["vad"]["enabled"]:
+                try:
+                    has_speech, vad_elapsed = detect_speech(
+                        audio, session.settings["vad"]
+                    )
+                except Exception as exc:
+                    session._fatal("VAD_FAILED", str(exc))
+                    continue
+                if not has_speech:
+                    chunk_kind = "skip"
+            with session._condition:
+                if not session._active:
+                    continue
                 session._pending += 1
             queued_at = time.perf_counter()
             try:
                 handle._work_queue.put(
-                    (session, sequence, audio, queued_at),
+                    (chunk_kind, session, sequence, audio, queued_at, vad_elapsed),
                     timeout=(
                         0
                         if session.settings["overload_policy"] == "drop"
