@@ -430,7 +430,7 @@ def _pump_microphone(runtime, record, workflow):
                 record.error = ended_reason
 
         if received_completion and not record.recovery_cancel.is_set():
-            # SessionWorkflow publishes completion before its model/process cleanup callback.
+            # Wait for final delivery and wrapper shutdown after the terminal event.
             try:
                 workflow.wait(timeout=None)
             except Exception as exc:

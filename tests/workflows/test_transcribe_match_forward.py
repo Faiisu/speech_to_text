@@ -4,6 +4,7 @@ import io
 import multiprocessing
 import os
 import queue
+import threading
 import wave
 
 import pytest
@@ -779,6 +780,29 @@ def test_session_reports_chunk_forwarding_failure_without_losing_matches():
     assert events[-1] == source_events[-1]
 
 
+def test_final_delivery_failure_still_releases_model_before_completion():
+    cleaned = threading.Event()
+
+    def fail_forwarding(_record):
+        raise RuntimeError("receiver unavailable")
+
+    wrapped = workflow.forward_session(
+        FakeSession([
+            {"type": "transcript", "source_id": "source-17", "text": "สวัสดี", "cumulative": True},
+            {"type": "completed", "source_id": "source-17", "status": "stopped"},
+        ]),
+        fail_forwarding,
+        WordMatchingConfig(keywords=("สวัสดี",)),
+        on_finished=cleaned.set,
+    )
+    wrapped.wait(timeout=1)
+
+    events = drain_events(wrapped)
+    assert cleaned.is_set()
+    assert events[-2]["type"] == "matching_error"
+    assert events[-1]["type"] == "completed"
+
+
 def test_session_stop_delegates_and_waits_for_public_completion():
     source_events = [
         {"type": "completed", "source_id": "source-17", "status": "stopped"}
@@ -909,6 +933,87 @@ def test_service_defaults_to_shared_microphone_mode(monkeypatch):
     assert next(event for event in drain_events(result) if event["type"] == "match_results")["language"] == "auto"
     assert handle.close_calls == 1
     assert service_instance._model_handles == {}
+
+
+def test_shared_microphone_workflows_hold_model_until_last_lease(monkeypatch):
+    from speech_to_text.workflows.transcribe_match_forward import service
+
+    class ModelHandle:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    sessions = [FakeSession([], source_id=f"shared-{index}") for index in range(2)]
+    handle = ModelHandle()
+    service_instance = service.TranscriptionService(model_config={"model": "turbo"})
+    monkeypatch.setattr(service, "load_model", lambda _config: handle)
+    monkeypatch.setattr(
+        service,
+        "start_microphone_and_forward",
+        lambda _device, _handle, forwarder, matching, _flow_config, *, on_finished=None:
+            workflow.forward_session(
+                sessions.pop(0), forwarder, matching, on_finished=on_finished
+            ),
+    )
+
+    first = service_instance.start_microphone("mic 1", ["สวัสดี"])
+    second = service_instance.start_microphone("mic 2", ["สวัสดี"])
+    first.session.result_queue.put(
+        {"type": "completed", "source_id": first.source_id, "status": "stopped"}
+    )
+    first.wait(timeout=1)
+
+    assert handle.close_calls == 0
+
+    second.session.result_queue.put(
+        {"type": "completed", "source_id": second.source_id, "status": "stopped"}
+    )
+    second.wait(timeout=1)
+
+    assert handle.close_calls == 1
+    assert service_instance._model_handles == {}
+
+
+def test_terminal_event_waits_for_workflow_cleanup():
+    cleanup_started = threading.Event()
+    allow_cleanup = threading.Event()
+    session = FakeSession(
+        [{"type": "completed", "source_id": "cleanup", "status": "stopped"}],
+        source_id="cleanup",
+    )
+
+    def cleanup():
+        cleanup_started.set()
+        assert allow_cleanup.wait(timeout=1)
+
+    wrapped = workflow.forward_session(
+        session,
+        None,
+        WordMatchingConfig(keywords=("สวัสดี",)),
+        on_finished=cleanup,
+    )
+
+    assert cleanup_started.wait(timeout=1)
+    earlier_events = []
+    while True:
+        try:
+            earlier_events.append(wrapped.output_queue.get_nowait())
+        except queue.Empty:
+            break
+    assert all(event["type"] != "completed" for event in earlier_events)
+
+    allow_cleanup.set()
+    wrapped.wait(timeout=1)
+
+    events = earlier_events
+    while True:
+        try:
+            events.append(wrapped.output_queue.get_nowait())
+        except queue.Empty:
+            break
+    assert [event["type"] for event in events] == ["match_results", "completed"]
 
 
 @pytest.mark.parametrize("language", ["en", "auto"])

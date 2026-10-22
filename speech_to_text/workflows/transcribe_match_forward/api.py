@@ -281,7 +281,6 @@ class SessionWorkflow:
                         "error": str(exc),
                     }
                 )
-            self.output_queue.put(completed_event)
         except Exception as exc:
             self.output_queue.put(
                 {
@@ -291,9 +290,10 @@ class SessionWorkflow:
                 }
             )
         finally:
-            if self._on_finished is not None:
+            on_finished, self._on_finished = self._on_finished, None
+            if on_finished is not None:
                 try:
-                    self._on_finished()
+                    on_finished()
                 except Exception as exc:
                     self.output_queue.put(
                         {
@@ -302,6 +302,8 @@ class SessionWorkflow:
                             "error": str(exc),
                         }
                     )
+            if completed_event is not None:
+                self.output_queue.put(completed_event)
             self._finished.set()
 
     def stop(self, *, timeout=30):

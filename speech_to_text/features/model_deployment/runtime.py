@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 from copy import deepcopy
 from pathlib import Path
 
@@ -206,6 +207,8 @@ class OpenVINOAdapter:
     def close(self):
         self.model = None
         self.processor = None
+        # Optimum's Whisper encoder and decoder retain their parent model.
+        gc.collect()
 
 
 class CTranslate2Adapter:

@@ -1,8 +1,10 @@
 """Production adapter API contracts with external libraries isolated at their boundary."""
 
+import gc
 import json
-import sys
 import queue
+import sys
+import weakref
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -265,6 +267,31 @@ def test_openvino_auto_clears_checkpoint_language_without_mutating_shared_config
     assert original.language == "th"
     assert original.task == "translate"
     assert original.forced_decoder_ids == [(1, 50266)]
+
+
+def test_openvino_close_collects_cyclic_model():
+    class Model:
+        def __init__(self):
+            self.parent_model = self
+
+    adapter = OpenVINOAdapter.__new__(OpenVINOAdapter)
+    model = Model()
+    reference = weakref.ref(model)
+    adapter.model = model
+    adapter.processor = object()
+    del model
+
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        adapter.close()
+
+        assert reference() is None
+        assert adapter.model is None
+        assert adapter.processor is None
+    finally:
+        if gc_was_enabled:
+            gc.enable()
 
 
 @pytest.mark.parametrize("language, expected", [("th", "th"), ("en", "en"), ("auto", None)])
