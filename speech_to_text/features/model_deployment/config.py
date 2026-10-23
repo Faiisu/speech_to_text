@@ -33,6 +33,7 @@ FLOW_DEFAULTS = {
         "condition_on_previous_text": False,
         "no_repeat_ngram_size": 3,
         "repetition_penalty": 1.0,
+        "initial_prompt": "",
         "openvino_speech_filter": {
             "enabled": False,
             "no_speech_threshold": 0.6,
@@ -137,6 +138,10 @@ def _normalize_decoding_options(value):
             f"Unsupported decoding options: {', '.join(map(str, sorted(unknown, key=str)))}"
         )
     options = {**DECODING_DEFAULTS, **deepcopy(value)}
+    initial_prompt = options["initial_prompt"]
+    if not isinstance(initial_prompt, str):
+        raise ConfigurationError("initial_prompt must be a string")
+    options["initial_prompt"] = initial_prompt.strip()
     options["openvino_speech_filter"] = normalize_openvino_speech_filter(
         options["openvino_speech_filter"]
     )

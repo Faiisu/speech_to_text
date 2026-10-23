@@ -192,7 +192,7 @@ def test_direct_rtsp_endpoint_validates_source_and_redacts_resolved_value(
             "/api/v1/transcriptions/rtsp",
             json={"keywords": ["สวัสดี"], "rtsp_url_secret_ref": "CAMERA_AUDIO_URL",
                   "vad": {"enabled": True, "threshold": 0.7}, "silence_threshold": 0.22,
-                  "decoding_options": {"openvino_speech_filter": {
+                  "decoding_options": {"initial_prompt": "  camera context  ", "openvino_speech_filter": {
                       "enabled": True, "no_speech_threshold": 0.33,
                       "logprob_threshold": -0.4,
                   }}},
@@ -203,6 +203,7 @@ def test_direct_rtsp_endpoint_validates_source_and_redacts_resolved_value(
             "no_speech_threshold": 0.33,
             "logprob_threshold": -0.4,
         }
+        assert started.json()["decoding_options"]["initial_prompt"] == "camera context"
         status = client.get(f"/api/v1/transcriptions/{started.json()['workflow_id']}").json()
         assert status["vad"] == {
             "enabled": True, "threshold": 0.7, "min_speech_duration_ms": 250

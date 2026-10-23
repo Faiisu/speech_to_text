@@ -68,6 +68,10 @@ Run MIN/AVG/MAX RTF and their count follow the [backend aggregation contract](..
 
 The Profile editor and Model tuning expose the OpenVINO speech filter enable switch, no-speech threshold, and log-probability threshold under decoding settings. The [Feature 01 contract](../new-speech-to-text/spec.md#openvino-speech-filtering) owns their defaults and ranges. Controls apply to either OpenVINO runtime; selecting CTranslate2 disables them with an explanation while preserving their values for a later runtime switch. Submit the nested group in existing multipart `decoding_options` JSON. Each trial displays its effective filter settings independently of subsequent form edits and keeps the existing per-chunk RTF, including decoder filtering time. Empty decoder output remains a successful processed chunk, distinct from VAD skips that bypass the model.
 
+### Initial prompt trials
+
+Model tuning exposes an Initial prompt text area for both runtimes. The [Feature 01 prompt contract](../new-speech-to-text/spec.md#initial-prompt) owns defaults, validation, and runtime behavior. Submit it in existing multipart `decoding_options` JSON, preserve it when switching runtimes, and show the effective prompt in each trial's immutable configuration snapshot. Editing the form after a trial starts does not change that trial. The saved recording remains unchanged.
+
 ## Boundaries
 
 The [clip API contract](../backend-transcription-api/spec.md#post-transcriptionsclips) owns per-run settings validation. Trial cards retain their recording identity and configuration snapshot while the page remains open. Trials run one at a time from the page and do not select an output destination. Production microphone workflows are not stopped by recording or tuning controls.

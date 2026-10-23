@@ -163,6 +163,7 @@ def test_profiles_can_be_created_listed_replaced_and_deleted(api):
     assert profile["model"] == "turbo"
     assert profile["runtime"] == "openvino-gpu"
     assert profile["decoding_options"] == {
+        "initial_prompt": "",
         "beam_size": 1,
         "temperature": 0.0,
         "condition_on_previous_text": False,
@@ -450,6 +451,7 @@ def test_profile_vad_survives_store_reopen(tmp_path):
         {"condition_on_previous_text": 1},
         {"no_repeat_ngram_size": False}, {"no_repeat_ngram_size": 21},
         {"repetition_penalty": True}, {"repetition_penalty": 2.1},
+        {"initial_prompt": None}, {"initial_prompt": True}, {"initial_prompt": 3},
         {"unexpected": 1},
         {"openvino_speech_filter": None},
         {"openvino_speech_filter": {"enabled": 1}},
@@ -546,6 +548,7 @@ def test_profile_decoding_options_normalize_partial_values_and_round_trip(api):
     assert response.status_code == 201
     profile = response.json()
     assert profile["decoding_options"] == {
+        "initial_prompt": "",
         "beam_size": 3, "temperature": 0.0,
         "condition_on_previous_text": False, "no_repeat_ngram_size": 3,
         "repetition_penalty": 1.0,
@@ -592,6 +595,7 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
             language="en",
             model="small", runtime="ctranslate2",
             decoding_options={
+                "initial_prompt": "  Thai context  ",
                 "beam_size": 4, "temperature": 0.3,
                 "condition_on_previous_text": True,
                 "no_repeat_ngram_size": 5, "repetition_penalty": 1.2,
@@ -620,6 +624,7 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
         "silence_threshold": 0.18,
         "overload_policy": "drop",
         "decoding_options": {
+            "initial_prompt": "Thai context",
             "beam_size": 4,
             "temperature": 0.3,
             "condition_on_previous_text": True,
@@ -654,11 +659,12 @@ def test_profile_run_uses_saved_snapshot_after_profile_edit_and_delete(api, exec
             execution_mode="shared",
             keywords=["ใหม่"],
             silence_threshold=0.3,
-            decoding_options={"beam_size": 7},
+            decoding_options={"initial_prompt": "replacement", "beam_size": 7},
         ),
     )
     assert edited.status_code == 200
     assert edited.json()["decoding_options"] == {
+        "initial_prompt": "replacement",
         "beam_size": 7,
         "temperature": 0.0,
         "condition_on_previous_text": False,
@@ -743,12 +749,26 @@ def test_profile_survives_a_new_app_and_runtime_lifecycle(tmp_path):
             "/api/v1/profiles",
             json=profile_body(
                 language="auto",
-                decoding_options={"openvino_speech_filter": expected_filter},
+                decoding_options={
+                    "initial_prompt": "persisted context",
+                    "openvino_speech_filter": expected_filter,
+                },
             ),
         )
         assert created.status_code == 201
         profile = created.json()
         assert profile["decoding_options"]["openvino_speech_filter"] == expected_filter
+        assert profile["decoding_options"]["initial_prompt"] == "persisted context"
+        cloned = first_client.post(
+            "/api/v1/profiles",
+            json=profile_body(
+                name="Speech vocabulary copy",
+                language="auto",
+                decoding_options=profile["decoding_options"],
+            ),
+        )
+        assert cloned.status_code == 201
+        assert cloned.json()["decoding_options"] == profile["decoding_options"]
 
     second_client, _ = make_client(database_path)
     with second_client:
@@ -759,8 +779,16 @@ def test_profile_survives_a_new_app_and_runtime_lifecycle(tmp_path):
     assert retrieved.json()["language"] == "auto"
     assert retrieved.json() == profile
     assert listed.status_code == 200
-    assert listed.json() == {"profiles": [profile]}
+    listed_profiles = listed.json()["profiles"]
+    assert {item["profile_id"] for item in listed_profiles} == {
+        profile["profile_id"], cloned.json()["profile_id"]
+    }
+    assert all(
+        item["decoding_options"] == profile["decoding_options"]
+        for item in listed_profiles
+    )
     assert retrieved.json()["decoding_options"]["openvino_speech_filter"] == expected_filter
+    assert retrieved.json()["decoding_options"]["initial_prompt"] == "persisted context"
 
 
 def test_profile_store_migrates_existing_table_without_losing_profiles(
@@ -841,6 +869,7 @@ def test_profile_store_migrates_existing_table_without_losing_profiles(
     assert profiles[0]["runtime"] == "openvino-cpu"
     assert profiles[0]["language"] == "th"
     assert profiles[0]["decoding_options"] == {
+        "initial_prompt": "",
         "beam_size": 1,
         "temperature": 0.0,
         "condition_on_previous_text": False,

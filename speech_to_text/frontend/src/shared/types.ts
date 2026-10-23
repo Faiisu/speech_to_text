@@ -177,6 +177,7 @@ export type DecodingOptions = {
   condition_on_previous_text: boolean
   no_repeat_ngram_size: number
   repetition_penalty: number
+  initial_prompt?: string
   openvino_speech_filter?: OpenVinoSpeechFilter
 }
 

@@ -47,6 +47,7 @@ class DecodingOptionsDefinition(BaseModel):
         "no_repeat_ngram_size"
     ]
     repetition_penalty: float = _DEFAULT_DECODING_OPTIONS["repetition_penalty"]
+    initial_prompt: StrictStr = _DEFAULT_DECODING_OPTIONS["initial_prompt"]
     openvino_speech_filter: OpenVINOSpeechFilterDefinition = Field(
         default_factory=lambda: OpenVINOSpeechFilterDefinition(
             **_DEFAULT_DECODING_OPTIONS["openvino_speech_filter"]

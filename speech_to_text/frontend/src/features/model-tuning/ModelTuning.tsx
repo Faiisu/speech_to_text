@@ -69,6 +69,7 @@ export default function ModelTuning() {
   const [minSpeechDuration, setMinSpeechDuration] = useState('250')
   const [beamSize, setBeamSize] = useState('1')
   const [temperature, setTemperature] = useState('0')
+  const [initialPrompt, setInitialPrompt] = useState('')
   const [conditionOnPreviousText, setConditionOnPreviousText] = useState(false)
   const [noRepeatNgramSize, setNoRepeatNgramSize] = useState('3')
   const [repetitionPenalty, setRepetitionPenalty] = useState('1')
@@ -308,7 +309,7 @@ export default function ModelTuning() {
     if (!openvinoLogprobThreshold.trim() || !Number.isFinite(logprobThreshold) || logprobThreshold > 0) { setError('Log probability threshold must be a finite number less than or equal to 0.'); return }
     if (!selectedModel || !selectedRuntime?.compatible) { setError('Choose a model and compatible runtime.'); return }
     const openvinoSpeechFilter: OpenVinoSpeechFilter = { enabled: openvinoSpeechFilterEnabled, no_speech_threshold: noSpeechThreshold, logprob_threshold: logprobThreshold }
-    const settings: Settings = { model, runtime: runtime as RuntimeChoice['key'], language, silence_threshold: threshold, vad: { enabled: vadEnabled, threshold: speechThreshold, min_speech_duration_ms: minimumSpeech }, keywords: words, decoding_options: { beam_size: beam, temperature: temp, condition_on_previous_text: conditionOnPreviousText, no_repeat_ngram_size: noRepeat, repetition_penalty: penalty, openvino_speech_filter: openvinoSpeechFilter } }
+    const settings: Settings = { model, runtime: runtime as RuntimeChoice['key'], language, silence_threshold: threshold, vad: { enabled: vadEnabled, threshold: speechThreshold, min_speech_duration_ms: minimumSpeech }, keywords: words, decoding_options: { beam_size: beam, temperature: temp, condition_on_previous_text: conditionOnPreviousText, no_repeat_ngram_size: noRepeat, repetition_penalty: penalty, initial_prompt: initialPrompt.trim(), openvino_speech_filter: openvinoSpeechFilter } }
     setTuningBusy(true); setError('')
     try {
       const blob = await api.recordingAudio(selectedRecording.recording_id)
@@ -406,6 +407,7 @@ export default function ModelTuning() {
         <label>Minimum speech duration (ms)<input type="number" min="0" max="30000" step="1" value={minSpeechDuration} onChange={event => setMinSpeechDuration(event.target.value)} /><small>Default: 250 ms. Range: 0 to 30000.</small></label>
         <label>Beam size<input type="number" min="1" max="10" step="1" value={beamSize} onChange={event => setBeamSize(event.target.value)} /><small>Search width, 1 to 10. Default: 1.</small></label>
         <label>Temperature<input type="number" min="0" max="1" step="any" value={temperature} onChange={event => setTemperature(event.target.value)} /><small>Variation from 0 to 1. Default: 0.</small></label>
+        <label>Initial prompt<textarea rows={3} value={initialPrompt} onChange={event => setInitialPrompt(event.target.value)} /><small>Add vocabulary or context to guide transcription. Leave blank to disable. This is not an instruction-following field.</small></label>
         <label>No-repeat n-gram size<input type="number" min="0" max="20" step="1" value={noRepeatNgramSize} onChange={event => setNoRepeatNgramSize(event.target.value)} /><small>0 disables this constraint. Default: 3.</small></label>
         <label>Repetition penalty<input type="number" min="1" max="2" step="any" value={repetitionPenalty} onChange={event => setRepetitionPenalty(event.target.value)} /><small>Values above 1 discourage repeats. Default: 1.</small></label>
         <div className="tuning-openvino-filter"><h3>OpenVINO speech filter</h3><label className="tuning-check"><input aria-label="Enable OpenVINO speech filter" type="checkbox" checked={openvinoSpeechFilterEnabled} disabled={runtime === 'ctranslate2'} onChange={event => setOpenvinoSpeechFilterEnabled(event.target.checked)} />Enable OpenVINO speech filter</label><label>No speech threshold<input aria-label="No speech threshold" type="number" min="0" max="1" step="any" value={openvinoNoSpeechThreshold} disabled={runtime === 'ctranslate2'} onChange={event => setOpenvinoNoSpeechThreshold(event.target.value)} /></label><label>Log probability threshold<input aria-label="Log probability threshold" type="number" max="0" step="any" value={openvinoLogprobThreshold} disabled={runtime === 'ctranslate2'} onChange={event => setOpenvinoLogprobThreshold(event.target.value)} /></label><small>Defaults: disabled, 0.6, and −1. OpenVINO CPU/GPU only. With CTranslate2 selected, these saved choices stay dormant; its native filter remains independent.</small></div>

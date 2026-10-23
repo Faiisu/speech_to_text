@@ -272,7 +272,7 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
         ("execution_mode", (None, "per_workflow_process")),
         ("silence_threshold", (None, "0.2")),
         ("vad", (None, '{"enabled":true,"threshold":0.42,"min_speech_duration_ms":400}')),
-        ("decoding_options", (None, '{"beam_size": 3, "openvino_speech_filter": {"enabled": true, "no_speech_threshold": 0.4, "logprob_threshold": -0.8}}')),
+        ("decoding_options", (None, '{"initial_prompt":"  clip context ","beam_size": 3, "openvino_speech_filter": {"enabled": true, "no_speech_threshold": 0.4, "logprob_threshold": -0.8}}')),
         ("file", ("sample.wav", b"alpha alpha", "audio/wav")),
     ]
 
@@ -289,6 +289,7 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
         "min_speech_duration_ms": 400,
     }
     assert created.json()["decoding_options"]["beam_size"] == 3
+    assert created.json()["decoding_options"]["initial_prompt"] == "clip context"
     status = wait_for_status(client, workflow_id, "completed")
     assert status["model"] == "tiny"
     assert status["runtime"] == "ctranslate2"
@@ -296,6 +297,7 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
     assert status["silence_threshold"] == 0.2
     assert status["vad"] == created.json()["vad"]
     assert status["decoding_options"]["beam_size"] == 3
+    assert status["decoding_options"]["initial_prompt"] == "clip context"
     assert service.clip_calls == [
         (
             {
@@ -303,6 +305,7 @@ def test_clip_settings_are_snapshotted_and_passed_to_workflow(api):
                 "source_id": workflow_id,
                 "silence_threshold": 0.2,
                 "decoding_options": {
+                    "initial_prompt": "clip context",
                     "beam_size": 3,
                     "temperature": 0.0,
                     "condition_on_previous_text": False,
@@ -444,6 +447,9 @@ def test_invalid_language_is_rejected_before_workflow_starts(api, kind):
         {"vad": '{"extra":1}'},
         {"decoding_options": "[]"},
         {"decoding_options": '{"beam_size": true}'},
+        {"decoding_options": '{"initial_prompt": null}'},
+        {"decoding_options": '{"initial_prompt": true}'},
+        {"decoding_options": '{"initial_prompt": 5}'},
         {"decoding_options": '{"openvino_speech_filter": {"enabled": "true"}}'},
         {"decoding_options": '{"openvino_speech_filter": {"logprob_threshold": 0.1}}'},
     ],
@@ -500,7 +506,7 @@ def test_microphone_can_start_and_stop_through_api(api):
         "/api/v1/transcriptions/microphones",
         json={"keywords": ["alpha"], "device": "Studio Mic", "silence_threshold": 0.2,
               "vad": {"enabled": True},
-              "decoding_options": {"openvino_speech_filter": {
+              "decoding_options": {"initial_prompt": "  mic context  ", "openvino_speech_filter": {
                   "enabled": True, "no_speech_threshold": 0.35,
                   "logprob_threshold": -0.6,
               }}},
@@ -514,6 +520,7 @@ def test_microphone_can_start_and_stop_through_api(api):
         "no_speech_threshold": 0.35,
         "logprob_threshold": -0.6,
     }
+    assert started.json()["decoding_options"]["initial_prompt"] == "mic context"
     stop_requested = client.post(f"/api/v1/transcriptions/{workflow_id}/stop")
     assert stop_requested.status_code == 202
     assert service.microphone_workflow.stop_called.wait(timeout=1)
@@ -536,6 +543,9 @@ def test_microphone_can_start_and_stop_through_api(api):
     assert service.microphone_start_options[0][2]["decoding_options"][
         "openvino_speech_filter"
     ] == expected_filter
+    assert service.microphone_start_options[0][2]["decoding_options"][
+        "initial_prompt"
+    ] == "mic context"
     event_types = [
         event["type"]
         for event in client.get(f"/api/v1/transcriptions/{workflow_id}/events").json()[
@@ -545,6 +555,22 @@ def test_microphone_can_start_and_stop_through_api(api):
     assert "started" in event_types
     assert "stopping" in event_types
     assert "completed" in event_types
+
+
+@pytest.mark.parametrize("initial_prompt", [None, True, 5])
+def test_microphone_rejects_non_string_initial_prompt(api, initial_prompt):
+    client, service = api
+
+    response = client.post(
+        "/api/v1/transcriptions/microphones",
+        json={
+            "keywords": ["alpha"],
+            "decoding_options": {"initial_prompt": initial_prompt},
+        },
+    )
+
+    assert response.status_code == 422
+    assert service.microphone_start_options == []
 
 
 @pytest.mark.parametrize(

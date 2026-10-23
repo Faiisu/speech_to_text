@@ -113,8 +113,16 @@ class OpenVINOAdapter:
         features = self.processor(
             audio, sampling_rate=16000, return_tensors="pt"
         ).input_features
+        initial_prompt = decoding_options.get("initial_prompt", "")
+        prompt_ids = (
+            self.processor.get_prompt_ids(initial_prompt, return_tensors="pt")
+            if initial_prompt
+            else None
+        )
         kwargs = {
-            "max_new_tokens": self._max_new_tokens(language),
+            "max_new_tokens": self._max_new_tokens(
+                language, prompt_length=0 if prompt_ids is None else prompt_ids.shape[-1]
+            ),
             "num_beams": decoding_options["beam_size"],
             "do_sample": decoding_options["temperature"] > 0,
             "temperature": decoding_options["temperature"],
@@ -123,6 +131,8 @@ class OpenVINOAdapter:
             "repetition_penalty": decoding_options["repetition_penalty"],
         }
         kwargs["task"] = "transcribe"
+        if prompt_ids is not None:
+            kwargs["prompt_ids"] = prompt_ids
         speech_filter = decoding_options.get("openvino_speech_filter", {})
         if speech_filter.get("enabled", False):
             kwargs.update(
@@ -167,7 +177,7 @@ class OpenVINOAdapter:
                     del self.model.__dict__["prepare_inputs_for_generation"]
         return self.processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
 
-    def _max_new_tokens(self, language):
+    def _max_new_tokens(self, language, *, prompt_length=0):
         config = self.model.config
         target_limit = getattr(config, "max_target_positions", None)
         if target_limit is None:
@@ -196,11 +206,12 @@ class OpenVINOAdapter:
                 # timestamp-control tokens after the decoder start token.
                 decoder_prefix_length = 4
 
-        max_new_tokens = int(target_limit) - decoder_prefix_length
+        max_new_tokens = int(target_limit) - decoder_prefix_length - prompt_length
         if max_new_tokens < 1:
             raise ValueError(
-                f"Whisper decoder prompt uses {decoder_prefix_length} positions, "
-                f"exceeding its {target_limit}-position target limit"
+                "Whisper decoder task prefix and initial prompt use "
+                f"{decoder_prefix_length + prompt_length} positions, leaving no output token "
+                f"within its {target_limit}-position target limit"
             )
         return max_new_tokens
 
@@ -255,15 +266,18 @@ class CTranslate2Adapter:
             ) from exc
 
     def transcribe(self, audio, *, language, decoding_options):
-        segments, _ = self.model.transcribe(
-            np.asarray(audio, dtype=np.float32),
-            language=None if language == "auto" else language,
-            beam_size=decoding_options["beam_size"],
-            temperature=decoding_options["temperature"],
-            condition_on_previous_text=decoding_options["condition_on_previous_text"],
-            no_repeat_ngram_size=decoding_options["no_repeat_ngram_size"],
-            repetition_penalty=decoding_options["repetition_penalty"],
-        )
+        kwargs = {
+            "language": None if language == "auto" else language,
+            "beam_size": decoding_options["beam_size"],
+            "temperature": decoding_options["temperature"],
+            "condition_on_previous_text": decoding_options["condition_on_previous_text"],
+            "no_repeat_ngram_size": decoding_options["no_repeat_ngram_size"],
+            "repetition_penalty": decoding_options["repetition_penalty"],
+        }
+        initial_prompt = decoding_options.get("initial_prompt", "")
+        if initial_prompt:
+            kwargs["initial_prompt"] = initial_prompt
+        segments, _ = self.model.transcribe(np.asarray(audio, dtype=np.float32), **kwargs)
         return "".join(segment.text for segment in segments).strip()
 
     def close(self):

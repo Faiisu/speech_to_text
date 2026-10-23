@@ -491,6 +491,7 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await expect(page.getByLabel('Beam size')).toHaveValue('1')
   await page.getByLabel('Beam size').fill('4')
   await page.getByLabel('Temperature').fill('0.25')
+  await page.getByLabel('Initial prompt').fill('คำเฉพาะ: สวัสดีครับ และ OpenAI')
   await page.getByLabel('Condition on previous text').check()
   await page.getByLabel('No-repeat n-gram size').fill('6')
   await page.getByLabel('Repetition penalty').fill('1.4')
@@ -501,6 +502,7 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
     return data.profiles.find((profile: { name: string }) => profile.name === 'Source profile').profile_id as string
   })
   const originalBefore = await page.request.get(`/api/v1/profiles/${sourceId}`).then(response => response.json())
+  expect(originalBefore.decoding_options.initial_prompt).toBe('คำเฉพาะ: สวัสดีครับ และ OpenAI')
   expect(originalBefore.decoding_options.openvino_speech_filter).toEqual({ enabled: false, no_speech_threshold: 0.41, logprob_threshold: -0.25 })
   const profileCountBeforeDuplicate = await page.request.get('/api/v1/profiles').then(async response => (await response.json()).profiles.length)
 
@@ -530,6 +532,7 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await expect(page.getByLabel('Minimum speech duration (ms)')).toHaveValue('480')
   await expect(page.getByLabel('Beam size')).toHaveValue('4')
   await expect(page.getByLabel('Temperature')).toHaveValue('0.25')
+  await expect(page.getByLabel('Initial prompt')).toHaveValue('คำเฉพาะ: สวัสดีครับ และ OpenAI')
   await expect(page.getByLabel('Condition on previous text')).toBeChecked()
   await expect(page.getByLabel('No-repeat n-gram size')).toHaveValue('6')
   await expect(page.getByLabel('Repetition penalty')).toHaveValue('1.4')
@@ -549,6 +552,7 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
   await expect(page.getByLabel('Condition on previous text')).toBeChecked()
   await expect(page.getByLabel('No-repeat n-gram size')).toHaveValue('6')
   await expect(page.getByLabel('Repetition penalty')).toHaveValue('1.4')
+  await expect(page.getByLabel('Initial prompt')).toHaveValue('คำเฉพาะ: สวัสดีครับ และ OpenAI')
   await expect(page.getByLabel('One keyword per line')).toHaveValue('สวัสดี\nประชุม')
 
   await page.getByLabel('No speech threshold').fill('1.1')
@@ -585,7 +589,7 @@ test('duplicate profile copies settings into a reload-safe new profile draft', a
     keywords: originalBefore.keywords,
     silence_threshold: originalBefore.silence_threshold,
     vad: { enabled: true, threshold: 0.72, min_speech_duration_ms: 480 },
-    decoding_options: { beam_size: 4, temperature: 0.25, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.4 },
+    decoding_options: { beam_size: 4, temperature: 0.25, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.4, initial_prompt: 'คำเฉพาะ: สวัสดีครับ และ OpenAI' },
   })
   await page.getByRole('button', { name: 'Start workflow Copied profile' }).click()
   await expect(page).toHaveURL(/\/runs\/[a-f0-9]+$/)

@@ -17,7 +17,7 @@ function pcm16Wav(seconds = 1) {
 
 test('records a reusable WAV and compares real clip API trials with immutable settings', async ({ page }) => {
   const vadRequests: { enabled: boolean; threshold: number; min_speech_duration_ms: number }[] = []
-  const decodingRequests: { openvino_speech_filter?: { enabled: boolean; no_speech_threshold: number; logprob_threshold: number } }[] = []
+  const decodingRequests: { initial_prompt?: string; openvino_speech_filter?: { enabled: boolean; no_speech_threshold: number; logprob_threshold: number } }[] = []
   await page.route('**/api/v1/transcriptions/clips', async route => {
     const body = route.request().postDataBuffer()?.toString() ?? ''
     expect(body).toContain('name="execution_mode"')
@@ -56,6 +56,7 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   await page.getByLabel('Minimum speech duration (ms)').fill('420')
   await page.getByLabel('Beam size').fill('4')
   await page.getByLabel('Temperature').fill('0.2')
+  await page.getByLabel('Initial prompt').fill('  ชื่อเฉพาะ: กรุงเทพมหานคร, เจ้าพระยา  ')
   await page.getByLabel('Condition on previous text').check()
   await page.getByLabel('No-repeat n-gram size').fill('6')
   await page.getByLabel('Repetition penalty').fill('1.3')
@@ -77,11 +78,13 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   await expect(first.locator('.trial-setting-values')).toContainText('on')
   await expect(first.locator('.trial-setting-values')).toContainText('0.74')
   await expect(first.locator('.trial-setting-values')).toContainText('-2.1')
+  await expect(first.locator('.trial-setting-values')).toContainText('ชื่อเฉพาะ: กรุงเทพมหานคร, เจ้าพระยา')
   await expect(first.locator('.trial-result-grid')).toContainText('LATEST CHUNK RTF')
 
   await page.locator('.tuning-config-grid label').filter({ hasText: /^Runtime/ }).locator('select').selectOption('openvino-cpu')
   await page.getByLabel('Language').selectOption('en')
   await page.getByLabel('Noise floor (RMS silence threshold)').fill('0.07')
+  await page.getByLabel('Initial prompt').fill('ศัพท์งาน: การถอดเสียง')
   await page.getByLabel('Speech probability threshold').fill('0.82')
   await page.getByLabel('Minimum speech duration (ms)').fill('600')
   await page.getByLabel('Beam size').fill('2')
@@ -96,6 +99,7 @@ test('records a reusable WAV and compares real clip API trials with immutable se
   await expect(second.locator('.trial-setting-values')).toContainText('2')
   await expect(second.locator('.trial-setting-values')).toContainText('0.82')
   await expect(second.locator('.trial-setting-values')).toContainText('600 ms')
+  await expect(second.locator('.trial-setting-values')).toContainText('ศัพท์งาน: การถอดเสียง')
   await expect(page.locator('.tuning-trial-card').nth(1).locator('.trial-setting-values')).toContainText('turbo')
   await expect(page.locator('.tuning-trial-card').nth(1).locator('.trial-setting-values')).toContainText('Thai')
   await expect(page.locator('.tuning-trial-card').nth(1).locator('.trial-setting-values')).toContainText('4')
@@ -109,7 +113,7 @@ test('records a reusable WAV and compares real clip API trials with immutable se
     expect(run).toMatchObject({ rtf_min: null, rtf_avg: null, rtf_max: null, rtf_count: 0 })
     expect(run.latest_rtf).not.toBeNull()
   }
-  expect(clipRuns[1]).toMatchObject({ model: 'turbo', runtime: 'openvino-gpu', language: 'th', silence_threshold: 0.12, vad: { enabled: true, threshold: 0.63, min_speech_duration_ms: 420 }, keywords: ['สวัสดี'], decoding_options: { beam_size: 4, temperature: 0.2, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.3 } })
+  expect(clipRuns[1]).toMatchObject({ model: 'turbo', runtime: 'openvino-gpu', language: 'th', silence_threshold: 0.12, vad: { enabled: true, threshold: 0.63, min_speech_duration_ms: 420 }, keywords: ['สวัสดี'], decoding_options: { beam_size: 4, temperature: 0.2, condition_on_previous_text: true, no_repeat_ngram_size: 6, repetition_penalty: 1.3, initial_prompt: 'ชื่อเฉพาะ: กรุงเทพมหานคร, เจ้าพระยา' } })
   expect(clipRuns[0]).toMatchObject({ model: 'turbo', runtime: 'openvino-cpu', language: 'en', silence_threshold: 0.07, vad: { enabled: true, threshold: 0.82, min_speech_duration_ms: 600 }, decoding_options: { beam_size: 2 } })
   expect(clipRuns.map((run: { execution_mode: string }) => run.execution_mode)).toEqual(['per_workflow_process', 'per_workflow_process'])
   expect(vadRequests).toEqual([
@@ -117,6 +121,7 @@ test('records a reusable WAV and compares real clip API trials with immutable se
     { enabled: true, threshold: 0.82, min_speech_duration_ms: 600 },
   ])
   expect(decodingRequests[0].openvino_speech_filter).toEqual({ enabled: true, no_speech_threshold: 0.74, logprob_threshold: -2.1 })
+  expect(decodingRequests.map(options => options.initial_prompt)).toEqual(['ชื่อเฉพาะ: กรุงเทพมหานคร, เจ้าพระยา', 'ศัพท์งาน: การถอดเสียง'])
 })
 
 test('OpenVINO filter controls stay disabled under CTranslate2 and keep their selected values', async ({ page }) => {
