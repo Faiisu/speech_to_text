@@ -1,0 +1,8 @@
+services:
+  speech-to-text-gemma4:
+    devices:
+      - /dev/snd:/dev/snd
+    group_add:
+      - "${AUDIO_GID:?Set AUDIO_GID to the host audio group ID}"
+    device_cgroup_rules:
+      - "c 116:* rw"

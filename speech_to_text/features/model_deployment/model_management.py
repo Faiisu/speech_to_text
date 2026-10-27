@@ -19,6 +19,7 @@ _PRECISION_OPTIONS = {
     "openvino-cpu": ["source", "bf16", "int8", "int4"],
     "openvino-gpu": ["source", "bf16", "int8", "int4"],
     "ctranslate2": ["int8", "float32"],
+    "transformers": ["bf16", "float32"],
 }
 _SOURCE_FILES = [
     "config.json",
@@ -35,6 +36,13 @@ _SOURCE_FILES = [
     "model.safetensors",
     "model.safetensors.index.json",
     "*.safetensors",
+]
+_GEMMA_SOURCE_FILES = [
+    "config.json", "generation_config.json", "processor_config.json",
+    "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json",
+    "special_tokens_map.json", "added_tokens.json", "vocab.json", "merges.txt",
+    "tokenizer.model", "*.model", "*.safetensors", "model.safetensors.index.json",
+    "*.safetensors.index.json", "*.json",
 ]
 
 
@@ -109,6 +117,22 @@ def _whisper_reasons(config, files=None):
     return reasons
 
 
+def _gemma_reasons(config, files=None):
+    reasons = []
+    if config.get("model_type") != "gemma4" or "Gemma4ForConditionalGeneration" not in (config.get("architectures") or []):
+        reasons.append("Checkpoint is not a Transformers Gemma 4 conditional-generation model")
+    if not isinstance(config.get("audio_config"), dict):
+        reasons.append("Checkpoint does not include Gemma 4 audio support")
+    if files is not None:
+        if not any(name.endswith(".safetensors") for name in files):
+            reasons.append("Checkpoint does not provide safetensors weights")
+        if not ({"processor_config.json", "preprocessor_config.json", "feature_extractor_config.json"} & files):
+            reasons.append("Checkpoint is missing its audio processor configuration")
+        if not ("tokenizer.json" in files or "tokenizer.model" in files):
+            reasons.append("Checkpoint is missing supported tokenizer files")
+    return reasons
+
+
 def _module(name):
     try:
         importlib.import_module(name)
@@ -118,6 +142,21 @@ def _module(name):
 
 
 def _runtime_status(runtime):
+    if runtime == "transformers":
+        ready = all(_module(name) for name in ("transformers", "torch", "accelerate", "librosa", "torchvision"))
+        if ready:
+            try:
+                from importlib.metadata import version
+                from transformers import AutoModelForMultimodalLM  # noqa: F401
+                transformers_version = tuple(
+                    int(part) for part in version("transformers").split(".")[:3]
+                )
+                torch_version = tuple(int(part) for part in version("torch").split(".")[:2])
+                ready = transformers_version >= (5, 10, 1) and torch_version >= (2, 4)
+            except Exception:
+                ready = False
+        reason = None if ready else "Install transformers>=5.10.1, torch>=2.4, accelerate, librosa, and torchvision to use Gemma 4"
+        return {"key": runtime, "available": ready, "precision_options": _PRECISION_OPTIONS[runtime], "reason": reason}
     if runtime == "ctranslate2":
         ready = all(_module(name) for name in ("ctranslate2", "ctranslate2.converters", "faster_whisper", "transformers", "torch", "safetensors"))
         if ready:
@@ -157,14 +196,20 @@ def inspect_huggingface_model(repository, revision="main", token=None) -> dict:
     if token is not None and not isinstance(token, str):
         raise ModelPreparationError("token must be a string")
     sha, config, files = _config(repository, revision, token)
-    reasons = _whisper_reasons(config, files)
+    is_gemma = repository == "google/gemma-4-E4B-it"
+    reasons = _gemma_reasons(config, files) if is_gemma else _whisper_reasons(config, files)
+    runtimes = (
+        [_runtime_status("transformers")]
+        if is_gemma
+        else [_runtime_status("openvino-cpu"), _runtime_status("openvino-gpu"), _runtime_status("ctranslate2")]
+    )
     return {
         "repository": repository,
         "revision": sha,
         "compatible": not reasons,
         "reasons": reasons,
         "model_type": config.get("model_type"),
-        "runtimes": [_runtime_status("openvino-cpu"), _runtime_status("openvino-gpu"), _runtime_status("ctranslate2")],
+        "runtimes": runtimes,
     }
 
 
@@ -208,16 +253,22 @@ def _metadata_matches(path, repository, sha, runtime=None, precision=None):
 def _download_source(repository, sha, token, destination):
     _, _, snapshot_download = _hub()
     try:
+        allow_patterns = (
+            _GEMMA_SOURCE_FILES
+            if repository == "google/gemma-4-E4B-it"
+            else _SOURCE_FILES
+        )
         snapshot = Path(snapshot_download(
             repo_id=repository,
             revision=sha,
             token=token,
-            allow_patterns=_SOURCE_FILES,
+            allow_patterns=allow_patterns,
             local_files_only=False,
         ))
         config = json.loads((snapshot / "config.json").read_text(encoding="utf-8"))
         files = {path.relative_to(snapshot).as_posix() for path in snapshot.rglob("*") if path.is_file()}
-        reasons = _whisper_reasons(config, files)
+        is_gemma = repository == "google/gemma-4-E4B-it"
+        reasons = _gemma_reasons(config, files) if is_gemma else _whisper_reasons(config, files)
         if reasons:
             raise ModelPreparationError("Downloaded source is unsupported: " + "; ".join(reasons))
         destination.mkdir(parents=True)
@@ -225,7 +276,8 @@ def _download_source(repository, sha, token, destination):
             if not source_file.is_file():
                 continue
             relative = source_file.relative_to(snapshot)
-            if not any(relative.match(pattern) for pattern in _SOURCE_FILES):
+            allowed_files = _GEMMA_SOURCE_FILES if is_gemma else _SOURCE_FILES
+            if not any(relative.match(pattern) for pattern in allowed_files):
                 continue
             target_file = destination / relative
             target_file.parent.mkdir(parents=True, exist_ok=True)
@@ -238,7 +290,7 @@ def _download_source(repository, sha, token, destination):
         raise
     except Exception:
         raise ModelPreparationUnavailableError(
-            "Unable to download the pinned Whisper safetensors snapshot. Check repository access and available storage."
+            "Unable to download the pinned model safetensors snapshot. Check repository access and available storage."
         ) from None
 
 
@@ -339,18 +391,28 @@ def prepare_huggingface_model(
         raise ModelPreparationError("progress must be callable")
     if operation not in ("download", "convert"):
         raise ModelPreparationError("operation must be 'download' or 'convert'")
-    if runtime not in ("openvino-cpu", "openvino-gpu", "ctranslate2"):
-        raise ModelPreparationError("runtime must be 'openvino-cpu', 'openvino-gpu', or 'ctranslate2'")
-    default_precision = "int8" if runtime == "ctranslate2" else "source"
+    if runtime not in ("openvino-cpu", "openvino-gpu", "ctranslate2", "transformers"):
+        raise ModelPreparationError("runtime must be 'openvino-cpu', 'openvino-gpu', 'ctranslate2', or 'transformers'")
+    default_precision = "bf16" if runtime == "transformers" else "int8" if runtime == "ctranslate2" else "source"
     precision = default_precision if precision is None else precision
     if precision not in _PRECISION_OPTIONS[runtime]:
         raise ModelPreparationError(f"precision is unsupported for {runtime}")
     if progress:
         progress("inspecting")
     sha, config, files = _config(repository, revision, token)
-    reasons = _whisper_reasons(config, files)
-    if reasons:
-        raise ModelPreparationError("Unsupported checkpoint: " + "; ".join(reasons))
+    is_gemma = repository == "google/gemma-4-E4B-it"
+    if is_gemma:
+        reasons = _gemma_reasons(config, files)
+        if reasons:
+            raise ModelPreparationError("Unsupported Gemma checkpoint: " + "; ".join(reasons))
+        if operation == "convert" and runtime != "transformers":
+            raise ModelPreparationError("Gemma 4 E4B supports only the Transformers runtime; no conversion is offered")
+    elif runtime == "transformers":
+        raise ModelPreparationError("The Transformers runtime currently supports only google/gemma-4-E4B-it")
+    else:
+        reasons = _whisper_reasons(config, files)
+        if reasons:
+            raise ModelPreparationError("Unsupported checkpoint: " + "; ".join(reasons))
     root = _models_root(models_root)
     registry_path = root / "models.local.json"
     if registry_path.is_symlink():
@@ -376,12 +438,12 @@ def prepare_huggingface_model(
     source_exists = source_path.exists()
     if source_exists and not _metadata_matches(source_path, repository, sha):
         raise ModelPreparationError("An existing source for this model_key has different repository or revision metadata")
-    target = root / (("ctranslate2" if runtime == "ctranslate2" else "openvino") + f"-{model_key}-{precision}")
+    target = root / (("ctranslate2" if runtime == "ctranslate2" else "openvino") + f"-{model_key}-{precision}") if runtime != "transformers" else source_path
     if target.is_symlink():
         raise ModelPreparationError("The converted model target must not be a symlink")
     artifact_exists = target.exists()
     artifact_runtime = "openvino" if runtime.startswith("openvino") else runtime
-    if artifact_exists and not _metadata_matches(target, repository, sha, artifact_runtime, precision):
+    if runtime != "transformers" and artifact_exists and not _metadata_matches(target, repository, sha, artifact_runtime, precision):
         raise ModelPreparationError("An existing runtime artifact conflicts with this repository or conversion")
     runtime_status = _runtime_status(runtime) if operation == "convert" else None
     if runtime_status and not runtime_status["available"]:
@@ -404,7 +466,7 @@ def prepare_huggingface_model(
                 progress("downloading")
             _download_source(repository, sha, token, staged_source)
         if operation == "convert":
-            if not artifact_exists:
+            if runtime != "transformers" and not artifact_exists:
                 if progress:
                     progress("converting")
                 _convert(source_path if source_exists else staged_source, staged_artifact, runtime, precision)
@@ -414,14 +476,18 @@ def prepare_huggingface_model(
                 )
             if progress:
                 progress("verifying")
-            _verify(target if artifact_exists else staged_artifact, model_key, runtime, precision)
+            if runtime == "transformers":
+                verify_path = source_path if source_exists else staged_source
+            else:
+                verify_path = target if artifact_exists else staged_artifact
+            _verify(verify_path, model_key, runtime, precision)
         registry[model_key] = repository
         staged_registry.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         source_path.parent.mkdir(parents=True, exist_ok=True)
         if not source_exists:
             os.replace(staged_source, source_path)
             published.append(source_path)
-        if operation == "convert" and not artifact_exists:
+        if operation == "convert" and runtime != "transformers" and not artifact_exists:
             os.replace(staged_artifact, target)
             published.append(target)
         os.replace(staged_registry, registry_path)
@@ -444,7 +510,7 @@ def prepare_huggingface_model(
         "repository": repository,
         "revision": sha,
         "downloaded": not source_exists,
-        "converted": operation == "convert",
+        "converted": operation == "convert" and runtime != "transformers",
         "verified": operation == "convert",
         "runtime": runtime,
         "precision": precision,

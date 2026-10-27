@@ -1,0 +1,27 @@
+services:
+  speech-to-text-gemma4:
+    build:
+      context: .
+      args:
+        GEMMA4_IMAGE: "1"
+        DEFAULT_MODEL: gemma-4-e4b
+        DEFAULT_RUNTIME: transformers
+        DEFAULT_PRECISION: bf16
+    image: speech-to-text-gemma4:local
+    container_name: speech-to-text-gemma4
+    restart: unless-stopped
+    user: "${APP_UID:-10001}:${APP_GID:-10001}"
+    ports:
+      - "8000:8000"
+    environment:
+      SPEECH_TO_TEXT_MODELS_DIR: /opt/models
+      SPEECH_TO_TEXT_MODEL: gemma-4-e4b
+      SPEECH_TO_TEXT_RUNTIME: transformers
+      SPEECH_TO_TEXT_PRECISION: bf16
+      SPEECH_TO_TEXT_PROFILE_DB: /data/profiles.sqlite3
+      SPEECH_TO_TEXT_RECORDINGS_DIR: /data/tuning-recordings
+      SPEECH_TO_TEXT_FRONTEND_DIR: /app/frontend
+      HF_HOME: /data/huggingface
+    volumes:
+      - ./models:/opt/models
+      - ./data/gemma4:/data

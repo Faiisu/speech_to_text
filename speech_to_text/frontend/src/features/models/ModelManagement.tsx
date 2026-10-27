@@ -5,7 +5,7 @@ import type { ModelChoice, ModelDeletionPlan, ModelJob, ModelInspection, ModelRu
 import './models.css'
 
 const active = (status: ModelJob['status']) => status === 'queued' || status === 'running'
-const runtimeLabel = (runtime: string) => runtime === 'ctranslate2' ? 'CTranslate2' : runtime.replace(/^openvino-/, 'OpenVINO ').toUpperCase().replace('OPENVINO ', 'OpenVINO ')
+const runtimeLabel = (runtime: string) => runtime === 'ctranslate2' ? 'CTranslate2' : runtime === 'transformers' ? 'Transformers (Gemma 4)' : runtime.replace(/^openvino-/, 'OpenVINO ').toUpperCase().replace('OPENVINO ', 'OpenVINO ')
 const formatBytes = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`
 
 export default function ModelManagement() {
@@ -210,7 +210,7 @@ export default function ModelManagement() {
 
   return <div className="page-content models-page">
     <header className="models-heading">
-      <div><div className="eyebrow">MODEL LIBRARY <span className="models-heading-rule" /></div><h1>Models</h1><p>Bring a Whisper checkpoint into this host, then prepare it for a transcription runtime.</p></div>
+      <div><div className="eyebrow">MODEL LIBRARY <span className="models-heading-rule" /></div><h1>Models</h1><p>Bring a supported speech model into this host, then prepare it for a transcription runtime.</p></div>
       <div className="models-heading-links"><Link to="/profiles">Audio profiles ↗</Link><Link to="/model-tuning">Model tuning ↗</Link></div>
     </header>
 
@@ -241,12 +241,12 @@ export default function ModelManagement() {
 
       <aside className="models-actions-panel" aria-label="Preparation options">
         <div className="eyebrow">PREPARATION</div><h2>Choose what to do</h2>
-        <p>Downloading stores the source checkpoint. Converting prepares a runtime artifact and checks it with a short local inference.</p>
+        <p>Downloading stores source weights. Runtime preparation verifies a local inference; Gemma 4 uses its Transformers source files without conversion.</p>
         <label htmlFor="model-runtime">Target runtime<select id="model-runtime" value={runtime} onChange={event => runtimeChanged(event.target.value)} disabled={!inspection}>{inspection?.runtimes.map(item => <option key={item.key} value={item.key}>{runtimeLabel(item.key)}{item.available ? '' : ' · unavailable'}</option>) ?? <option value="ctranslate2">CTranslate2</option>}</select></label>
         <label htmlFor="model-precision">Precision<select id="model-precision" value={precision} onChange={event => setPrecision(event.target.value)} disabled={!selectedRuntime?.available || !selectedRuntime.precision_options.length}>{selectedRuntime?.precision_options.length ? selectedRuntime.precision_options.map(option => <option key={option} value={option}>{option}</option>) : <option value="">{inspection ? 'No precision available' : 'Inspect to see precision options'}</option>}</select></label>
         {selectedRuntime && <p className={selectedRuntime.available ? 'models-runtime-note' : 'models-runtime-note unavailable'}>{selectedRuntime.available ? `Available on this host · ${selectedRuntime.precision_options.join(', ')}` : selectedRuntime.reason || 'This runtime is unavailable on this host.'}</p>}
         {selectedRuntime?.available && defaultPrecision && precision !== defaultPrecision && <p className={installedPrecisions.includes(defaultPrecision) ? 'models-precision-note' : 'models-precision-note warning'}>Workflow default: <b>{defaultPrecision}</b>. This job prepares <b>{precision}</b>{installedPrecisions.includes(defaultPrecision) ? '; the default precision is already installed.' : `; available installed precisions: ${hasGenericArtifact ? 'not recorded (legacy artifact)' : installedPrecisions.join(', ') || 'none'}.`}</p>}
-        <div className="models-job-actions">{!catalogSelection && <button className="button button-outline" disabled={!inspection?.compatible || !validModelKey || submitting || hasActiveJob} onClick={() => void startJob('download')}>{submitting ? 'Starting…' : 'Download source'}</button>}<button className="button button-lime" disabled={!canConvert || !validModelKey} onClick={() => void startJob('convert')}>{submitting ? 'Starting…' : catalogSelection ? 'Prepare runtime' : 'Download and convert'}</button></div>
+        <div className="models-job-actions">{!catalogSelection && <button className="button button-outline" disabled={!inspection?.compatible || !validModelKey || submitting || hasActiveJob} onClick={() => void startJob('download')}>{submitting ? 'Starting…' : 'Download source'}</button>}<button className="button button-lime" disabled={!canConvert || !validModelKey} onClick={() => void startJob('convert')}>{submitting ? 'Starting…' : catalogSelection ? 'Prepare runtime' : runtime === 'transformers' ? 'Download and verify' : 'Download and convert'}</button></div>
         {!validModelKey && <small className="models-key-error" role="status">Use a local key of at most 64 letters, numbers, dots, underscores, or hyphens, without '..'.</small>}
         {hasActiveJob && <small className="models-action-hint" role="status">Wait for the active preparation job to finish before starting another.</small>}
         {!inspection && <small className="models-action-hint">Inspect a repository to enable preparation.</small>}

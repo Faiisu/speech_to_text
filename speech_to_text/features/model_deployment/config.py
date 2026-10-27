@@ -16,7 +16,7 @@ MODEL_DEFAULTS = {
     "enqueue_timeout_seconds": 30.0,
 }
 MODEL_KEYS = frozenset(MODEL_DEFAULTS)
-RUNTIME_OPTIONS = ("openvino-gpu", "openvino-cpu", "ctranslate2")
+RUNTIME_OPTIONS = ("openvino-gpu", "openvino-cpu", "ctranslate2", "transformers")
 FLOW_DEFAULTS = {
     "language": "th",
     "chunk_seconds": 30.0,
@@ -176,12 +176,18 @@ def model_config(value):
     supported = (
         {"source", "bf16", "int8", "int4"}
         if result["runtime"].startswith("openvino")
+        else {"bf16", "float32"}
+        if result["runtime"] == "transformers"
         else {"int8", "float32"}
     )
     if precision not in supported:
         raise ConfigurationError(
             f"Precision {precision!r} is not supported by {result['runtime']}; choose from {', '.join(sorted(supported))}"
         )
+    if result["model"] == "gemma-4-e4b" and result["runtime"] != "transformers":
+        raise ConfigurationError("Gemma 4 E4B requires the Transformers runtime")
+    if result["runtime"] == "transformers" and result["model"] != "gemma-4-e4b":
+        raise ConfigurationError("The Transformers runtime currently supports only gemma-4-e4b")
     capacity = result["queue_capacity"]
     if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
         raise ConfigurationError("queue_capacity must be a positive integer")

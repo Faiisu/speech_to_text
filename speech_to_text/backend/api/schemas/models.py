@@ -21,5 +21,5 @@ class ModelInspectionRequest(_ModelRequest):
 class ModelPreparationRequest(_ModelRequest):
     model_key: StrictStr
     operation: Literal["download", "convert"] = "convert"
-    runtime: Literal["ctranslate2", "openvino-cpu", "openvino-gpu"] | None = None
+    runtime: Literal["ctranslate2", "openvino-cpu", "openvino-gpu", "transformers"] | None = None
     precision: Literal["source", "bf16", "int8", "int4", "float32"] | None = None

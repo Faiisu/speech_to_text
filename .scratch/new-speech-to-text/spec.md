@@ -37,19 +37,19 @@ The following table is the authoritative Feature 01 configuration contract. It r
 | Configuration | Option | Default | Valid values and compatibility |
 | --- | --- | --- | --- |
 | Model | `model` | `turbo` | A non-empty catalog key matching `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` and containing no `..`; path separators are not accepted. The dynamic catalog and selected adapter determine whether a key is known and runnable. |
-| Model | `runtime` | `openvino-gpu` | `openvino-gpu`, `openvino-cpu`, or `ctranslate2`; actual availability depends on installed runtime libraries, model support, and host hardware. |
-| Model | `precision` | `source` | OpenVINO accepts `source`, `bf16`, `int8`, or `int4`; CTranslate2 accepts `int8` or `float32`. `source` uses the checkpoint's published precision (`bf16` for the initial `turbo` checkpoint). Installed weights and model support may further constrain loading. |
+| Model | `runtime` | `openvino-gpu` | `openvino-gpu`, `openvino-cpu`, or `ctranslate2`; actual availability depends on installed runtime libraries, model support, and host hardware. The `transformers` runtime is available only for `gemma-4-e4b` as defined by the [Gemma 4 contract](../gemma-4/spec.md). |
+| Model | `precision` | `source` | OpenVINO accepts `source`, `bf16`, `int8`, or `int4`; CTranslate2 accepts `int8` or `float32`; Gemma 4 with Transformers accepts `bf16` or `float32`. `source` uses the checkpoint's published precision (`bf16` for the initial `turbo` checkpoint). Installed weights and model support may further constrain loading. |
 | Model | `queue_capacity` | `6` chunks | Positive integer; bounds the shared-model FIFO queue. |
 | Model | `enqueue_timeout_seconds` | `30.0` seconds | Finite positive number; maximum wait to enqueue a shared-model chunk before `INPUT_QUEUE_TIMEOUT`; the flow's overload policy determines whether to stop or drop that chunk. |
 | Flow | `source_id` | Generated when omitted | If provided, a non-empty string used to identify events and route results. |
 | Flow | `language` | `th` | Non-empty language code or `auto`; the selected model must support the language. |
-| Flow | `chunk_seconds` | `30.0` seconds | Finite number in `(0, 30]` for the initial Whisper adapters. Chunks have zero overlap. |
+| Flow | `chunk_seconds` | `30.0` seconds | Finite number in `(0, 30]`; chunks have zero overlap. Gemma 4 also rejects any direct adapter input longer than 30 seconds. |
 | Flow | `silence_threshold` | `0.05` | Finite RMS threshold in `[0, 1)`. Chunks below the configured gate skip inference; the feature does not estimate room or microphone noise automatically. |
 | Flow | `vad` | Disabled | Optional Silero speech gate; normalized fields, ranges, timing, and processing order are defined in [Voice activity detection](#voice-activity-detection). |
 | Flow | `overload_policy` | `fail` | `fail` preserves fatal source shutdown on queue overload; `drop` reports and discards overloaded chunks while continuing capture. Backend microphone runs select `drop` for real-time operation. |
 | Flow decoding | `beam_size` | `1` | Integer in `[1, 10]`; decoder search width. |
 | Flow decoding | `temperature` | `0.0` | Finite number in `[0, 1]`; zero keeps greedy decoding. |
-| Flow decoding | `condition_on_previous_text` | `false` | Boolean; enables conditioning on prior chunk text where supported by the adapter. |
+| Flow decoding | `condition_on_previous_text` | `false` | Boolean; enables conditioning on prior chunk text where supported. Gemma 4's Transformers adapter leaves this setting inactive and the UI retains it while disabled. |
 | Flow decoding | `no_repeat_ngram_size` | `3` | Integer in `[0, 20]`; zero disables the no-repeat n-gram constraint. The default blocks repeated token trigrams across a generated chunk; it does not guarantee that Thai words cannot repeat. |
 | Flow decoding | `repetition_penalty` | `1.0` | Finite number in `[1, 2]`; one applies no repetition penalty. |
 | Flow decoding | `initial_prompt` | `""` | String containing vocabulary or transcription context; outer whitespace is stripped and an empty string disables prompting. See [Initial prompt](#initial-prompt). |
@@ -229,7 +229,7 @@ For both `openvino-cpu` and `openvino-gpu`, enabling the filter passes `return_t
 
 The filter uses Whisper's joint no-speech probability and average log-probability check. It can reject low-confidence non-speech output; it does not guarantee rejection of confidently hallucinated text. Model-call time includes threshold scoring, timestamp decoding, and filtering in the existing chunk RTF. A decoder-filtered chunk still reached model inference and retains its ordinary processing measurement; `skipped` / `no_speech` remains the distinct pre-inference VAD outcome.
 
-The group remains stored when selecting CTranslate2, but is explicitly inactive for that runtime. CTranslate2 keeps its existing native faster-whisper filtering and receives no OpenVINO-only keyword arguments. Frontend controls explain this boundary and preserve settings when switching runtimes. This is runtime-specific configuration, not a guarantee of identical output across adapters.
+The group remains stored when selecting CTranslate2 or Transformers, but is explicitly inactive for those runtimes. CTranslate2 keeps its existing native faster-whisper filtering and receives no OpenVINO-only keyword arguments; Gemma's Transformers adapter ignores the group. Frontend controls explain this boundary and preserve settings when switching runtimes. This is runtime-specific configuration, not a guarantee of identical output across adapters.
 
 Acceptance covers complete/detached defaults, strict validation, enabled/disabled generation arguments, empty results, shared model isolation, unchanged CTranslate2 behavior, workflow/profile/trial propagation, and retained processing measurements. The implementation follows the versioned [Transformers Whisper generation](https://github.com/huggingface/transformers/blob/v4.57.6/src/transformers/models/whisper/generation_whisper.py) and [Optimum Whisper wrapper](https://github.com/huggingface/optimum-intel/blob/v2.2.0/optimum/intel/openvino/modeling_seq2seq.py); stubbed adapter tests do not establish real-device accuracy.
 

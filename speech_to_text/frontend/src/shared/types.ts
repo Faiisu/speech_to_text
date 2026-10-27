@@ -85,7 +85,7 @@ export type ModelJob = {
 }
 
 export type RuntimeChoice = {
-  key: 'openvino-gpu' | 'openvino-cpu' | 'ctranslate2'
+  key: 'openvino-gpu' | 'openvino-cpu' | 'ctranslate2' | 'transformers'
   compatible: boolean
   ready: boolean
   precision_options: string[]

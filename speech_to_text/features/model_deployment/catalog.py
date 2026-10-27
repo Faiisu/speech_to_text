@@ -7,8 +7,11 @@ import json
 import os
 from pathlib import Path
 
-BUILTINS = {"turbo": "typhoon-ai/typhoon-whisper-turbo"}
-RUNTIMES = ("openvino-gpu", "openvino-cpu", "ctranslate2")
+BUILTINS = {
+    "turbo": "typhoon-ai/typhoon-whisper-turbo",
+    "gemma-4-e4b": "google/gemma-4-E4B-it",
+}
+RUNTIMES = ("openvino-gpu", "openvino-cpu", "ctranslate2", "transformers")
 PRECISION_SUFFIXES = ("-source", "-bf16", "-int8", "-int4", "-float32")
 WHISPER_LANGUAGE_CODES = tuple(
     "af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi fo fr gl gu ha haw he hi hr ht hu hy id is it ja jw ka kk km kn ko la lb ln lo lt lv mg mi mk ml mn mr ms mt my ne nl nn no oc pa pl ps pt ro sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk ur uz vi yi yo yue zh".split()
@@ -33,6 +36,8 @@ def _has_weights(path, family):
     if family == "ctranslate2":
         artifact = path / "model.bin"
         return artifact.is_file() and artifact.stat().st_size > 0
+    if family == "transformers":
+        return any(path.glob("*.safetensors"))
     return any(
         xml.with_suffix(".bin").is_file() and xml.with_suffix(".bin").stat().st_size > 0
         for xml in path.glob("*.xml")
@@ -120,6 +125,24 @@ def _module_ready(name):
         return False
 
 
+def _gemma_runtime_ready():
+    try:
+        from importlib.metadata import version
+        from transformers import AutoModelForMultimodalLM  # noqa: F401
+        import accelerate  # noqa: F401
+        import librosa  # noqa: F401
+        import torch  # noqa: F401
+        import torchvision  # noqa: F401
+
+        transformers_version = tuple(
+            int(part) for part in version("transformers").split(".")[:3]
+        )
+        torch_version = tuple(int(part) for part in version("torch").split(".")[:2])
+        return transformers_version >= (5, 10, 1) and torch_version >= (2, 4)
+    except Exception:
+        return False
+
+
 def model_read_roots(*, catalog_path=None):
     """Return model roots in lookup order; explicit roots stay hermetic."""
     if catalog_path is not None:
@@ -169,6 +192,24 @@ def _read_registry_file(registry):
 
 def _runtime_metadata(key, root, model_key, repo, *, roots=None):
     roots = roots or [root]
+    if key == "transformers":
+        is_gemma = repo == BUILTINS["gemma-4-e4b"]
+        source_paths = [model_root / "sources" / model_key for model_root in roots]
+        source_ready = any(_has_weights(path, "transformers") for path in source_paths)
+        dependencies_ready = _gemma_runtime_ready()
+        return {
+            "key": key,
+            "compatible": is_gemma,
+            "ready": bool(is_gemma and source_ready and dependencies_ready),
+            "precision_options": ["bf16", "float32"] if is_gemma else [],
+            "has_generic_artifact": False,
+            "installed_precisions": ["bf16", "float32"] if is_gemma and source_ready else [],
+            "reason": None if is_gemma and source_ready and dependencies_ready else (
+                "Transformers runtime supports Gemma 4 E4B only" if not is_gemma else
+                "Gemma source weights are not prepared under the models directory" if not source_ready else
+                "Install the speech-to-text[gemma4] extra to use the Transformers runtime"
+            ),
+        }
     ov = key.startswith("openvino")
     module = "openvino" if ov else "ctranslate2"
     family = "openvino" if ov else "ctranslate2"
@@ -343,7 +384,7 @@ def list_models(*, catalog_path=None):
                     "repository": repo,
                     "installed": False,
                     "downloadable": True,
-                    "languages": _languages(
+                    "languages": ["th", "en", "auto"] if key == "gemma-4-e4b" else _languages(
                         root, target, repo, allow_cache=catalog_path is None, roots=roots
                     ),
                     "runtimes": [],
@@ -381,8 +422,13 @@ def list_models(*, catalog_path=None):
         model["runtimes"] = [
             _runtime_metadata(runtime, root, model["key"], model["repository"], roots=roots)
             for runtime in RUNTIMES
+            if runtime != "transformers" or model["repository"] == BUILTINS["gemma-4-e4b"]
         ]
-        model["installed"] = model["key"] in converted_keys or any(
+        has_gemma_source = model["repository"] == BUILTINS["gemma-4-e4b"] and any(
+            _has_weights(model_root / "sources" / model["key"], "transformers")
+            for model_root in roots
+        )
+        model["installed"] = model["key"] in converted_keys or has_gemma_source or any(
             r["ready"] for r in model["runtimes"]
         )
     # Converted-only models are discoverable even without their source repository.

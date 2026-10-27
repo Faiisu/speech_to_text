@@ -9,9 +9,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libgomp1 python3.12 python3.12-venv \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml uv.lock ./
+ARG GEMMA4_IMAGE=0
 RUN --mount=type=cache,id=speech-to-text-uv-cache,target=/root/.cache/uv \
-    uv sync --python /usr/bin/python3.12 --locked --no-dev --no-install-project \
-    --extra backend --extra microphone --extra openvino --extra ctranslate2 --extra model-management --extra mqtt
+    if [ "$GEMMA4_IMAGE" = "1" ]; then \
+      uv sync --python /usr/bin/python3.12 --locked --no-dev --no-install-project \
+        --extra backend --extra microphone --extra ctranslate2 --extra model-management --extra mqtt --extra gemma4; \
+    else \
+      uv sync --python /usr/bin/python3.12 --locked --no-dev --no-install-project \
+        --extra backend --extra microphone --extra openvino --extra ctranslate2 --extra model-management --extra mqtt; \
+    fi
 
 FROM node:22.14.0-bookworm-slim AS frontend-build
 WORKDIR /build/frontend
@@ -21,13 +27,16 @@ COPY speech_to_text/frontend/ ./
 RUN npm run build
 
 FROM ubuntu:24.04 AS runtime
+ARG DEFAULT_MODEL=turbo
+ARG DEFAULT_RUNTIME=openvino-gpu
+ARG DEFAULT_PRECISION=source
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
     SPEECH_TO_TEXT_MODELS_DIR=/opt/models \
-    SPEECH_TO_TEXT_MODEL=turbo \
-    SPEECH_TO_TEXT_RUNTIME=openvino-gpu \
-    SPEECH_TO_TEXT_PRECISION=source \
+    SPEECH_TO_TEXT_MODEL=${DEFAULT_MODEL} \
+    SPEECH_TO_TEXT_RUNTIME=${DEFAULT_RUNTIME} \
+    SPEECH_TO_TEXT_PRECISION=${DEFAULT_PRECISION} \
     SPEECH_TO_TEXT_PROFILE_DB=/data/profiles.sqlite3 \
     SPEECH_TO_TEXT_RECORDINGS_DIR=/data/tuning-recordings \
     SPEECH_TO_TEXT_FRONTEND_DIR=/app/frontend \

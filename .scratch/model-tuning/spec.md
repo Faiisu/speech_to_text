@@ -66,7 +66,7 @@ Run MIN/AVG/MAX RTF and their count follow the [backend aggregation contract](..
 
 ### OpenVINO speech filter trials
 
-The Profile editor and Model tuning expose the OpenVINO speech filter enable switch, no-speech threshold, and log-probability threshold under decoding settings. The [Feature 01 contract](../new-speech-to-text/spec.md#openvino-speech-filtering) owns their defaults and ranges. Controls apply to either OpenVINO runtime; selecting CTranslate2 disables them with an explanation while preserving their values for a later runtime switch. Submit the nested group in existing multipart `decoding_options` JSON. Each trial displays its effective filter settings independently of subsequent form edits and keeps the existing per-chunk RTF, including decoder filtering time. Empty decoder output remains a successful processed chunk, distinct from VAD skips that bypass the model.
+The Profile editor and Model tuning expose the OpenVINO speech filter enable switch, no-speech threshold, and log-probability threshold under decoding settings. The [Feature 01 contract](../new-speech-to-text/spec.md#openvino-speech-filtering) owns their defaults and ranges. Controls apply to either OpenVINO runtime; selecting CTranslate2 or Transformers disables them with an explanation while preserving their values for a later runtime switch. Submit the nested group in existing multipart `decoding_options` JSON. Each trial displays its effective filter settings independently of subsequent form edits and keeps the existing per-chunk RTF, including decoder filtering time. Empty decoder output remains a successful processed chunk, distinct from VAD skips that bypass the model.
 
 ### Initial prompt trials
 

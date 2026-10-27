@@ -45,6 +45,8 @@ This document is the source of truth for where project files belong. Follow it w
 ├── .gitignore                  # Generated files excluded from version control
 ├── README.md                   # Project entry point
 ├── compose.mqtt.yaml           # Standalone MQTT broker with health check and persistence
+├── compose.gemma4.yaml         # Optional persistent in-process Transformers deployment
+├── compose.gemma4.microphone.yaml # Optional Linux microphone device override for Gemma
 ├── Dockerfile                  # Versioned container build definition
 ├── pyproject.toml              # Package metadata and Python dependencies
 ├── uv.lock                     # Locked Python dependency resolution
@@ -125,7 +127,7 @@ Reusable host commands include `scripts/run_macos.sh` for the macOS development 
 - Put inbound HTTP app setup, route handlers, and HTTP-only schemas in `speech_to_text/backend/`. Keep domain decisions in callable features and workflows.
 - Put Python feature, backend, and workflow tests under `tests/`, grouped by the boundary they verify. Keep browser E2E specs under `speech_to_text/frontend/e2e/`, beside their frontend tooling; keep test-only Python backend fixtures under `tests/frontend_e2e/`.
 - Put maintained documentation under `docs/`. Keep feature specifications, issue tracking, and task evidence under `.scratch/<feature_name>/` as described by the [issue tracker guide](agents/issue-tracker.md).
-- Put container build assets at the repository root (`Dockerfile` and `.dockerignore`), and model-export utilities under `scripts/`. The UBX-330M installer owns and generates its Compose configuration under `data/ubx330m/`.
+- Put container build assets and maintained Compose deployment files at the repository root (`Dockerfile`, `.dockerignore`, and `compose.*.yaml`), and model-export utilities under `scripts/`. The UBX-330M installer owns and generates its Compose configuration under `data/ubx330m/`.
 - Keep new application code outside `legacies-poc/`. Modify the archive only when a task explicitly targets legacy code.
 - Keep downloaded or machine-specific model artifacts under `models/`, audio inputs under `audio/`, and reusable project commands under `scripts/`. Do not place these assets inside Python packages.
 - Keep ignored persistent runtime data and generated deployment state under `data/`.

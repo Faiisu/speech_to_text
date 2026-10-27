@@ -284,12 +284,111 @@ class CTranslate2Adapter:
         self.model = None
 
 
+class TransformersGemmaAdapter:
+    """Local Transformers adapter for Gemma 4 E4B audio transcription."""
+
+    _LANGUAGES = {"th": "Thai", "en": "English"}
+
+    def __init__(self, config, *, artifact_path=None):
+        try:
+            import torch
+            from transformers import AutoModelForMultimodalLM, AutoProcessor
+        except ImportError as exc:
+            raise ModelLoadError(
+                "Gemma 4 requires transformers>=5.10.1, torch>=2.4, accelerate, librosa, and torchvision; install the speech-to-text[gemma4] extra"
+            ) from exc
+        source = Path(artifact_path) if artifact_path is not None else next(
+            (root / "sources" / config["model"] for root in _roots() if (root / "sources" / config["model"]).is_dir()),
+            _root() / "sources" / config["model"],
+        )
+        if not source.is_dir() or not any(source.glob("*.safetensors")):
+            raise ModelLoadError(f"Gemma source weights were not found under {source}")
+        if config["model"] != "gemma-4-e4b":
+            raise ModelLoadError(f"The Transformers adapter does not support {config['model']}")
+        dtype = torch.bfloat16 if config["precision"] == "bf16" else torch.float32
+        self.torch = torch
+        try:
+            self.processor = AutoProcessor.from_pretrained(
+                source, local_files_only=True, trust_remote_code=False
+            )
+            self.model = AutoModelForMultimodalLM.from_pretrained(
+                source,
+                dtype=dtype,
+                device_map="auto",
+                local_files_only=True,
+                trust_remote_code=False,
+                use_safetensors=True,
+            )
+        except Exception as exc:
+            raise ModelLoadError(
+                f"Unable to load Gemma 4 from local source {source} with {config['precision']} precision: {exc}"
+            ) from exc
+
+    def transcribe(self, audio, *, language, decoding_options):
+        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if audio.size > 30 * 16000:
+            raise ValueError("Gemma 4 audio input must not exceed 30 seconds at 16 kHz")
+        if language == "auto":
+            prompt = "Transcribe the following speech segment in its original language. Follow these specific instructions for formatting the answer: only output the transcription, with no newlines. When transcribing numbers, write digits."
+        elif language in self._LANGUAGES:
+            name = self._LANGUAGES[language]
+            prompt = f"Transcribe the following speech segment in {name} into {name} text. Follow these specific instructions for formatting the answer: only output the transcription, with no newlines. When transcribing numbers, write digits."
+        else:
+            raise ValueError(f"Gemma 4 does not support language {language!r}; choose th, en, or auto")
+        initial_prompt = decoding_options.get("initial_prompt", "").strip()
+        if initial_prompt:
+            prompt += f" Use this vocabulary or context when relevant: {initial_prompt}"
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "audio", "audio": audio},
+        ]}]
+        inputs = self.processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+        device = getattr(self.model, "device", None)
+        if device is not None:
+            inputs = inputs.to(device)
+        if "input_features" in inputs:
+            inputs["input_features"] = inputs["input_features"].to(dtype=self.model.dtype)
+        input_length = inputs["input_ids"].shape[-1]
+        generation = {
+            "max_new_tokens": 512,
+            "do_sample": decoding_options["temperature"] > 0,
+            "num_beams": decoding_options["beam_size"],
+            "no_repeat_ngram_size": decoding_options["no_repeat_ngram_size"],
+            "repetition_penalty": decoding_options["repetition_penalty"],
+        }
+        if decoding_options["temperature"] > 0:
+            generation["temperature"] = decoding_options["temperature"]
+        with self.torch.inference_mode():
+            output = self.model.generate(**inputs, **generation)
+        response = self.processor.decode(output[0][input_length:], skip_special_tokens=True)
+        parser = getattr(self.processor, "parse_response", None)
+        if callable(parser):
+            parsed = parser(response)
+            if isinstance(parsed, dict):
+                response = parsed.get("text", response)
+        return str(response).strip()
+
+    def close(self):
+        self.model = None
+        self.processor = None
+        gc.collect()
+
+
 def create_runtime(config, *, artifact_path=None):
     try:
         if config["runtime"].startswith("openvino"):
             return OpenVINOAdapter(config, artifact_path=artifact_path)
         if config["runtime"] == "ctranslate2":
             return CTranslate2Adapter(config, artifact_path=artifact_path)
+        if config["runtime"] == "transformers":
+            return TransformersGemmaAdapter(config, artifact_path=artifact_path)
     except ModelLoadError:
         raise
     except Exception as exc:

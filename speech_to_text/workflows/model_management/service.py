@@ -107,7 +107,7 @@ class ModelManagementService:
               operation="convert", runtime="ctranslate2", precision=None):
         self._validate(repository, model_key, revision, operation, runtime, precision)
         runtime = runtime or "ctranslate2"
-        precision = precision or ("int8" if runtime == "ctranslate2" else "source")
+        precision = precision or ("bf16" if runtime == "transformers" else "int8" if runtime == "ctranslate2" else "source")
         with self._lock:
             if self._closed:
                 raise ModelManagementUnavailableError("Model management is shutting down")
@@ -287,12 +287,13 @@ class ModelManagementService:
         ModelManagementService._validate_model_key(model_key)
         if operation not in {"download", "convert"}:
             raise ModelManagementInputError("operation must be download or convert")
-        if runtime not in {None, "ctranslate2", "openvino-cpu", "openvino-gpu"}:
-            raise ModelManagementInputError("runtime must be ctranslate2, openvino-cpu, or openvino-gpu")
+        if runtime not in {None, "ctranslate2", "openvino-cpu", "openvino-gpu", "transformers"}:
+            raise ModelManagementInputError("runtime must be ctranslate2, openvino-cpu, openvino-gpu, or transformers")
         allowed = {
             "ctranslate2": {None, "int8", "float32"},
             "openvino-cpu": {None, "source", "bf16", "int8", "int4"},
             "openvino-gpu": {None, "source", "bf16", "int8", "int4"},
+            "transformers": {None, "bf16", "float32"},
         }
         selected_runtime = runtime or "ctranslate2"
         if precision not in allowed[selected_runtime]:

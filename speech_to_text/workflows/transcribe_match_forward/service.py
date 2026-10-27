@@ -258,6 +258,8 @@ class TranscriptionService:
         # supported int8 default unless an operator explicitly configured precision.
         if config["runtime"] == "ctranslate2" and not precision_is_explicit:
             config["precision"] = "int8"
+        elif config["runtime"] == "transformers" and not precision_is_explicit:
+            config["precision"] = "bf16"
         return config
 
     @property

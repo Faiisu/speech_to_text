@@ -4,8 +4,8 @@ Speech-to-Text provides a React frontend, a FastAPI backend, and callable Python
 
 ## Current capabilities
 
-- Discover local speech models and transcribe WAV clips or microphone input with OpenVINO or CTranslate2 runtimes.
-- Download Hugging Face Whisper models, convert/verify supported runtimes, and delete unused local models in [Models](.scratch/model-management/spec.md).
+- Discover local speech models and transcribe WAV clips or microphone input with OpenVINO, CTranslate2, or the Transformers runtime for Gemma 4 E4B.
+- Download Hugging Face Whisper models for OpenVINO/CTranslate2 or prepare Gemma 4 E4B for Transformers, then delete unused local models in [Models](.scratch/model-management/spec.md).
 - Match configured words and phrases as microphone transcript chunks arrive, with cumulative occurrence counts.
 - Save reusable microphone profiles and start, monitor, and stop workflow runs from the frontend.
 - Receive IP camera/NVR audio over RTSP in saved profiles, with automatic reconnection and camera credentials entered in the frontend or supplied by deployment-managed references. See [RTSP configuration](docs/configuration.md#ipcam-audio-through-rtsp).
