@@ -38,7 +38,7 @@ docker network inspect shared-network >/dev/null 2>&1 \
 
 command -v getent >/dev/null 2>&1 || fail "getent is required to detect the host audio group."
 audio_group="$(getent group audio || true)"
-audio_gid="${audio_group##*:}"
+audio_gid="$(awk -F: 'NR == 1 { print $3 }' <<< "$audio_group")"
 [[ "$audio_gid" =~ ^[0-9]+$ ]] || fail "The host 'audio' group is unavailable; microphone access cannot be configured."
 [[ -d /dev/snd ]] || fail "Host microphone devices at /dev/snd are unavailable. Audio-file deployment can use compose.gemma4.yaml directly."
 
