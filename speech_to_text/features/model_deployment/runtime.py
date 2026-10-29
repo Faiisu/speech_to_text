@@ -285,7 +285,7 @@ class CTranslate2Adapter:
 
 
 class TransformersGemmaAdapter:
-    """Local Transformers adapter for Gemma 4 E4B audio transcription."""
+    """Local Transformers adapter for Gemma 4 E2B and E4B audio transcription."""
 
     _LANGUAGES = {"th": "Thai", "en": "English"}
 
@@ -303,8 +303,10 @@ class TransformersGemmaAdapter:
         )
         if not source.is_dir() or not any(source.glob("*.safetensors")):
             raise ModelLoadError(f"Gemma source weights were not found under {source}")
-        if config["model"] != "gemma-4-e4b":
+        if config["model"] not in {"gemma-4-e2b", "gemma-4-e4b"}:
             raise ModelLoadError(f"The Transformers adapter does not support {config['model']}")
+        if config["model"] == "gemma-4-e2b" and config["precision"] != "bf16":
+            raise ModelLoadError("Gemma 4 E2B supports only bf16 precision")
         dtype = torch.bfloat16 if config["precision"] == "bf16" else torch.float32
         self.torch = torch
         try:

@@ -4,7 +4,7 @@ services:
       context: .
       args:
         GEMMA4_IMAGE: "1"
-        DEFAULT_MODEL: gemma-4-e4b
+        DEFAULT_MODEL: gemma-4-e2b
         DEFAULT_RUNTIME: transformers
         DEFAULT_PRECISION: bf16
     image: speech-to-text-gemma4:local
@@ -15,7 +15,7 @@ services:
       - "8000:8000"
     environment:
       SPEECH_TO_TEXT_MODELS_DIR: /opt/models
-      SPEECH_TO_TEXT_MODEL: gemma-4-e4b
+      SPEECH_TO_TEXT_MODEL: gemma-4-e2b
       SPEECH_TO_TEXT_RUNTIME: transformers
       SPEECH_TO_TEXT_PRECISION: bf16
       SPEECH_TO_TEXT_PROFILE_DB: /data/profiles.sqlite3

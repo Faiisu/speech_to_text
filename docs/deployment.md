@@ -78,7 +78,7 @@ The installer creates its Compose configuration and profile data under the ignor
 
 An installer success means the service health check passed, `/healthz` responded, `turbo` was installed, `openvino-gpu` was ready with source precision, and microphone devices were discovered. If no microphone devices are found, the installer stops with an actionable error.
 
-### Optional Gemma 4 E4B Docker flavor
+### Optional Gemma 4 E2B/E4B Docker flavor
 
 The standard production image and UBX installer retain the existing OpenVINO Whisper defaults. The optional Gemma flavor uses a separate Compose file and contains Transformers/PyTorch plus CTranslate2, but omits Optimum Intel and the OpenVINO runtime because their dependency set conflicts with the current Transformers requirement. Gemma itself runs only through its in-process Transformers adapter; CTranslate2 remains available for compatible Whisper models. The flavor uses the same `/models` page, Profile selection, and Model tuning flow.
 
@@ -91,7 +91,7 @@ export APP_GID="$(id -g)"
 docker compose -f compose.gemma4.yaml up --build -d
 ```
 
-The host directories must be writable by `APP_UID:APP_GID`. `/opt/models` stores prepared model files, while `/data` retains the profile database, model-tuning recordings, and Hugging Face cache. Open **Models** at `http://127.0.0.1:8000/models`, inspect/download `google/gemma-4-E4B-it`, and choose the Transformers runtime to verify it. A request-scoped Hugging Face token must have access to the repository. The backend stores the source under `/opt/models/sources/gemma-4-e4b` and loads it in-process when the first transcription starts; weights are not copied into the image.
+The host directories must be writable by `APP_UID:APP_GID`. `/opt/models` stores prepared model files, while `/data` retains the profile database, model-tuning recordings, and Hugging Face cache. Open **Models** at `http://127.0.0.1:8000/models`, inspect/download either `google/gemma-4-E2B-it` or `google/gemma-4-E4B-it`, and choose the Transformers runtime to verify it. E2B exposes BF16 only; E4B supports BF16 or float32. A request-scoped Hugging Face token must have access to the repository. The backend stores each source under `/opt/models/sources/<model-key>` and loads it in-process when the first transcription starts; weights are not copied into the image. The Compose default is E2B; E4B remains selectable through the Models page.
 
 To enable host microphone capture on Linux, install `getent` if needed and apply the optional device override. Audio-file uploads work without this override:
 
@@ -100,9 +100,9 @@ export AUDIO_GID="$(getent group audio | cut -d: -f3)"
 docker compose -f compose.gemma4.yaml -f compose.gemma4.microphone.yaml up --build -d
 ```
 
-Stop the service with `docker compose -f compose.gemma4.yaml down`. Google's [audio guide](https://ai.google.dev/gemma/docs/capabilities/audio?hl=en) shows the E4B checkpoint at about 10.2 GB, so leave additional disk for download and staging copies.
+Stop the service with `docker compose -f compose.gemma4.yaml down`. Google's [audio guide](https://ai.google.dev/gemma/docs/capabilities/audio?hl=en) lists E2B at about 10.2 GB and E4B at about 16 GB; leave additional disk for download and staging copies.
 
-Including PyTorch, Transformers, and audio/vision dependencies makes this image substantially larger and multi-gigabyte; exact size depends on platform wheels and Docker layers. The target host also needs sufficient system RAM or accelerator memory. [Google's overview](https://ai.google.dev/gemma/docs/core.md) estimates 17.9 GB GPU/TPU memory for Gemma 4 E4B BF16 including overhead, and the separate [vLLM recipe](https://docs.vllm.ai/projects/recipes/en/stable/Google/Gemma4.html) lists a 24 GB+ NVIDIA GPU as its BF16 minimum. Those values are references for their documented stacks, not guarantees for this app's Transformers runtime or the UBX Intel iGPU. Gemma inference, memory use, speed, and recognition quality have not been verified on the UBX-330M.
+Including PyTorch, Transformers, and audio/vision dependencies makes this image substantially larger and multi-gigabyte; exact size depends on platform wheels and Docker layers. The target host also needs sufficient system RAM or accelerator memory. [Google's overview](https://ai.google.dev/gemma/docs/core.md) estimates 11.4 GB GPU/TPU memory for E2B BF16 and 17.9 GB for E4B BF16, including overhead. E2B's estimate leaves little headroom on a 16 GB system after operating-system and runtime use, so BF16 is the only offered E2B precision. The separate [vLLM recipe](https://docs.vllm.ai/projects/recipes/en/stable/Google/Gemma4.html) lists a 24 GB+ NVIDIA GPU as its BF16 minimum. These values are references for their documented stacks, not guarantees for this app's Transformers runtime or the UBX Intel iGPU. Gemma inference, memory use, speed, and recognition quality have not been verified on the UBX-330M.
 
 This Compose flavor does not configure GPU passthrough or an accelerator-specific PyTorch build; it uses the devices available to PyTorch inside the container and therefore normally runs inference on CPU. Treat accelerator use and target-hardware performance as unverified until checked on the deployment host.
 

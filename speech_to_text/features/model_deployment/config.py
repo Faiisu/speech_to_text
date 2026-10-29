@@ -186,8 +186,13 @@ def model_config(value):
         )
     if result["model"] == "gemma-4-e4b" and result["runtime"] != "transformers":
         raise ConfigurationError("Gemma 4 E4B requires the Transformers runtime")
-    if result["runtime"] == "transformers" and result["model"] != "gemma-4-e4b":
-        raise ConfigurationError("The Transformers runtime currently supports only gemma-4-e4b")
+    if result["model"] == "gemma-4-e2b":
+        if result["runtime"] != "transformers":
+            raise ConfigurationError("Gemma 4 E2B requires the Transformers runtime")
+        if precision != "bf16":
+            raise ConfigurationError("Gemma 4 E2B supports only bf16 precision")
+    if result["runtime"] == "transformers" and result["model"] not in {"gemma-4-e2b", "gemma-4-e4b"}:
+        raise ConfigurationError("The Transformers runtime supports only gemma-4-e2b and gemma-4-e4b")
     capacity = result["queue_capacity"]
     if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
         raise ConfigurationError("queue_capacity must be a positive integer")

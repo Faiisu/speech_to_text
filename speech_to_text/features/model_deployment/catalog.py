@@ -9,8 +9,10 @@ from pathlib import Path
 
 BUILTINS = {
     "turbo": "typhoon-ai/typhoon-whisper-turbo",
+    "gemma-4-e2b": "google/gemma-4-E2B-it",
     "gemma-4-e4b": "google/gemma-4-E4B-it",
 }
+GEMMA_REPOSITORIES = frozenset((BUILTINS["gemma-4-e2b"], BUILTINS["gemma-4-e4b"]))
 RUNTIMES = ("openvino-gpu", "openvino-cpu", "ctranslate2", "transformers")
 PRECISION_SUFFIXES = ("-source", "-bf16", "-int8", "-int4", "-float32")
 WHISPER_LANGUAGE_CODES = tuple(
@@ -193,7 +195,7 @@ def _read_registry_file(registry):
 def _runtime_metadata(key, root, model_key, repo, *, roots=None):
     roots = roots or [root]
     if key == "transformers":
-        is_gemma = repo == BUILTINS["gemma-4-e4b"]
+        is_gemma = repo in GEMMA_REPOSITORIES
         source_paths = [model_root / "sources" / model_key for model_root in roots]
         source_ready = any(_has_weights(path, "transformers") for path in source_paths)
         dependencies_ready = _gemma_runtime_ready()
@@ -201,11 +203,11 @@ def _runtime_metadata(key, root, model_key, repo, *, roots=None):
             "key": key,
             "compatible": is_gemma,
             "ready": bool(is_gemma and source_ready and dependencies_ready),
-            "precision_options": ["bf16", "float32"] if is_gemma else [],
+            "precision_options": (["bf16"] if repo == BUILTINS["gemma-4-e2b"] else ["bf16", "float32"]) if is_gemma else [],
             "has_generic_artifact": False,
-            "installed_precisions": ["bf16", "float32"] if is_gemma and source_ready else [],
+            "installed_precisions": (["bf16"] if repo == BUILTINS["gemma-4-e2b"] else ["bf16", "float32"]) if is_gemma and source_ready else [],
             "reason": None if is_gemma and source_ready and dependencies_ready else (
-                "Transformers runtime supports Gemma 4 E4B only" if not is_gemma else
+                "Transformers runtime supports Gemma 4 E2B and E4B only" if not is_gemma else
                 "Gemma source weights are not prepared under the models directory" if not source_ready else
                 "Install the speech-to-text[gemma4] extra to use the Transformers runtime"
             ),
@@ -384,7 +386,7 @@ def list_models(*, catalog_path=None):
                     "repository": repo,
                     "installed": False,
                     "downloadable": True,
-                    "languages": ["th", "en", "auto"] if key == "gemma-4-e4b" else _languages(
+                    "languages": ["th", "en", "auto"] if repo in GEMMA_REPOSITORIES else _languages(
                         root, target, repo, allow_cache=catalog_path is None, roots=roots
                     ),
                     "runtimes": [],
@@ -422,9 +424,9 @@ def list_models(*, catalog_path=None):
         model["runtimes"] = [
             _runtime_metadata(runtime, root, model["key"], model["repository"], roots=roots)
             for runtime in RUNTIMES
-            if runtime != "transformers" or model["repository"] == BUILTINS["gemma-4-e4b"]
+            if runtime != "transformers" or model["repository"] in GEMMA_REPOSITORIES
         ]
-        has_gemma_source = model["repository"] == BUILTINS["gemma-4-e4b"] and any(
+        has_gemma_source = model["repository"] in GEMMA_REPOSITORIES and any(
             _has_weights(model_root / "sources" / model["key"], "transformers")
             for model_root in roots
         )

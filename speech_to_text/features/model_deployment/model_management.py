@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .catalog import BUILTINS, _asset_paths
+from .catalog import BUILTINS, GEMMA_REPOSITORIES, _asset_paths
 from .config import flow_config
 
 _MODEL_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -196,13 +196,15 @@ def inspect_huggingface_model(repository, revision="main", token=None) -> dict:
     if token is not None and not isinstance(token, str):
         raise ModelPreparationError("token must be a string")
     sha, config, files = _config(repository, revision, token)
-    is_gemma = repository == "google/gemma-4-E4B-it"
+    is_gemma = repository in GEMMA_REPOSITORIES
     reasons = _gemma_reasons(config, files) if is_gemma else _whisper_reasons(config, files)
     runtimes = (
         [_runtime_status("transformers")]
         if is_gemma
         else [_runtime_status("openvino-cpu"), _runtime_status("openvino-gpu"), _runtime_status("ctranslate2")]
     )
+    if repository == BUILTINS["gemma-4-e2b"]:
+        runtimes[0]["precision_options"] = ["bf16"]
     return {
         "repository": repository,
         "revision": sha,
@@ -253,11 +255,7 @@ def _metadata_matches(path, repository, sha, runtime=None, precision=None):
 def _download_source(repository, sha, token, destination):
     _, _, snapshot_download = _hub()
     try:
-        allow_patterns = (
-            _GEMMA_SOURCE_FILES
-            if repository == "google/gemma-4-E4B-it"
-            else _SOURCE_FILES
-        )
+        allow_patterns = _GEMMA_SOURCE_FILES if repository in GEMMA_REPOSITORIES else _SOURCE_FILES
         snapshot = Path(snapshot_download(
             repo_id=repository,
             revision=sha,
@@ -267,7 +265,7 @@ def _download_source(repository, sha, token, destination):
         ))
         config = json.loads((snapshot / "config.json").read_text(encoding="utf-8"))
         files = {path.relative_to(snapshot).as_posix() for path in snapshot.rglob("*") if path.is_file()}
-        is_gemma = repository == "google/gemma-4-E4B-it"
+        is_gemma = repository in GEMMA_REPOSITORIES
         reasons = _gemma_reasons(config, files) if is_gemma else _whisper_reasons(config, files)
         if reasons:
             raise ModelPreparationError("Downloaded source is unsupported: " + "; ".join(reasons))
@@ -402,15 +400,17 @@ def prepare_huggingface_model(
     if progress:
         progress("inspecting")
     sha, config, files = _config(repository, revision, token)
-    is_gemma = repository == "google/gemma-4-E4B-it"
+    is_gemma = repository in GEMMA_REPOSITORIES
     if is_gemma:
         reasons = _gemma_reasons(config, files)
         if reasons:
             raise ModelPreparationError("Unsupported Gemma checkpoint: " + "; ".join(reasons))
         if operation == "convert" and runtime != "transformers":
-            raise ModelPreparationError("Gemma 4 E4B supports only the Transformers runtime; no conversion is offered")
+            raise ModelPreparationError("Gemma 4 supports only the Transformers runtime; no conversion is offered")
+        if repository == BUILTINS["gemma-4-e2b"] and precision != "bf16":
+            raise ModelPreparationError("Gemma 4 E2B supports only bf16 precision")
     elif runtime == "transformers":
-        raise ModelPreparationError("The Transformers runtime currently supports only google/gemma-4-E4B-it")
+        raise ModelPreparationError("The Transformers runtime currently supports only google/gemma-4-E2B-it and google/gemma-4-E4B-it")
     else:
         reasons = _whisper_reasons(config, files)
         if reasons:
