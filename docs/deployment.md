@@ -36,7 +36,7 @@ The update script requires a clean checkout with a configured Git upstream, fast
 
 ## Switch the UBX-330M service between OpenVINO and Gemma
 
-The deploy scripts keep the two application flavors mutually exclusive on host port 8000. They allow redeploying the currently active flavor, but refuse to start one flavor while the other is running. Stop the active flavor explicitly before switching; neither deploy script stops it automatically. Run these scripts as the normal Docker-enabled host user, not as root.
+The deploy scripts keep the two application flavors mutually exclusive on host port 8000. They allow redeploying the currently active flavor, but refuse to start one flavor while the other is running. Stop the active flavor explicitly before switching; neither deploy script stops it automatically. Run deploy scripts as the normal Docker-enabled host user, not as root.
 
 Deploy or update the standard OpenVINO service with:
 
@@ -60,7 +60,7 @@ To switch back, stop both managed flavor projects and rerun the OpenVINO install
 ./scripts/deploy_openvino.sh
 ```
 
-The stop script targets only the installer Compose project `speech_to_text_ubx330m` and the Gemma Compose project `speech_to_text_gemma4`. It uses `docker compose down` without `--volumes`; bind-mounted model and application data remain in place. It does not stop unrelated containers. See the [deployment-switching contract](../.scratch/deployment-switching/spec.md) for the lifecycle rules.
+The stop script targets only the installer Compose project `speech_to_text_ubx330m` and the Gemma Compose project `speech_to_text_gemma4`. It uses `docker compose down` without `--volumes`; bind-mounted model and application data remain in place. It does not stop unrelated containers. Run it as the normal Docker-enabled user, or use `sudo ./scripts/stop_service.sh` when the system Docker daemon requires root access. With `sudo`, it keeps the invoking user's UID/GID for Compose configuration. Rootless Docker setups should run it as the Docker-owning user so it reaches the same Docker context. The script reports when no managed containers were found. See the [deployment-switching contract](../.scratch/deployment-switching/spec.md) for the lifecycle rules.
 
 The installer completes these stages in order: validate the host, prepare Docker, prepare export dependencies, prepare the model, build the application image, configure and start the service, and check readiness. It accepts Ubuntu 24.04 on x86_64 and checks `/dev/dri`, `/dev/snd`, the LAN route, device group IDs, and TCP port 8000 before making host changes. It detects the LAN IPv4 address and subnet, GPU render device GID, and host `audio` group GID automatically, and rejects Tailscale/CGNAT routes.
 
