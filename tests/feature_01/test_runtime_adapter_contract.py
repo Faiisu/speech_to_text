@@ -11,7 +11,11 @@ import pytest
 
 from speech_to_text.features.model_deployment import capacity
 from speech_to_text.features.model_deployment.errors import ModelLoadError
-from speech_to_text.features.model_deployment.runtime import CTranslate2Adapter, OpenVINOAdapter
+from speech_to_text.features.model_deployment.runtime import (
+    CTranslate2Adapter,
+    OpenVINOAdapter,
+    TransformersGemmaAdapter,
+)
 from speech_to_text.features.model_deployment.process_topology import ProcessFlowGroup
 
 
@@ -226,6 +230,71 @@ def test_openvino_auto_language_budget_includes_unforced_timestamp_token():
 
     assert transcript == "transcript"
     assert observed["max_new_tokens"] == 444
+
+
+def test_gemma_response_parser_receives_prompt_prefix():
+    observed = {}
+
+    class InputIds:
+        shape = (1, 3)
+
+    input_ids = InputIds()
+
+    class Inputs(dict):
+        def to(self, device):
+            observed["device"] = device
+            return self
+
+    class Generated:
+        def __getitem__(self, index):
+            return self
+
+    class Processor:
+        def apply_chat_template(self, *args, **kwargs):
+            return Inputs(input_ids=input_ids)
+
+        def decode(self, ids, *, skip_special_tokens):
+            observed["skip_special_tokens"] = skip_special_tokens
+            return "<|text|> transcription <|end_of_turn|>"
+
+        def parse_response(self, response, *, prefix):
+            observed["response"] = response
+            observed["prefix"] = prefix
+            return {"role": "assistant", "content": " transcription "}
+
+    class Model:
+        device = "cpu"
+
+        def generate(self, **kwargs):
+            observed["generation"] = kwargs
+            return Generated()
+
+    class Torch:
+        @staticmethod
+        def inference_mode():
+            from contextlib import nullcontext
+
+            return nullcontext()
+
+    adapter = TransformersGemmaAdapter.__new__(TransformersGemmaAdapter)
+    adapter.processor = Processor()
+    adapter.model = Model()
+    adapter.torch = Torch()
+
+    transcript = adapter.transcribe(
+        [0.0],
+        language="en",
+        decoding_options={
+            "beam_size": 1,
+            "temperature": 0.0,
+            "no_repeat_ngram_size": 0,
+            "repetition_penalty": 1.0,
+        },
+    )
+
+    assert transcript == "transcription"
+    assert observed["prefix"] is input_ids
+    assert observed["skip_special_tokens"] is False
 
 
 def test_openvino_auto_clears_checkpoint_language_without_mutating_shared_config():

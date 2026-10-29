@@ -369,12 +369,16 @@ class TransformersGemmaAdapter:
             generation["temperature"] = decoding_options["temperature"]
         with self.torch.inference_mode():
             output = self.model.generate(**inputs, **generation)
-        response = self.processor.decode(output[0][input_length:], skip_special_tokens=True)
+        response = self.processor.decode(output[0][input_length:], skip_special_tokens=False)
         parser = getattr(self.processor, "parse_response", None)
         if callable(parser):
-            parsed = parser(response)
+            parsed = parser(response, prefix=inputs["input_ids"])
             if isinstance(parsed, dict):
-                response = parsed.get("text", response)
+                content = parsed.get("content")
+                if isinstance(content, str):
+                    response = content
+                elif isinstance(parsed.get("text"), str):
+                    response = parsed["text"]
         return str(response).strip()
 
     def close(self):

@@ -1,7 +1,6 @@
 # Include and repair Gemma chat templates
 
 Status: wontfix
-Legacy outcome: Implemented in model source preparation; existing matching-revision Gemma sources missing the template are repaired safely.
 
 ## Scope
 
@@ -17,4 +16,4 @@ Include the upstream `chat_template.jinja` in Gemma source downloads and repair 
 
 ## Legacy outcome
 
-Added the template to the Gemma allowlist and source validation. Matching-revision source repair stages a hard-linked verification copy and publishes only the fetched template after inference verification; download-only preparation publishes the pinned template. Static syntax and diff checks passed. Actual model inference was not run.
+Added the template to the Gemma allowlist and source validation. Matching-revision source repair stages a hard-linked verification copy and publishes only the fetched template after inference verification; download-only preparation publishes the pinned template. The adapter also passes prompt token IDs to `parse_response` and extracts Gemma's parsed `content`. Focused regression checks passed. On the UBX-330M, E2B BF16 preparation and inference both completed; a 29-second WAV produced a Thai transcript with RTF 2.46. The UBX run used the model-management API and the deployed container remained healthy.
