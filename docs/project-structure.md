@@ -16,6 +16,11 @@ This document is the source of truth for where project files belong. Follow it w
 ├── legacies-poc/               # Archived proof of concept; isolated from new code
 ├── models/                     # Local model artifacts, not application source
 ├── scripts/                    # Repository and deployment utility scripts
+│   ├── deploy_gemma4.sh        # Start the Gemma UBX Compose project safely
+│   ├── deploy_openvino.sh      # Run the existing UBX OpenVINO installer
+│   ├── install_ubx330m.sh      # Install the managed OpenVINO service
+│   ├── stop_service.sh         # Stop only the managed OpenVINO and Gemma projects
+│   └── update_ubx330m.sh       # Update the managed OpenVINO service
 ├── speech_to_text/             # Installable Python application package
 │   ├── frontend/               # Frontend source, assets, and browser E2E tests
 │   │   └── e2e/
@@ -47,6 +52,7 @@ This document is the source of truth for where project files belong. Follow it w
 ├── compose.mqtt.yaml           # Standalone MQTT broker with health check and persistence
 ├── compose.gemma4.yaml         # Optional persistent in-process Transformers deployment
 ├── compose.gemma4.microphone.yaml # Optional Linux microphone device override for Gemma
+├── compose.gemma4.ubx330m.yaml # UBX network and persistent data overrides for Gemma
 ├── Dockerfile                  # Versioned container build definition
 ├── pyproject.toml              # Package metadata and Python dependencies
 ├── uv.lock                     # Locked Python dependency resolution

@@ -357,8 +357,10 @@ def _verify(path, model_key, runtime, precision):
         options = flow_config({})["decoding_options"]
         impl.transcribe([0.0] * 16000, language="en", decoding_options=options)
     except Exception as exc:
+        detail = str(exc).strip() or "no further error details were provided"
         raise ModelPreparationUnavailableError(
-            f"The converted {runtime} model failed its local inference smoke test"
+            f"The converted {runtime} model failed its local inference smoke test "
+            f"({type(exc).__name__}: {detail})"
         ) from exc
     finally:
         close = getattr(impl, "close", None)

@@ -1,0 +1,13 @@
+services:
+  speech-to-text-gemma4:
+    environment:
+      SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS: "0.0.0.0/0,::/0"
+    volumes:
+      - ./data/ubx330m:/data
+    networks:
+      - shared
+
+networks:
+  shared:
+    external: true
+    name: shared-network

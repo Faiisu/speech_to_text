@@ -34,6 +34,34 @@ From the deployed checkout on the UBX-330M, run:
 
 The update script requires a clean checkout with a configured Git upstream, fast-forwards the current branch, and then runs the installer to reuse cached dependencies/model files, rebuild the application image, and update the managed service. It stops if the checkout cannot be fast-forwarded or the installer's managed Compose file is missing. The installer keeps the existing profile database and model/cache directories. An optional image version can be passed through, for example `./scripts/update_ubx330m.sh v0.1.4`.
 
+## Switch the UBX-330M service between OpenVINO and Gemma
+
+The deploy scripts keep the two application flavors mutually exclusive on host port 8000. They allow redeploying the currently active flavor, but refuse to start one flavor while the other is running. Stop the active flavor explicitly before switching; neither deploy script stops it automatically. Run these scripts as the normal Docker-enabled host user, not as root.
+
+Deploy or update the standard OpenVINO service with:
+
+```bash
+./scripts/deploy_openvino.sh
+```
+
+This reuses `scripts/install_ubx330m.sh` and its managed Compose project. Deploy Gemma on a fresh UBX checkout, or switch from OpenVINO by stopping the active service first:
+
+```bash
+./scripts/stop_service.sh
+./scripts/deploy_gemma4.sh
+```
+
+The UBX Gemma deploy script requires the external `shared-network` used by OpenVINO and an available host `audio` group plus `/dev/snd`, because it enables microphone access. The service joins that network with the same destination-network allowance as OpenVINO. The [`compose.gemma4.ubx330m.yaml`](../compose.gemma4.ubx330m.yaml) override mounts `models/` at `/opt/models` and the existing `data/ubx330m/` directory at `/data`, preserving profiles, recordings, and the Hugging Face cache across flavor switches. `deploy_gemma4.sh` sets the container UID/GID and audio GID from the host. Audio-file uploads themselves do not require microphone devices; use the base Gemma Compose instructions above when deploying without `/dev/snd`.
+
+To switch back, stop both managed flavor projects and rerun the OpenVINO installer:
+
+```bash
+./scripts/stop_service.sh
+./scripts/deploy_openvino.sh
+```
+
+The stop script targets only the installer Compose project `speech_to_text_ubx330m` and the Gemma Compose project `speech_to_text_gemma4`. It uses `docker compose down` without `--volumes`; bind-mounted model and application data remain in place. It does not stop unrelated containers. See the [deployment-switching contract](../.scratch/deployment-switching/spec.md) for the lifecycle rules.
+
 The installer completes these stages in order: validate the host, prepare Docker, prepare export dependencies, prepare the model, build the application image, configure and start the service, and check readiness. It accepts Ubuntu 24.04 on x86_64 and checks `/dev/dri`, `/dev/snd`, the LAN route, device group IDs, and TCP port 8000 before making host changes. It detects the LAN IPv4 address and subnet, GPU render device GID, and host `audio` group GID automatically, and rejects Tailscale/CGNAT routes.
 
 Before the installer builds images, create the external Docker network `shared-network` if it does not already exist: `docker network create shared-network`. The managed `speech-to-text` service joins this network through the Compose network key `shared`; the installer checks that the named network exists and stops with this command if it is missing. The network remains operator-managed, and the standalone MQTT Compose service is not attached to it automatically.

@@ -27,6 +27,7 @@ COPY speech_to_text/frontend/ ./
 RUN npm run build
 
 FROM ubuntu:24.04 AS runtime
+ARG GEMMA4_IMAGE=0
 ARG DEFAULT_MODEL=turbo
 ARG DEFAULT_RUNTIME=openvino-gpu
 ARG DEFAULT_PRECISION=source
@@ -42,9 +43,15 @@ ENV PYTHONUNBUFFERED=1 \
     SPEECH_TO_TEXT_FRONTEND_DIR=/app/frontend \
     HF_HOME=/data/huggingface
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       ca-certificates intel-opencl-icd libasound2t64 libgomp1 \
-       libportaudio2 ocl-icd-libopencl1 passwd python3.12 \
+    && if [ "$GEMMA4_IMAGE" = "1" ]; then \
+       apt-get install -y --no-install-recommends \
+         ca-certificates libasound2t64 libgomp1 libportaudio2 \
+         ocl-icd-libopencl1 passwd python3.12; \
+    else \
+       apt-get install -y --no-install-recommends \
+         ca-certificates intel-opencl-icd libasound2t64 libgomp1 \
+         libportaudio2 ocl-icd-libopencl1 passwd python3.12; \
+    fi \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --home-dir /app app \
