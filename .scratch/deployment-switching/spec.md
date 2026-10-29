@@ -20,7 +20,7 @@ Provide explicit operator commands to deploy the existing OpenVINO service, depl
 4. Gemma deployment requires the external `shared-network`. It sets host UID/GID and audio GID, and uses the existing `/dev/snd` microphone override. It can deploy on a fresh UBX checkout without first generating the OpenVINO Compose file.
 5. The UBX Gemma override joins `shared-network`, sets `SPEECH_TO_TEXT_DESTINATION_ALLOWED_NETWORKS` to `0.0.0.0/0,::/0`, and mounts `models/` at `/opt/models` plus `data/ubx330m/` at `/data`. This preserves the existing profile database and model-tuning records across flavor switches.
 6. Deploy scripts refuse root execution and do not use `sudo` to perform deployment actions. The stop script may run as root, including through `sudo`; it must preserve the invoking user's UID/GID for Compose interpolation when those values are available.
-7. The stop script targets only Compose projects `speech_to_text_ubx330m` and `speech_to_text_gemma4`. It uses Compose `down` without `--volumes`; it never deletes bind-mounted profile/model data or stops unrelated containers.
+7. The stop script targets only Compose projects `speech_to_text_ubx330m` and `speech_to_text_gemma4`, plus the known legacy Gemma container `speech-to-text-gemma4` with project label `speech_to_text` and service label `speech-to-text-gemma4`. For the legacy container it uses `docker stop` on the exact container match. It uses Compose `down` without `--volumes`; it never deletes bind-mounted profile/model data or stops unrelated containers.
 8. Deployment docs describe switching commands, prerequisites, port ownership, data persistence, and the stop behavior. Project structure lists the new Compose and script files.
 
 ## Acceptance

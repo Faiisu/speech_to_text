@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 OPENVINO_PROJECT="speech_to_text_ubx330m"
 GEMMA_PROJECT="speech_to_text_gemma4"
+LEGACY_GEMMA_PROJECT="speech_to_text"
+LEGACY_GEMMA_CONTAINER="speech-to-text-gemma4"
 OPENVINO_COMPOSE="$PROJECT_DIR/data/ubx330m/compose.yaml"
 
 fail() {
@@ -19,6 +21,12 @@ docker info >/dev/null 2>&1 || fail "Docker is unavailable to this user. Start D
 
 if [[ -n "$(docker ps --quiet --filter "label=com.docker.compose.project=$GEMMA_PROJECT" --filter status=running)" ]]; then
   fail "The Gemma service is running. Switch flavors explicitly with scripts/stop_service.sh, then rerun scripts/deploy_openvino.sh."
+fi
+if [[ -n "$(docker ps --quiet \
+  --filter "name=^/$LEGACY_GEMMA_CONTAINER$" \
+  --filter "label=com.docker.compose.project=$LEGACY_GEMMA_PROJECT" \
+  --filter "label=com.docker.compose.service=$LEGACY_GEMMA_CONTAINER")" ]]; then
+  fail "The Gemma service is running under legacy Compose project $LEGACY_GEMMA_PROJECT. Stop it with scripts/stop_service.sh, then rerun scripts/deploy_openvino.sh."
 fi
 docker network inspect shared-network >/dev/null 2>&1 \
   || fail "Required external network 'shared-network' is missing. Create it with 'docker network create shared-network', then retry."

@@ -10,6 +10,8 @@ OPENVINO_COMPOSE="$PROJECT_DIR/data/ubx330m/compose.yaml"
 GEMMA_COMPOSE="$PROJECT_DIR/compose.gemma4.yaml"
 GEMMA_UBX_OVERRIDE="$PROJECT_DIR/compose.gemma4.ubx330m.yaml"
 GEMMA_MICROPHONE_OVERRIDE="$PROJECT_DIR/compose.gemma4.microphone.yaml"
+LEGACY_GEMMA_PROJECT="speech_to_text"
+LEGACY_GEMMA_CONTAINER="speech-to-text-gemma4"
 stopped_any=0
 
 fail() {
@@ -55,13 +57,23 @@ if [[ -f "$GEMMA_COMPOSE" && -f "$GEMMA_UBX_OVERRIDE" && -f "$GEMMA_MICROPHONE_O
       -f "$GEMMA_UBX_OVERRIDE" \
       -f "$GEMMA_MICROPHONE_OVERRIDE" down
     stopped_any=1
-  else
-    printf 'No Gemma containers found for project %s.\n' "$GEMMA_PROJECT"
   fi
 elif [[ -n "$(docker ps --quiet --filter "label=com.docker.compose.project=$GEMMA_PROJECT" --filter status=running)" ]]; then
   fail "The Gemma project is running but its Compose files are incomplete; refusing to guess how to stop it."
-else
+fi
+
+legacy_gemma_id=$(docker ps --quiet \
+  --filter "name=^/$LEGACY_GEMMA_CONTAINER$" \
+  --filter "label=com.docker.compose.project=$LEGACY_GEMMA_PROJECT" \
+  --filter "label=com.docker.compose.service=$LEGACY_GEMMA_CONTAINER")
+if [[ -n "$legacy_gemma_id" ]]; then
+  docker stop "$legacy_gemma_id"
+  stopped_any=1
+  printf 'Stopped legacy Gemma container %s from Compose project %s.\n' "$LEGACY_GEMMA_CONTAINER" "$LEGACY_GEMMA_PROJECT"
+elif [[ ! -f "$GEMMA_COMPOSE" || ! -f "$GEMMA_UBX_OVERRIDE" || ! -f "$GEMMA_MICROPHONE_OVERRIDE" ]]; then
   printf 'Gemma Compose files are incomplete; skipping project %s.\n' "$GEMMA_PROJECT"
+else
+  printf 'No Gemma containers found for project %s.\n' "$GEMMA_PROJECT"
 fi
 
 if (( stopped_any )); then

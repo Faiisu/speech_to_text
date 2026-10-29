@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 OPENVINO_PROJECT="speech_to_text_ubx330m"
 GEMMA_PROJECT="speech_to_text_gemma4"
+LEGACY_GEMMA_PROJECT="speech_to_text"
+LEGACY_GEMMA_CONTAINER="speech-to-text-gemma4"
 GEMMA_COMPOSE="$PROJECT_DIR/compose.gemma4.yaml"
 GEMMA_UBX_OVERRIDE="$PROJECT_DIR/compose.gemma4.ubx330m.yaml"
 GEMMA_MICROPHONE_OVERRIDE="$PROJECT_DIR/compose.gemma4.microphone.yaml"
@@ -21,6 +23,12 @@ docker info >/dev/null 2>&1 || fail "Docker is unavailable to this user. Start D
 
 if [[ -n "$(docker ps --quiet --filter "label=com.docker.compose.project=$OPENVINO_PROJECT" --filter status=running)" ]]; then
   fail "The OpenVINO service is running. Switch flavors explicitly with scripts/stop_service.sh, then rerun scripts/deploy_gemma4.sh."
+fi
+if [[ -n "$(docker ps --quiet \
+  --filter "name=^/$LEGACY_GEMMA_CONTAINER$" \
+  --filter "label=com.docker.compose.project=$LEGACY_GEMMA_PROJECT" \
+  --filter "label=com.docker.compose.service=$LEGACY_GEMMA_CONTAINER")" ]]; then
+  fail "A legacy Gemma service is already running under Compose project $LEGACY_GEMMA_PROJECT. Stop it with scripts/stop_service.sh before deploying this project."
 fi
 
 [[ -f "$GEMMA_COMPOSE" && -f "$GEMMA_UBX_OVERRIDE" && -f "$GEMMA_MICROPHONE_OVERRIDE" ]] \
