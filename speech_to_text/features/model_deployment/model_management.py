@@ -41,7 +41,7 @@ _GEMMA_SOURCE_FILES = [
     "config.json", "generation_config.json", "processor_config.json",
     "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json",
     "special_tokens_map.json", "added_tokens.json", "vocab.json", "merges.txt",
-    "tokenizer.model", "*.model", "*.safetensors", "model.safetensors.index.json",
+    "tokenizer.model", "chat_template.jinja", "*.model", "*.safetensors", "model.safetensors.index.json",
     "*.safetensors.index.json", "*.json",
 ]
 
@@ -130,6 +130,8 @@ def _gemma_reasons(config, files=None):
             reasons.append("Checkpoint is missing its audio processor configuration")
         if not ("tokenizer.json" in files or "tokenizer.model" in files):
             reasons.append("Checkpoint is missing supported tokenizer files")
+        if "chat_template.jinja" not in files:
+            reasons.append("Checkpoint is missing chat_template.jinja")
     return reasons
 
 
@@ -292,6 +294,32 @@ def _download_source(repository, sha, token, destination):
         ) from None
 
 
+def _download_gemma_chat_template(repository, sha, token, destination):
+    try:
+        _, hf_hub_download, _ = _hub()
+        template = hf_hub_download(
+            repo_id=repository,
+            filename="chat_template.jinja",
+            revision=sha,
+            token=token,
+        )
+        shutil.copyfile(template, destination)
+    except Exception:
+        raise ModelPreparationUnavailableError(
+            "Unable to repair the matching Gemma source with its pinned chat template."
+        ) from None
+
+
+def _stage_gemma_chat_template(repository, sha, token, source, destination):
+    """Build a hard-linked verification copy with the pinned Gemma chat template added."""
+    try:
+        shutil.copytree(source, destination, copy_function=os.link)
+        _download_gemma_chat_template(repository, sha, token, destination / "chat_template.jinja")
+    except Exception:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
+
+
 def _convert(source, destination, runtime, precision):
     try:
         if runtime == "ctranslate2":
@@ -440,6 +468,16 @@ def prepare_huggingface_model(
     source_exists = source_path.exists()
     if source_exists and not _metadata_matches(source_path, repository, sha):
         raise ModelPreparationError("An existing source for this model_key has different repository or revision metadata")
+    gemma_template_path = source_path / "chat_template.jinja"
+    repair_gemma_template = (
+        source_exists
+        and is_gemma
+        and not gemma_template_path.is_file()
+    )
+    if repair_gemma_template and gemma_template_path.exists():
+        raise ModelPreparationError("The existing Gemma chat template target is not a regular file")
+    if gemma_template_path.is_symlink():
+        raise ModelPreparationError("The existing Gemma chat template must not be a symlink")
     target = root / (("ctranslate2" if runtime == "ctranslate2" else "openvino") + f"-{model_key}-{precision}") if runtime != "transformers" else source_path
     if target.is_symlink():
         raise ModelPreparationError("The converted model target must not be a symlink")
@@ -462,11 +500,20 @@ def prepare_huggingface_model(
     staged_artifact = stage_root / "artifact"
     staged_registry = stage_root / "models.local.json"
     published = []
+    repaired_template_published = False
     try:
         if not source_exists:
             if progress:
                 progress("downloading")
             _download_source(repository, sha, token, staged_source)
+        elif repair_gemma_template:
+            if operation == "convert":
+                _stage_gemma_chat_template(repository, sha, token, source_path, staged_source)
+            else:
+                staged_source.mkdir()
+                _download_gemma_chat_template(
+                    repository, sha, token, staged_source / "chat_template.jinja"
+                )
         if operation == "convert":
             if runtime != "transformers" and not artifact_exists:
                 if progress:
@@ -479,7 +526,7 @@ def prepare_huggingface_model(
             if progress:
                 progress("verifying")
             if runtime == "transformers":
-                verify_path = source_path if source_exists else staged_source
+                verify_path = staged_source if repair_gemma_template or not source_exists else source_path
             else:
                 verify_path = target if artifact_exists else staged_artifact
             _verify(verify_path, model_key, runtime, precision)
@@ -489,17 +536,26 @@ def prepare_huggingface_model(
         if not source_exists:
             os.replace(staged_source, source_path)
             published.append(source_path)
+        elif repair_gemma_template:
+            staged_template = staged_source / "chat_template.jinja"
+            os.link(staged_template, gemma_template_path)
+            repaired_template_published = True
+            staged_template.unlink()
         if operation == "convert" and runtime != "transformers" and not artifact_exists:
             os.replace(staged_artifact, target)
             published.append(target)
         os.replace(staged_registry, registry_path)
     except OSError:
+        if repaired_template_published:
+            gemma_template_path.unlink(missing_ok=True)
         for path in reversed(published):
             shutil.rmtree(path, ignore_errors=True)
         raise ModelPreparationUnavailableError(
             "Unable to publish model files. Check that the models directory is writable and has free space."
         ) from None
     except Exception:
+        if repaired_template_published:
+            gemma_template_path.unlink(missing_ok=True)
         for path in reversed(published):
             shutil.rmtree(path, ignore_errors=True)
         raise

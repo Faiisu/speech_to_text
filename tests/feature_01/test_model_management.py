@@ -74,6 +74,107 @@ def test_download_publishes_source_and_registry_without_runtime_readiness(tmp_pa
     assert not (tmp_path / "ctranslate2-custom-whisper-int8").exists()
 
 
+def test_gemma_download_includes_required_chat_template(tmp_path, monkeypatch):
+    repository = "google/gemma-4-E4B-it"
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    config = {
+        "model_type": "gemma4",
+        "architectures": ["Gemma4ForConditionalGeneration"],
+        "audio_config": {},
+    }
+    (snapshot / "config.json").write_text(json.dumps(config))
+    (snapshot / "processor_config.json").write_text("{}")
+    (snapshot / "tokenizer.json").write_text("{}")
+    (snapshot / "model.safetensors").write_bytes(b"safe weights")
+    (snapshot / "chat_template.jinja").write_text("{{ messages }}")
+    monkeypatch.setattr(
+        model_management,
+        "_hub",
+        lambda: (None, None, lambda **kwargs: snapshot),
+    )
+
+    destination = tmp_path / "source"
+    model_management._download_source(repository, "commit-sha", None, destination)
+
+    assert (destination / "chat_template.jinja").read_text() == "{{ messages }}"
+    assert "Checkpoint is missing chat_template.jinja" in model_management._gemma_reasons(
+        config, {"config.json", "processor_config.json", "tokenizer.json", "model.safetensors"}
+    )
+
+
+def test_failed_gemma_source_repair_keeps_existing_source_unchanged(tmp_path, monkeypatch):
+    repository = "google/gemma-4-E4B-it"
+    source = tmp_path / "sources" / "gemma-4-e4b"
+    source.mkdir(parents=True)
+    config = {
+        "model_type": "gemma4",
+        "architectures": ["Gemma4ForConditionalGeneration"],
+        "audio_config": {},
+    }
+    (source / "config.json").write_text(json.dumps(config))
+    (source / "processor_config.json").write_text("{}")
+    (source / "tokenizer.json").write_text("{}")
+    (source / "model.safetensors").write_bytes(b"old safe weights")
+    (source / ".model-deployment.json").write_text(
+        json.dumps({"repository": repository, "revision": "commit-sha"})
+    )
+    template = tmp_path / "chat_template.jinja"
+    template.write_text("{{ messages }}")
+    monkeypatch.setattr(
+        model_management,
+        "_config",
+        lambda repository, revision, token: (
+            "commit-sha",
+            config,
+            {
+                "config.json",
+                "processor_config.json",
+                "tokenizer.json",
+                "model.safetensors",
+                "chat_template.jinja",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        model_management,
+        "_runtime_status",
+        lambda runtime: {"available": True, "reason": None},
+    )
+
+    def download_template(**kwargs):
+        assert kwargs == {
+            "repo_id": repository,
+            "filename": "chat_template.jinja",
+            "revision": "commit-sha",
+            "token": None,
+        }
+        return template
+
+    monkeypatch.setattr(model_management, "_hub", lambda: (None, download_template, None))
+    verified_paths = []
+
+    def fail_verification(path, key, runtime, precision):
+        verified_paths.append(path)
+        assert (path / "chat_template.jinja").read_text() == "{{ messages }}"
+        assert not (source / "chat_template.jinja").exists()
+        raise api.ModelPreparationUnavailableError("verification failed")
+
+    monkeypatch.setattr(model_management, "_verify", fail_verification)
+
+    with pytest.raises(api.ModelPreparationUnavailableError, match="verification failed"):
+        api.prepare_huggingface_model(
+            repository, "gemma-4-e4b", runtime="transformers", models_root=tmp_path
+        )
+
+    assert verified_paths and verified_paths[0].name == "source"
+    assert (source / "model.safetensors").read_bytes() == b"old safe weights"
+    assert (source / ".model-deployment.json").is_file()
+    assert not (source / "chat_template.jinja").exists()
+    assert not (tmp_path / "models.local.json").exists()
+    assert not list(tmp_path.glob(".gemma-4-e4b-stage-*"))
+
+
 def test_managed_multilingual_tokenizer_keeps_language_selection(tmp_path):
     root = tmp_path / "models"
     source = root / "sources" / "custom"
