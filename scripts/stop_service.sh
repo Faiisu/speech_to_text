@@ -68,8 +68,9 @@ legacy_gemma_id=$(docker ps --quiet \
   --filter "label=com.docker.compose.service=$LEGACY_GEMMA_CONTAINER")
 if [[ -n "$legacy_gemma_id" ]]; then
   docker stop "$legacy_gemma_id"
+  docker rm "$legacy_gemma_id"
   stopped_any=1
-  printf 'Stopped legacy Gemma container %s from Compose project %s.\n' "$LEGACY_GEMMA_CONTAINER" "$LEGACY_GEMMA_PROJECT"
+  printf 'Stopped and removed the legacy Gemma container %s from Compose project %s.\n' "$LEGACY_GEMMA_CONTAINER" "$LEGACY_GEMMA_PROJECT"
 elif [[ ! -f "$GEMMA_COMPOSE" || ! -f "$GEMMA_UBX_OVERRIDE" || ! -f "$GEMMA_MICROPHONE_OVERRIDE" ]]; then
   printf 'Gemma Compose files are incomplete; skipping project %s.\n' "$GEMMA_PROJECT"
 else
