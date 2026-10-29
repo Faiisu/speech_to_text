@@ -17,9 +17,23 @@ fail() {
   exit 1
 }
 
-(( EUID != 0 )) || fail "Run this script as the normal host user, not root."
 command -v docker >/dev/null 2>&1 || fail "Docker is required."
 docker info >/dev/null 2>&1 || fail "Docker is unavailable to this user. Start Docker and grant this user access, then retry."
+
+if (( EUID == 0 )); then
+  if [[ "${SUDO_UID:-}" =~ ^[0-9]+$ && "${SUDO_GID:-}" =~ ^[0-9]+$ && "$SUDO_UID" -ne 0 ]]; then
+    APP_UID="${APP_UID:-$SUDO_UID}"
+    APP_GID="${APP_GID:-$SUDO_GID}"
+  else
+    APP_UID="${APP_UID:-$(stat -c '%u' "$PROJECT_DIR")}"
+    APP_GID="${APP_GID:-$(stat -c '%g' "$PROJECT_DIR")}"
+  fi
+  [[ "$APP_UID" =~ ^[0-9]+$ && "$APP_GID" =~ ^[0-9]+$ && "$APP_UID" -ne 0 ]] \
+    || fail "Root deployment requires a non-root APP_UID/APP_GID or a checkout owned by a non-root user."
+else
+  APP_UID="${APP_UID:-$(id -u)}"
+  APP_GID="${APP_GID:-$(id -g)}"
+fi
 
 if [[ -n "$(docker ps --quiet --filter "label=com.docker.compose.project=$OPENVINO_PROJECT" --filter status=running)" ]]; then
   fail "The OpenVINO service is running. Switch flavors explicitly with scripts/stop_service.sh, then rerun scripts/deploy_gemma4.sh."
@@ -43,11 +57,15 @@ audio_gid="$(awk -F: 'NR == 1 { print $3 }' <<< "$audio_group")"
 [[ -d /dev/snd ]] || fail "Host microphone devices at /dev/snd are unavailable. Audio-file deployment can use compose.gemma4.yaml directly."
 
 mkdir -p "$PROJECT_DIR/models" "$PROJECT_DIR/data/ubx330m"
-[[ -w "$PROJECT_DIR/models" && -w "$PROJECT_DIR/data/ubx330m" ]] \
-  || fail "The models and UBX data directories must be writable by the current host user."
+if (( EUID == 0 )); then
+  chown "$APP_UID:$APP_GID" "$PROJECT_DIR/models" "$PROJECT_DIR/data/ubx330m" \
+    || fail "Could not assign the model and UBX data directories to APP_UID/APP_GID $APP_UID:$APP_GID."
+else
+  [[ -w "$PROJECT_DIR/models" && -w "$PROJECT_DIR/data/ubx330m" ]] \
+    || fail "The models and UBX data directories must be writable by the current host user."
+fi
 
-export APP_UID="$(id -u)"
-export APP_GID="$(id -g)"
+export APP_UID APP_GID
 export AUDIO_GID="$audio_gid"
 docker compose -p "$GEMMA_PROJECT" \
   -f "$GEMMA_COMPOSE" \

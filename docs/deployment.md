@@ -36,7 +36,7 @@ The update script requires a clean checkout with a configured Git upstream, fast
 
 ## Switch the UBX-330M service between OpenVINO and Gemma
 
-The deploy scripts keep the two application flavors mutually exclusive on host port 8000. They allow redeploying the currently active flavor, but refuse to start one flavor while the other is running. Stop the active flavor explicitly before switching; neither deploy script stops it automatically. Run deploy scripts as the normal Docker-enabled host user, not as root.
+The deploy scripts keep the two application flavors mutually exclusive on host port 8000. They allow redeploying the currently active flavor, but refuse to start one flavor while the other is running. Stop the active flavor explicitly before switching; neither deploy script stops it automatically. Run `deploy_openvino.sh` as the normal Docker-enabled host user. `deploy_gemma4.sh` also supports root: it keeps the container on a non-root UID/GID, taking them from `SUDO_UID`/`SUDO_GID` or the checkout directory owner, and assigns the top-level model/data directories to that identity. Avoid setting `APP_UID=0`.
 
 Deploy or update the standard OpenVINO service with:
 
